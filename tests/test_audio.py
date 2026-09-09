@@ -161,3 +161,55 @@ def test_init_enforces_lump_spec():
     frames = pygame.sndarray.array(snd).shape[0]
     assert frames == 5661  # NOTE: full half-second, not 1415 chipmunk
     pygame.mixer.quit()
+
+
+@requires_wad
+def test_shotgun_blast_cries_once(monkeypatch):
+    """Multi-pellet re-hits reset the soundless pain frame (vanilla
+    debounce); they must not stack one cry per pellet."""
+    import pydoom.combat as combat_mod
+    # NOTE: deterministic pain (every pellet would cry pre-debounce).
+    monkeypatch.setattr(combat_mod, "p_random", lambda: 0)
+    from pydoom import combat, weapons
+    combat.register_combat_actions()
+    from pydoom.info import MT_INDEX
+    from pydoom.mapdata import Map
+    from pydoom.mobjs import ThingIndex, spawn_mobj, think_mobj
+    from pydoom.physics import Physics
+    from pydoom.ai import AIContext
+    from pydoom.player import PlayerState, WP_SHOTGUN
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    ctx = AIContext(physics=phys, players=[])
+    ctx.mobjs = []
+    player = spawn_mobj(game_map, phys, index, 900 << 16, -3500 << 16, 0,
+                        MT_INDEX["PLAYER"])
+    player.is_player = True
+    player.z = player.floorz
+    troop = spawn_mobj(game_map, phys, index, 930 << 16, -3500 << 16, 0,
+                       MT_INDEX["BRUISER"])
+    troop.z = troop.floorz
+    player.angle = 0
+    ps = PlayerState()
+    ps.weapons |= 1 << WP_SHOTGUN
+    ps.readyweapon = ps.pendingweapon = WP_SHOTGUN
+    ps.ammo[1] = 50
+    ctx.players = [player]
+    ctx.mobjs = [player, troop]
+    cries = []
+    import pydoom.audio as audio_mod
+    orig = audio_mod.engine.play
+    audio_mod.engine.play = lambda n, x=None, y=None: (
+        cries.append(n), False)[1]
+    try:
+        weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+        assert troop.health < 1000  # pellets landed, baron stands
+        for _ in range(12):
+            think_mobj(troop, phys, ctx)
+    finally:
+        audio_mod.engine.play = orig
+    assert cries.count("dmpain") == 1, cries

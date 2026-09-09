@@ -52,8 +52,15 @@ SFX = {
     "sawhit": (64, False), "sawful": (64, False),
     "pldeth": (32, False), "pdiehi": (32, False),
     "slop": (78, False),
+    "rxplod": (70, False), "firxpl": (70, False), "barexp": (60, False),
 }
 
+# NOTE: projectile/barrel explosion voices (P_ExplodeMissile plays the
+# deathsound; barrels scream through A_Scream on BEXP2 instead).
+MISSILE_DEATHS = {
+    "TROOPSHOT": "firxpl", "HEADSHOT": "firxpl", "BRUISERSHOT": "firxpl",
+    "ROCKET": "barexp", "PLASMA": "firxpl", "BFG": "rxplod",
+}
 # NOTE: (wake, pain, death, idle) per monster, from mobjinfo seesound/
 # painsound/deathsound/activesound. Missing lumps (Doom 2 cast) simply
 # never play; attacks sound in their action code, like vanilla.
@@ -65,6 +72,7 @@ MONSTERS = {
     "SHADOWS": ("sgtsit", "dmpain", "sgtdth", "dmact"),
     "BRUISER": ("brssit", "dmpain", "brsdth", "dmact"),
     "KNIGHT": ("brssit", "dmpain", "brsdth", "dmact"),
+    "BARREL": (None, None, "barexp", None),
 }
 
 

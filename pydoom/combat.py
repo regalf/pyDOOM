@@ -140,13 +140,6 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
     painchance = _info(target)[_I_PAINCHANCE]
     if p_random() < painchance and not (target.flags & _MF_SKULLFLY):
         target.flags |= _MF_JUSTHIT  # fight back!
-        from pydoom import audio
-        if getattr(target, "is_player", False):
-            audio.play("plpain", target.x, target.y)
-        else:
-            entry = audio.MONSTERS.get(MT_NAMES[target.type])
-            if entry is not None:
-                audio.play(entry[1], target.x, target.y)
         set_mobj_state(target, _info(target)[_I_PAINSTATE], ctx)
     target.reactiontime = 0  # we're awake now...
     if ((not target.threshold or target.type == MT_INDEX["VILE"])
@@ -237,10 +230,16 @@ def check_missile_spawn(th, physics) -> None:
 
 
 def explode_missile(mo, ctx=None) -> None:
-    """P_ExplodeMissile: stop and play the death state (A_Explode booms)."""
+    """P_ExplodeMissile: stop, death state, deathsound (A_Explode booms
+    separately for rockets/barrels)."""
+    from pydoom import audio
     from pydoom.mobjs import set_mobj_state
     mo.momx = mo.momy = mo.momz = 0
     set_mobj_state(mo, _info(mo)[_I_DEATHSTATE], ctx)
+    mo.flags &= ~MF_FLAGS["MF_MISSILE"]  # NOTE: spent shells go inert
+    voice = audio.MISSILE_DEATHS.get(MT_NAMES[mo.type])
+    if voice is not None:
+        audio.play(voice, mo.x, mo.y)
 
 
 def radius_attack(spot, source, damage: int, ctx) -> None:
@@ -650,14 +649,25 @@ def a_explode(actor, ctx) -> None:
     radius_attack(actor, actor.target, 128, ctx)
 
 
-def _death_cry(actor, name: str) -> None:
+def _affliction_cry(actor, idx: int, player_sound: str) -> None:
+    """Shared pain/death lookup (vanilla A_Pain/A_Scream placement)."""
     from pydoom import audio
     if getattr(actor, "is_player", False):
-        audio.play(name, actor.x, actor.y)
+        audio.play(player_sound, actor.x, actor.y)
     else:
         entry = audio.MONSTERS.get(MT_NAMES[actor.type])
-        if entry is not None:
-            audio.play(entry[2], actor.x, actor.y)
+        if entry is not None and entry[idx] is not None:
+            audio.play(entry[idx], actor.x, actor.y)
+
+
+def a_pain(actor, ctx) -> None:
+    # NOTE: multi-pellet re-hits reset the soundless first pain frame,
+    # so one blast cries once instead of stacking (vanilla debounce).
+    _affliction_cry(actor, 1, "plpain")
+
+
+def _death_cry(actor, name: str) -> None:
+    _affliction_cry(actor, 2, name)
 
 
 def a_scream(actor, ctx) -> None:
@@ -711,6 +721,7 @@ COMBAT_ACTIONS = {
     "A_Explode": a_explode,
     "A_Scream": a_scream,
     "A_XScream": a_xscream,
+    "A_Pain": a_pain,
     "A_PlayerScream": a_playerscream,
     "A_Fall": a_fall,
     "A_BossDeath": a_bossdeath,
