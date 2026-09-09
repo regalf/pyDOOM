@@ -1141,8 +1141,10 @@ class Renderer:
         yfrac = -self.viewy - fixed_mul(tables.finesine[angle], length)
 
         index = distance >> 20  # LIGHTZSHIFT
-        if index >= MAXLIGHTZ:
-            index = MAXLIGHTZ - 1
+        # NOTE: C indexes this table with an unsigned value; Python
+        # signed wrap can hand us negatives on extreme slopes, so clamp
+        # both sides instead of relying on list wrap-around.
+        index = min(max(index, 0), MAXLIGHTZ - 1)
         colormap_base = self._plane_zlight[index] * 256
         self._draw_span(y, x1, x2, xfrac, yfrac, xstep, ystep, colormap_base)
 

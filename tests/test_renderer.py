@@ -103,3 +103,16 @@ def test_status_bar_draws_bottom_strip(setup):
     draw_status_bar(renderer, fb, ps, 100)
     assert not np.any(fb[:168])  # NOTE: the bar owns only the bottom
     assert np.count_nonzero(fb[168:]) > 4000  # bg + face + digits
+
+
+@requires_wad
+def test_plane_light_index_never_escapes(setup):
+    """Adversarial plane heights (wrapped negative, huge) must still
+    map inside the zlight table instead of raising."""
+    renderer, game_map, start = setup
+    renderer.render_view(
+        game_map, start.x << 16, start.y << 16, 0, 41 << 16, [])
+    renderer._plane_zlight = renderer.zlight[0]
+    for height in (-2 ** 31, -1, 0, 1, 10 ** 9, 10 ** 12, 2 ** 40):
+        renderer._plane_height = height
+        renderer._map_plane(100, 10, 20)  # must not raise
