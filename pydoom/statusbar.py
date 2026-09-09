@@ -62,17 +62,20 @@ def _cached(renderer, name: str):
 
 
 def _blit(renderer, fb, name: str, x: int, y: int) -> int:
-    """Blit a patch lump 1:1, clipped. Returns its drawn width."""
+    """Blit a patch lump 1:1, clipped (V_DrawPatch origin honored)."""
     try:
         patch, mat, msk = _cached(renderer, name)
     except Exception:
         return 0
     h, w = patch.height, patch.width
-    x0, y0 = max(x, 0), max(y, 168)
-    x1, y1 = min(x + w, 320), min(y + h, 200)
+    # NOTE: vanilla draws at (x - leftoffset, y - topoffset); the face
+    # (STFST00 -5,-2) and key slots (-1) need it to sit like vanilla.
+    ox, oy = x - patch.leftoffset, y - patch.topoffset
+    x0, y0 = max(ox, 0), max(oy, 168)
+    x1, y1 = min(ox + w, 320), min(oy + h, 200)
     if x0 >= x1 or y0 >= y1:
         return w
-    ox0, oy0 = x0 - x, y0 - y
+    ox0, oy0 = x0 - ox, y0 - oy
     ox1, oy1 = ox0 + (x1 - x0), oy0 + (y1 - y0)
     region = msk[oy0:oy1, ox0:ox1].astype(bool)
     fb[y0:y1, x0:x1][region] = mat[oy0:oy1, ox0:ox1][region]
