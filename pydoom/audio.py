@@ -24,6 +24,9 @@ from pydoom.angles import point_to_angle2
 from pydoom.fixed import FRACUNIT
 
 SAMPLE_RATE = 11025
+# NOTE: DS data is UNSIGNED 8-bit (128 = silence); size +8 requests
+# AUDIO_U8. Signed (-8) turns silence into full-scale DC: harsh noise.
+MIXER_SIZE = 8
 N_CHANNELS = 8
 CLIP_DIST = 1200  # map units, vanilla S_CLIPPING_DIST
 CLOSE_DIST = 160  # map units, vanilla S_CLOSE_DIST
@@ -121,7 +124,7 @@ class SoundEngine:
             return False
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.pre_init(SAMPLE_RATE, -8, 1, 512)
+                pygame.mixer.pre_init(SAMPLE_RATE, MIXER_SIZE, 1, 512)
                 pygame.mixer.init()
             pygame.mixer.set_num_channels(N_CHANNELS)
         except Exception:

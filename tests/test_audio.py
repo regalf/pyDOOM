@@ -126,3 +126,19 @@ def test_monster_table_covers_e1_cast():
         see, pain, death, act = audio.MONSTERS[mt]
         for name in (see, pain, death, act):
             assert name is None or name in audio.SFX, (mt, name)
+
+
+def test_mixer_format_is_unsigned_8bit():
+    """DS lumps are unsigned (128 = silence); signed playback turns
+    silence into full-scale DC, i.e. harsh noise instead of Doom."""
+    from pydoom.audio import MIXER_SIZE
+    assert MIXER_SIZE == 8
+
+
+@requires_wad
+def test_real_lumps_decode_centered():
+    wad = WadFile(WAD_PATH)
+    for name in ("DSPISTOL", "DSDOROPN", "DSITEMUP"):
+        pcm = decode_lump(wad.read_lump(name))
+        mean = sum(pcm) / len(pcm)
+        assert 100 < mean < 156, (name, mean)  # silence-centered
