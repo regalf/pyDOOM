@@ -300,6 +300,16 @@ def main() -> int:
                 if sub_now.sector is not None else None
             )
             world.tick()
+            if amap is not None:
+                # NOTE: vanilla automap ticks with the gamesim, not the
+                # display: zoom/pan speed stays constant at any fps.
+                if am_zoom_in:
+                    amap.zoom_hold(True)
+                elif am_zoom_out:
+                    amap.zoom_hold(False)
+                else:
+                    amap.zoom_release()
+                amap.ticker()
             # Think mobjs (the player body is driven by the camera).
             index = phys.things
             for mo in list(mobjs):
@@ -383,9 +393,8 @@ def main() -> int:
             if keys[pygame.K_RIGHT]:
                 cam.turn(-TURN_SPEED)
             if fwd or strafe:
-                # NOTE: weapon bob follows footsteps (P_MovePsprites):
-                # amplitude chases speed, phase always advances.
-                state["bob"] += 2 if run else 1
+                # NOTE: weapon bob amplitude chases speed (P_CalcHeight);
+                # the sway phase rides the tic clock, like vanilla.
                 state["bobamp"] = min(state.get("bobamp", 0) + 2, 16)
                 dx = (math.cos(cam.angle) * fwd
                       + math.sin(cam.angle) * strafe)
@@ -480,13 +489,6 @@ def main() -> int:
             # NOTE: fullscreen automap (TAB): the game keeps running.
             amap.plr_x, amap.plr_y = player_mo.x, player_mo.y
             amap.plr_angle = cam.bam
-            if am_zoom_in:
-                amap.zoom_hold(True)
-            elif am_zoom_out:
-                amap.zoom_hold(False)
-            else:
-                amap.zoom_release()
-            amap.ticker()
             screen.fill((0, 0, 0))
             amap.draw(screen)
             if font is not None:
@@ -508,9 +510,12 @@ def main() -> int:
         # lower/raise travel while switching, kick frame while firing.
         ps = state["ps"]
         body, flash = weapons.PSPRITES[ps.readyweapon]
-        bob, amp = state["bob"], state.get("bobamp", 0)
-        bobx = int(amp * math.cos(bob * 0.35))
-        boby = int(amp * math.sin(bob * 0.35))
+        bob, amp = state.get("tics", 0), state.get("bobamp", 0)
+        # NOTE: vanilla sway cycle is 64 tics (angle = 128*leveltime);
+        # height bounces on the positive lobe only (angle & 4095).
+        phase = bob * math.pi / 32
+        bobx = int(amp * math.cos(phase))
+        boby = int(amp * abs(math.sin(phase)))
         firing = state.get("tics", 0) < state["flash_until"]
         melee = (state.get("tics", 0) < state.get("melee_until", 0)
                  and ps.readyweapon in weapons.MELEE_FRAMES)
