@@ -84,3 +84,22 @@ def test_psprite_anchor_matches_vanilla(setup):
     assert (xs.min(), xs.max()) == (127, 183)
     assert (ys.min(), ys.max()) == (138, 199)
     assert not renderer.draw_psprite(fb, "PLSG", 0, 0)  # shareware: none
+
+
+@requires_wad
+def test_status_bar_draws_bottom_strip(setup):
+    """Classic STBAR composition: background, face, numbers, keys."""
+    import numpy as np
+    from pydoom.player import PlayerState
+    from pydoom.statusbar import draw_status_bar
+    renderer, _, _ = setup
+    fb = np.zeros((SCREENHEIGHT, SCREENWIDTH), dtype=np.uint8)
+    ps = PlayerState()
+    ps.ammo = [50, 8, 0, 0]
+    ps.armorpoints = 100
+    ps.armortype = 1
+    ps.keys = 1 | 16
+    ps.weapons |= 1 << 2
+    draw_status_bar(renderer, fb, ps, 100)
+    assert not np.any(fb[:168])  # NOTE: the bar owns only the bottom
+    assert np.count_nonzero(fb[168:]) > 4000  # bg + face + digits

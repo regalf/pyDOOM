@@ -37,7 +37,8 @@ from pydoom.mobjs import think_mobj
 from pydoom.palette import load_playpal
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
-from pydoom.player import PlayerState, WEAPON_NAMES
+from pydoom.player import PlayerState
+from pydoom.statusbar import draw_status_bar
 from pydoom.renderer import SCREENHEIGHT, SCREENWIDTH, Renderer
 from pydoom.textures import TextureManager
 from pydoom.wad import WadFile
@@ -526,6 +527,8 @@ def main() -> int:
             renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
         if firing and flash is not None:
             renderer.draw_psprite(fb, flash, bobx, boby + yoff)
+        # NOTE: classic bottom strip (covers the gun base, like vanilla).
+        draw_status_bar(renderer, fb, ps, player_mo.health)
         frame = pygame.image.frombuffer(
             palette_lut[fb].tobytes(), (SCREENWIDTH, SCREENHEIGHT), "RGB"
         )
@@ -541,27 +544,6 @@ def main() -> int:
             if message is not None:
                 screen.blit(font.render(message, True, (255, 200, 100)),
                             (8, 28))
-            inv = state["ps"]
-            key_letters = ""
-            for bit, letter in ((1, "B"), (2, "Y"), (4, "R")):
-                if inv.keys & (bit | (bit << 3)):
-                    key_letters += letter
-            # NOTE: vanilla weapon keys 1..7 over internal slots.
-            wpn_keys = {0: "1", 7: "1", 1: "2", 2: "3", 8: "3", 3: "4",
-                        4: "5", 5: "6", 6: "7"}
-            owned = "".join(sorted(
-                {wpn_keys[i] for i in range(9)
-                 if inv.weapons & (1 << i)}))
-            rdy = inv.readyweapon
-            ammo_idx, _cost = weapons.COST[rdy]
-            ammo_txt = (f" {inv.ammo[ammo_idx]}"
-                        if ammo_idx >= 0 else "")
-            screen.blit(font.render(
-                f"HEALTH {max(player_mo.health, 0)}  "
-                f"ARMOR {inv.armorpoints}  "
-                f"{WEAPON_NAMES[rdy].upper()}{ammo_txt}  "
-                f"WPN {owned} KEYS {key_letters or '-'}",
-                True, (255, 100, 100)), (8, 46))
             if show_ai:
                 # Nearest living monster: live AI state for bug reports.
                 best, bestd = None, None
