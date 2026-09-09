@@ -35,6 +35,9 @@ KEY_X = 239
 KEY_Y = (171, 181, 191)
 MINI_X, MAX_X = 288, 314
 MINI_Y = {AM_CLIP: 173, AM_SHELL: 179, AM_CELL: 185, AM_MISL: 191}
+# NOTE: right edges recomputed from measured digit widths so the mini
+# pairs fit on screen (STYSNUM digits are 4px; 314+24 would clip).
+MINI_R, MAX_R = 306, 319
 
 
 import numpy as np
@@ -106,10 +109,10 @@ def draw_status_bar(renderer, fb, ps, health: int) -> None:
     _draw_number(renderer, fb, ps.ammo[ammo], AMMO_X + 40, AMMO_Y, "STTNUM")
     _draw_number(renderer, fb, max(0, health), HEALTH_X + 40,
                  HEALTH_Y, "STTNUM")
-    _blit(renderer, fb, "STTPRCNT", HEALTH_X + 42, HEALTH_Y)
+    _blit(renderer, fb, "STTPRCNT", HEALTH_X + 40, HEALTH_Y)
     _draw_number(renderer, fb, ps.armorpoints, ARMOR_X + 40, ARMOR_Y,
                  "STTNUM")
-    _blit(renderer, fb, "STTPRCNT", ARMOR_X + 42, ARMOR_Y)
+    _blit(renderer, fb, "STTPRCNT", ARMOR_X + 40, ARMOR_Y)
     _blit(renderer, fb, "STFST00", FACE_X, FACE_Y)
     for i in range(6):  # NOTE: arms 2-7 light up when owned.
         if ps.weapons & (1 << (i + 1)):
@@ -123,6 +126,5 @@ def draw_status_bar(renderer, fb, ps, health: int) -> None:
         elif ps.keys & skull:
             _blit(renderer, fb, f"STKEYS{num + 3}", KEY_X, KEY_Y[slot])
     for ammo, y in MINI_Y.items():
-        _draw_number(renderer, fb, ps.ammo[ammo], MINI_X + 24, y, "STYSNUM")
-        _draw_number(renderer, fb, ps.maxammo[ammo], MAX_X + 24, y,
-                     "STYSNUM")
+        _draw_number(renderer, fb, ps.ammo[ammo], MINI_R, y, "STYSNUM")
+        _draw_number(renderer, fb, ps.maxammo[ammo], MAX_R, y, "STYSNUM")

@@ -569,7 +569,7 @@ def main() -> int:
                 "WASD/arrows move+turn, mouse look, Shift run, E use, "
                 "1-7 weapons, TAB map, N noclip, F freeze AI, X AI info, "
                 "PgUp/PgDn map, G mouse, Esc quit",
-                True, (180, 180, 180)), (8, WIN_H - 24))
+                True, (180, 180, 180)), (8, WIN_H - 120))
             if state["won"]:
                 big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
                 screen.blit(big, (WIN_W // 2 - big.get_width() // 2,
