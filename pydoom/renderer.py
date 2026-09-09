@@ -1244,29 +1244,32 @@ class Renderer:
             self._project_sprite(mo.x, mo.y, mo.z, mo.angle, mo.sprite,
                                  mo.frame, mo.flags, lightlevel)
 
-    def sprite_num_for_base(self, base: str) -> int | None:
-        """First sprite index whose lump starts with base+frame A0."""
-        want = (base + "A0").upper()
+    def sprite_num_for_base(self, base: str, frame: str = "A") -> int | None:
+        """First sprite index whose lump is base+frame+rotation0."""
+        want = (base + frame + "0").upper()
         for i, name in enumerate(self.sprite_lump_names):
             if name.upper() == want:
                 return i
         return None
 
     def draw_psprite(self, fb, base: str, bobx: int = 0,
-                     boby: int = 0) -> bool:
+                     boby: int = 0, frame: str = "A") -> bool:
         """R_DrawPSprite lite: blit a weapon sprite (flipped, vanilla
         anchor: x0 = 1+bobx-leftoffset, y0 = 32+boby-topoffset, from
-        psp->sx/sy with WEAPONTOP). Returns False when the WAD lacks
-        the sprite (plasma/BFG in shareware)."""
-        spritenum = self.sprite_num_for_base(base)
+        psp->sx/sy with WEAPONTOP). Frame B lumps back the firing kick;
+        missing sprites (plasma/BFG in shareware) skip silently."""
+        spritenum = self.sprite_num_for_base(base, frame)
         if spritenum is None:
             return False
         patch = self.texman.get_sprite_patch(spritenum)
+        # NOTE: R_DrawPSprite uses the frame flip flag, false for all
+        # rotation-0 weapon lumps: unlike V_DrawPatchFlipped art, guns
+        # draw unmirrored so multi-frame kicks stay aligned.
         x0 = 1 + bobx - patch.leftoffset
         y0 = 32 + boby - patch.topoffset
         height = patch.height
         for sx in range(patch.width):
-            dx = x0 + (patch.width - 1 - sx)  # horizontal flip
+            dx = x0 + sx
             if dx < 0 or dx >= SCREENWIDTH:
                 continue
             pixels, mask = patch.column_pixels(sx)

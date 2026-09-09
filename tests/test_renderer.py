@@ -70,3 +70,17 @@ def test_point_in_subsector(setup):
     sub = renderer.point_in_subsector(start.x << 16, start.y << 16)
     assert sub.sector is not None
     assert 0 <= sub.firstline < len(game_map.segs)
+
+
+@requires_wad
+def test_psprite_anchor_matches_vanilla(setup):
+    """Weapon blits are 1:1 lump pixels at the R_DrawPSprite anchor
+    (x0 = 1+bobx-leftoffset, y0 = 32+boby-topoffset, unmirrored)."""
+    renderer, _, _ = setup
+    fb = np.zeros((SCREENHEIGHT, SCREENWIDTH), dtype=np.uint8)
+    assert renderer.draw_psprite(fb, "PISG", 0, 0)
+    ys, xs = np.nonzero(fb)
+    # NOTE: PISGA0 is 57x62 at offsets (-126, -106).
+    assert (xs.min(), xs.max()) == (127, 183)
+    assert (ys.min(), ys.max()) == (138, 199)
+    assert not renderer.draw_psprite(fb, "PLSG", 0, 0)  # shareware: none

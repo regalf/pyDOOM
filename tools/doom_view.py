@@ -15,6 +15,7 @@ weapons or thing collision yet.
 
 import math
 import os
+import subprocess
 import sys
 import time
 
@@ -97,6 +98,13 @@ def main() -> int:
 
     wad = WadFile(wad_path)
     texman = TextureManager(wad)
+    try:  # NOTE: build tag in the HUD, so screenshots name their code.
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ver = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+            text=True, cwd=root, timeout=5).stdout.strip() or "nogit"
+    except Exception:
+        ver = "nogit"
     palette_lut = np.array(load_playpal(wad.read_lump("PLAYPAL")),
                            dtype=np.uint8)
     renderer = Renderer(wad, texman)
@@ -491,15 +499,33 @@ def main() -> int:
             game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
             int(cam.viewz * 65536), mobjs,
         )
-        # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob.
+        # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob,
+        # lower/raise travel while switching, kick frame while firing.
         ps = state["ps"]
         body, flash = weapons.PSPRITES[ps.readyweapon]
         bob, amp = state["bob"], state.get("bobamp", 0)
         bobx = int(amp * math.cos(bob * 0.35))
         boby = int(amp * math.sin(bob * 0.35))
-        renderer.draw_psprite(fb, body, bobx, boby)
-        if flash is not None and state.get("tics", 0) < state["flash_until"]:
-            renderer.draw_psprite(fb, flash, bobx, boby)
+        firing = state.get("tics", 0) < state["flash_until"]
+        if ps.pendingweapon != ps.readyweapon:
+            # NOTE: A_Lower/A_Raise dip: old gun sinks, new gun rises.
+            travel = 1 - ps.switchtics / weapons.SWITCH_TICS
+            if travel < 0.5:
+                yoff = int(96 * travel * 2)
+            else:
+                body, flash = weapons.PSPRITES[ps.pendingweapon]
+                yoff = int(96 * (1 - (travel - 0.5) * 2))
+            firing = False
+        else:
+            yoff = 0
+        if firing:
+            # NOTE: attack frames kick the body while the flash shows.
+            if not renderer.draw_psprite(fb, body, bobx, boby + yoff, "B"):
+                renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+        else:
+            renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+        if firing and flash is not None:
+            renderer.draw_psprite(fb, flash, bobx, boby + yoff)
         frame = pygame.image.frombuffer(
             palette_lut[fb].tobytes(), (SCREENWIDTH, SCREENHEIGHT), "RGB"
         )
@@ -509,7 +535,8 @@ def main() -> int:
                    f"a={math.degrees(cam.angle) % 360:.0f} "
                    f"{fps_ema:.0f}fps "
                    f"{'noclip' if noclip else 'clip'} "
-                   f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'}")
+                   f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
+                   f"v{ver}")
             screen.blit(font.render(hud, True, (255, 255, 255)), (8, 8))
             if message is not None:
                 screen.blit(font.render(message, True, (255, 200, 100)),
