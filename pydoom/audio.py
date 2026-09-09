@@ -117,13 +117,20 @@ class SoundEngine:
         self.listener = (0, 0, 0)
 
     def init(self, wad, master: float = 1.0) -> bool:
-        """Attach the WAD and bring up the mixer. False = silent mode."""
+        """Attach the WAD and bring up the mixer. False = silent mode.
+
+        NOTE: pygame.init() pre-opens the mixer at CD quality, which
+        would misread our 11025 Hz 8-bit mono lumps (4x chipmunk
+        bursts); enforce our spec whenever it mismatches.
+        """
         self.wad = wad
         self.master = master
         if pygame is None:
             return False
         try:
-            if pygame.mixer.get_init() is None:
+            want = (SAMPLE_RATE, MIXER_SIZE, 1)
+            if tuple(pygame.mixer.get_init() or ()) != want:
+                pygame.mixer.quit()
                 pygame.mixer.pre_init(SAMPLE_RATE, MIXER_SIZE, 1, 512)
                 pygame.mixer.init()
             pygame.mixer.set_num_channels(N_CHANNELS)

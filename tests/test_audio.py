@@ -142,3 +142,22 @@ def test_real_lumps_decode_centered():
         pcm = decode_lump(wad.read_lump(name))
         mean = sum(pcm) / len(pcm)
         assert 100 < mean < 156, (name, mean)  # silence-centered
+
+
+@requires_wad
+def test_init_enforces_lump_spec():
+    """pygame.init pre-opens CD quality; lump bytes misread there play
+    4x fast. init() must force 11025/8/mono back (viewer boot order)."""
+    import pygame
+    eng = SoundEngine()
+    pygame.mixer.quit()
+    pygame.mixer.pre_init(44100, -16, 2, 512)
+    pygame.mixer.init()
+    assert tuple(pygame.mixer.get_init()) != (11025, 8, 1)
+    assert eng.init(WadFile(WAD_PATH)) is True
+    assert tuple(pygame.mixer.get_init()) == (11025, 8, 1)
+    snd = eng.sound("pistol")
+    import numpy as np
+    frames = pygame.sndarray.array(snd).shape[0]
+    assert frames == 5661  # NOTE: full half-second, not 1415 chipmunk
+    pygame.mixer.quit()
