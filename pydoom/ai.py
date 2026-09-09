@@ -401,8 +401,8 @@ def noise_alert(target, emitter, ctx: AIContext) -> None:
     recursive_sound(emitter.sector, 0, ctx)
 
 
-def _face_target(actor) -> None:
-    """A_FaceTarget: snap angle toward the target."""
+def _face_target(actor, ctx=None) -> None:
+    """A_FaceTarget: snap angle toward the target (sounds skipped)."""
     if actor.target is not None:
         actor.angle = point_to_angle2(actor.x, actor.y,
                                       actor.target.x, actor.target.y)
@@ -471,7 +471,17 @@ def a_chase(actor, ctx: AIContext) -> None:
         new_chase_dir(actor, ctx)
 
 
+def _face_target(actor, ctx=None) -> None:
+    """A_FaceTarget: snap angle toward the target (sounds skipped)."""
+    if actor.target is not None:
+        actor.angle = point_to_angle2(actor.x, actor.y,
+                                      actor.target.x, actor.target.y)
+
+
 ACTIONS = {
     "A_Look": a_look,
     "A_Chase": a_chase,
+    "A_FaceTarget": _face_target,
+    # NOTE: the remaining A_* (screams, pains, lights, psprites) are
+    # sound/visual-only in vanilla; unknown actions are safe no-ops.
 }

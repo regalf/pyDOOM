@@ -152,3 +152,115 @@ def test_stop_parked_plat(setup):
     for _ in range(50):
         world.tick()
     assert world.activeplats[0].sector.floorheight == height  # parked
+
+
+@requires_wad
+def test_s1_plat_22_raises(setup):
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M5")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    line = next(li for li in game_map.lines if li.special == 22)
+    assert world.use_special_line(line, 0, True) is None
+    assert line.special == 0  # one-shot switch spent
+    assert world.thinkers  # a lift is moving
+
+
+@requires_wad
+def test_w1_stairs_build(setup):
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M3")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    line = game_map.lines[967]
+    assert line.special == 8
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0  # walk-once spent
+    assert world.thinkers  # steps are rising
+
+
+@requires_wad
+def test_s1_donut_pillar_drops(setup):
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M2")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    line = game_map.lines[604]
+    assert line.special == 9
+    assert world.use_special_line(line, 0, True) is None
+    assert line.special == 0
+    assert len(world.thinkers) == 2  # ring rises, hole drops
+
+
+@requires_wad
+def test_gunshot_opens_impact_door(setup):
+    from pydoom.ai import AIContext
+    from pydoom.combat import _Shot
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
+    from pydoom.physics import Physics
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M2")
+    texman.resolve_map(game_map)
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, texman)
+    ctx = AIContext(physics=phys, world=world, players=[])
+    ctx.mobjs = []
+    line = game_map.lines[572]
+    assert line.special == 46
+    shooter = spawn_mobj(game_map, phys, index, 1056 << 16, -3616 << 16, 0,
+                         MT_INDEX["PLAYER"])
+    shooter.is_player = True
+    from pydoom.combat import _hit_line
+    from pydoom.fixed import FRACUNIT
+    shot = _Shot(shooter, 0, 2048 * FRACUNIT, 0, 5, phys, index, [],
+                 None)
+    shot.ctx = ctx
+    phys._trace = (shooter.x, shooter.y, FRACUNIT, 0)  # path state
+    _hit_line(shot, line, FRACUNIT // 2)
+    # NOTE: G1 impact doors retrigger (special kept), but one opens now.
+    assert line.special == 46
+    assert len(world.thinkers) == 1
+
+
+@requires_wad
+def test_scroll_lines_advance_each_tick(setup):
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    assert world.scroll_lines  # E1M1 has scrollers
+    before = [game_map.sides[li.sidenum[0]].textureoffset
+              for li in world.scroll_lines]
+    world.tick()
+    after = [game_map.sides[li.sidenum[0]].textureoffset
+             for li in world.scroll_lines]
+    from pydoom.fixed import FRACUNIT
+    assert all(a == b + FRACUNIT for a, b in zip(after, before))
+
+
+@requires_wad
+def test_fall_makes_corpses_walkable(setup):
+    from pydoom.ai import AIContext
+    from pydoom.combat import COMBAT_ACTIONS
+    from pydoom.info import MF_FLAGS, MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
+    from pydoom.physics import Physics
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    ctx = AIContext(physics=phys)
+    body = spawn_mobj(game_map, phys, index, 1056 << 16, -3616 << 16, 0,
+                      MT_INDEX["POSSESSED"])
+    assert body.flags & MF_FLAGS["MF_SOLID"]
+    COMBAT_ACTIONS["A_Fall"](body, ctx)
+    assert not (body.flags & MF_FLAGS["MF_SOLID"])
+    other = spawn_mobj(game_map, phys, index, 900 << 16, -3616 << 16, 0,
+                       MT_INDEX["POSSESSED"])
+    ok, _ = phys.try_move(other, body.x, body.y)
+    assert ok  # the living walk straight over the dead

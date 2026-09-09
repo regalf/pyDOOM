@@ -47,6 +47,14 @@ COST = {WP_FIST: (-1, 0), WP_PISTOL: (AM_CLIP, 1), WP_SHOTGUN: (AM_SHELL, 1),
 KEYMAP = {"1": (WP_CHAINSAW, WP_FIST), "2": (WP_PISTOL,),
           "3": (WP_SSG, WP_SHOTGUN), "4": (WP_CHAINGUN,),
           "5": (WP_MISSILE,), "6": (WP_PLASMA,), "7": (WP_BFG,)}
+# NOTE: HUD sprites (body, flash); plasma/BFG lumps only exist in the
+# registered WAD, the renderer skips missing ones silently.
+PSPRITES = {WP_FIST: ("PUNG", None), WP_PISTOL: ("PISG", "PISF"),
+            WP_SHOTGUN: ("SHTG", "SHTF"), WP_CHAINGUN: ("CHGG", "CHGF"),
+            WP_MISSILE: ("MISG", "MISF"), WP_PLASMA: ("PLSG", "PLSF"),
+            WP_BFG: ("BFGG", "BFGF"), WP_CHAINSAW: ("CSAW", None),
+            WP_SSG: ("SHT2", "SHTF")}
+FLASH_TICS = 4
 
 
 def has_ammo_for(ps, weapon: int) -> bool:

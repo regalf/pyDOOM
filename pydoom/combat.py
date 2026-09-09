@@ -421,6 +421,12 @@ def _trace_point(shot: _Shot, frac: int):
 
 
 def _hit_line(shot: _Shot, line, frac: int) -> None:
+    if line.special in (24, 46, 47):
+        # NOTE: P_ShootSpecialLine impact specials (guns pop switches).
+        world = getattr(getattr(shot, "ctx", None), "world", None)
+        if world is not None:
+            world.shoot_special_line(
+                line, bool(getattr(shot.shooter, "is_player", False)))
     frac2 = frac - fixed_div(4 * FRACUNIT, shot.attackrange)
     x, y, z = _trace_point(shot, frac2)
     if shot.skyflat is not None and (
@@ -623,6 +629,10 @@ def a_explode(actor, ctx) -> None:
     radius_attack(actor, actor.target, 128, ctx)
 
 
+def a_fall(actor, ctx) -> None:
+    actor.flags &= ~MF_FLAGS["MF_SOLID"]  # corpses never block
+
+
 def a_bossdeath(actor, ctx) -> None:
     """A_BossDeath: episode boss effects (p_enemy.c).
 
@@ -654,6 +664,7 @@ COMBAT_ACTIONS = {
     "A_BruisAttack": a_bruisattack,
     "A_SkullAttack": a_skullattack,
     "A_Explode": a_explode,
+    "A_Fall": a_fall,
     "A_BossDeath": a_bossdeath,
 }
 

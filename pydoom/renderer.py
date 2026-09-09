@@ -288,6 +288,11 @@ class Renderer:
         self.sprites = init_sprite_defs(
             wad, texman.firstsprite, texman.lastsprite
         )
+        # NOTE: lump names (e.g. PISGA0) for psprite/weapon lookup.
+        self.sprite_lump_names = [
+            wad.lumps[i].name
+            for i in range(texman.firstsprite, texman.lastsprite + 1)
+        ]
         self._screenheight = [SCREENHEIGHT] * SCREENWIDTH
         self._negone = [-1] * SCREENWIDTH
         # Persistent fuzz table position (C static across frames).
@@ -1238,6 +1243,40 @@ class Renderer:
                           else 0)
             self._project_sprite(mo.x, mo.y, mo.z, mo.angle, mo.sprite,
                                  mo.frame, mo.flags, lightlevel)
+
+    def sprite_num_for_base(self, base: str) -> int | None:
+        """First sprite index whose lump starts with base+frame A0."""
+        want = (base + "A0").upper()
+        for i, name in enumerate(self.sprite_lump_names):
+            if name.upper() == want:
+                return i
+        return None
+
+    def draw_psprite(self, fb, base: str, bobx: int = 0,
+                     boby: int = 0) -> bool:
+        """R_DrawPSprite lite: blit a weapon sprite (flipped, vanilla
+        anchor: x0 = 1+bobx-leftoffset, y0 = 32+boby-topoffset, from
+        psp->sx/sy with WEAPONTOP). Returns False when the WAD lacks
+        the sprite (plasma/BFG in shareware)."""
+        spritenum = self.sprite_num_for_base(base)
+        if spritenum is None:
+            return False
+        patch = self.texman.get_sprite_patch(spritenum)
+        x0 = 1 + bobx - patch.leftoffset
+        y0 = 32 + boby - patch.topoffset
+        height = patch.height
+        for sx in range(patch.width):
+            dx = x0 + (patch.width - 1 - sx)  # horizontal flip
+            if dx < 0 or dx >= SCREENWIDTH:
+                continue
+            pixels, mask = patch.column_pixels(sx)
+            for sy in range(height):
+                if not mask[sy]:
+                    continue
+                dy = y0 + sy
+                if 0 <= dy < SCREENHEIGHT:
+                    fb[dy, dx] = pixels[sy]
+        return True
 
     def _project_sprite(self, px: int, py: int, z: int, angle_bam: int,
                         sprite: int, frame: int, flags: int,

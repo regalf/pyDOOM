@@ -26,6 +26,7 @@ import pygame
 from pydoom import combat
 from pydoom import flow
 from pydoom import weapons
+from pydoom.automap import Automap
 from pydoom.ai import AIContext, check_sight
 from pydoom.doors import World
 from pydoom.info import MT_INDEX, MT_NAMES, STATE_INDEX
@@ -146,7 +147,8 @@ def main() -> int:
             flow.strip_for_next_level(ps)
         ctx.player_state = ps
         state = {"cooldown": 0, "refire": False, "firing": False,
-                 "start": start, "ps": ps, "won": False}
+                 "start": start, "ps": ps, "won": False,
+                 "flash_until": 0, "bob": 0}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
 
     game_map, cam, phys, player_mo, world, mobjs, ctx, state = load_map(
@@ -154,6 +156,8 @@ def main() -> int:
     combat.register_combat_actions()
     noclip = False
     show_ai = False  # X toggles a nearest-monster AI readout
+    amap = None  # TAB automap overlay (vanilla keeps the game running)
+    am_zoom_in = am_zoom_out = False
     state_names = {v: k for k, v in STATE_INDEX.items()}
     message: str | None = None
     message_tics = 0
@@ -184,8 +188,12 @@ def main() -> int:
                 if ev.key in (pygame.K_ESCAPE, pygame.K_q):
                     running = False
                 elif ev.key == pygame.K_g:
-                    pygame.event.set_grab(not pygame.event.get_grab())
-                    pygame.mouse.set_visible(not pygame.mouse.get_visible())
+                    if amap is not None:
+                        amap.toggle_grid()  # vanilla TAB-mode G
+                    else:
+                        pygame.event.set_grab(not pygame.event.get_grab())
+                        pygame.mouse.set_visible(
+                            not pygame.mouse.get_visible())
                 elif ev.key == pygame.K_n:
                     noclip = not noclip
                     if noclip:
@@ -216,6 +224,7 @@ def main() -> int:
                     map_idx = (map_idx - 1) % len(maps)
                     (game_map, cam, phys, player_mo, world, mobjs, ctx,
                      state) = load_map(maps[map_idx])
+                    amap = None  # new map, new automap
                     message, message_tics = None, 0
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
@@ -223,11 +232,33 @@ def main() -> int:
                     map_idx = (map_idx + 1) % len(maps)
                     (game_map, cam, phys, player_mo, world, mobjs, ctx,
                      state) = load_map(maps[map_idx])
+                    amap = None  # new map, new automap
                     message, message_tics = None, 0
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
                 elif ev.key == pygame.K_f:
-                    ctx.ai_frozen = not ctx.ai_frozen
+                    if amap is not None:
+                        amap.toggle_follow()  # vanilla TAB-mode F
+                    else:
+                        ctx.ai_frozen = not ctx.ai_frozen
+                elif ev.key == pygame.K_TAB:
+                    if amap is None:
+                        amap = Automap(game_map, WIN_W, WIN_H,
+                                       palette_lut.tolist())
+                        am_zoom_in = am_zoom_out = False
+                    else:
+                        amap = None
+                elif ev.key in (pygame.K_EQUALS, pygame.K_PLUS,
+                                pygame.K_KP_PLUS):
+                    am_zoom_in = True
+                elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    am_zoom_out = True
+            elif ev.type == pygame.KEYUP:
+                if ev.key in (pygame.K_EQUALS, pygame.K_PLUS,
+                              pygame.K_KP_PLUS):
+                    am_zoom_in = False
+                elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    am_zoom_out = False
                 elif ev.key == pygame.K_x:
                     show_ai = not show_ai
                 elif pygame.K_1 <= ev.key <= pygame.K_7:
@@ -248,6 +279,7 @@ def main() -> int:
         tic_acc += dt
         while tic_acc >= 1.0 / TICRATE and not state["won"]:
             tic_acc -= 1.0 / TICRATE
+            state["tics"] = state.get("tics", 0) + 1
             if message_tics:
                 message_tics -= 1
                 if not message_tics:
@@ -290,6 +322,10 @@ def main() -> int:
                                   accurate=not state["refire"], ctx=ctx)
                 if cd >= 0:
                     state["cooldown"] = cd
+                    body, flash = weapons.PSPRITES[ps.readyweapon]
+                    if flash is not None:
+                        state["flash_until"] = (
+                            state.get("tics", 0) + weapons.FLASH_TICS)
                 # NOTE: cd < 0 means still switching or just auto-switched
                 # off a dry gun (vanilla never clicks empty).
             state["refire"] = want_fire
@@ -334,6 +370,10 @@ def main() -> int:
             if keys[pygame.K_RIGHT]:
                 cam.turn(-TURN_SPEED)
             if fwd or strafe:
+                # NOTE: weapon bob follows footsteps (P_MovePsprites):
+                # amplitude chases speed, phase always advances.
+                state["bob"] += 2 if run else 1
+                state["bobamp"] = min(state.get("bobamp", 0) + 2, 16)
                 dx = (math.cos(cam.angle) * fwd
                       + math.sin(cam.angle) * strafe)
                 dy = (math.sin(cam.angle) * fwd
@@ -365,6 +405,9 @@ def main() -> int:
                                                        phys, mobjs)
                         if msg is not None:
                             message, message_tics = msg, 3 * TICRATE
+            else:
+                # NOTE: standing still settles the weapon (P_CalcHeight).
+                state["bobamp"] = max(state.get("bobamp", 0) - 4, 0)
             if not noclip:
                 # Gravity lite + floor glue (no full gamesim falling):
                 # ride lifts up, fall fast, snap when close.
@@ -404,6 +447,7 @@ def main() -> int:
                     keep, hp = state["ps"], player_mo.health
                     (game_map, cam, phys, player_mo, world, mobjs,
                      ctx, state) = load_map(nxt, keep, hp)
+                    amap = None  # new map, new automap
                     map_idx = maps.index(game_map.marker)
                     message, message_tics = None, 0
                     pygame.display.set_caption(f"pydoom - {nxt}")
@@ -419,10 +463,43 @@ def main() -> int:
             target = floor + VIEWHEIGHT_ABOVE_FLOOR
             cam.viewz += (target - cam.viewz) * 0.3
 
+        if amap is not None:
+            # NOTE: fullscreen automap (TAB): the game keeps running.
+            amap.plr_x, amap.plr_y = player_mo.x, player_mo.y
+            amap.plr_angle = cam.bam
+            if am_zoom_in:
+                amap.zoom_hold(True)
+            elif am_zoom_out:
+                amap.zoom_hold(False)
+            else:
+                amap.zoom_release()
+            amap.ticker()
+            screen.fill((0, 0, 0))
+            amap.draw(screen)
+            if font is not None:
+                hint = font.render(
+                    "AUTOMAP +-zoom F-follow G-grid TAB-close",
+                    True, (180, 180, 180))
+                screen.blit(hint, (8, WIN_H - 24))
+            pygame.display.flip()
+            frames += 1
+            if frames_opt is not None and frames >= frames_opt:
+                print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
+                running = False
+            continue
         fb = renderer.render_view(
             game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
             int(cam.viewz * 65536), mobjs,
         )
+        # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob.
+        ps = state["ps"]
+        body, flash = weapons.PSPRITES[ps.readyweapon]
+        bob, amp = state["bob"], state.get("bobamp", 0)
+        bobx = int(amp * math.cos(bob * 0.35))
+        boby = int(amp * math.sin(bob * 0.35))
+        renderer.draw_psprite(fb, body, bobx, boby)
+        if flash is not None and state.get("tics", 0) < state["flash_until"]:
+            renderer.draw_psprite(fb, flash, bobx, boby)
         frame = pygame.image.frombuffer(
             palette_lut[fb].tobytes(), (SCREENWIDTH, SCREENHEIGHT), "RGB"
         )
@@ -481,7 +558,7 @@ def main() -> int:
                                 (8, 64))
             screen.blit(font.render(
                 "WASD/arrows move+turn, mouse look, Shift run, E use, "
-                "1-7 weapons, N noclip, F freeze AI, X AI info, "
+                "1-7 weapons, TAB map, N noclip, F freeze AI, X AI info, "
                 "PgUp/PgDn map, G mouse, Esc quit",
                 True, (180, 180, 180)), (8, WIN_H - 24))
             if state["won"]:

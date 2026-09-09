@@ -165,7 +165,9 @@ _SWITCH_FLOORS = {
 _SWITCH_PLATS = {
     14: ("raiseAndChange", 32, False), 15: ("raiseAndChange", 24, False),
     20: ("raiseToNearestAndChange", 0, False),
-    21: ("downWaitUpStay", 0, False), 122: ("blazeDWUS", 0, False),
+    21: ("downWaitUpStay", 0, False), 22: ("raiseToNearestAndChange", 0,
+                                            False),
+    122: ("blazeDWUS", 0, False),
     62: ("downWaitUpStay", 0, True), 66: ("raiseAndChange", 24, True),
     67: ("raiseAndChange", 32, True),
     68: ("raiseToNearestAndChange", 0, True),
@@ -179,6 +181,7 @@ _SWITCH_LIGHTS = {138: 255, 139: 35}
 _WALK_ONCE = {
     2: ("door", DoorType.OPEN), 3: ("door", DoorType.CLOSE),
     4: ("door", DoorType.NORMAL),
+    8: ("stairs", None),
     16: ("door", DoorType.CLOSE30THENOPEN),
     108: ("door", DoorType.BLAZERAISE), 109: ("door", DoorType.BLAZEOPEN),
     110: ("door", DoorType.BLAZECLOSE),
@@ -354,6 +357,9 @@ class FloorMover:
             if self.direction == -1 and self.type == "lowerAndChange":
                 self.sector.special = self.newspecial
                 self.sector.floorpic = self.texture
+            if self.direction == 1 and self.type == "donutRaise":
+                self.sector.special = self.newspecial
+                self.sector.floorpic = self.texture
             self.sector.specialdata = None
             self.dead = True
 
@@ -430,11 +436,18 @@ class World:
         self.time = 0  # leveltime: sector damage ticks every 32
         self.exit_kind: str | None = None  # None | "normal" | "secret"
         self.teleport_angle = None  # BAM facing after a teleport (viewer)
+        # NOTE: P_SpawnSpecials scrolling walls (first-side offset anim).
+        self.scroll_lines = [li for li in game_map.lines
+                             if li.special == 48]
 
     # -- per-tic updates (p_tick.c lite + P_UpdateSpecials buttons) --
 
     def tick(self) -> None:
         self.time += 1
+        for line in self.scroll_lines:
+            if line.sidenum[0] != -1:
+                side = self.map.sides[line.sidenum[0]]
+                side.textureoffset += FRACUNIT  # EFFECT FIRSTCOL SCROLL +
         for thinker in list(self.thinkers):
             thinker.think(self)
         self.thinkers = [t for t in self.thinkers if not t.dead]
@@ -835,6 +848,10 @@ class World:
             self.change_switch_texture(line, False)
             self.exit_kind = "secret" if special == 51 else "normal"
             return None
+        if special == 9:
+            if self.do_donut(line):
+                self.change_switch_texture(line, False)
+            return None
         if special == 7:
             if self.build_stairs(line, 8 * FRACUNIT, FLOORSPEED // 4):
                 self.change_switch_texture(line, False)
@@ -843,9 +860,62 @@ class World:
             if self.build_stairs(line, 16 * FRACUNIT, FLOORSPEED * 4):
                 self.change_switch_texture(line, True)
             return None
-        if special in (9, 41, 43, 49):
+        if special in (41, 43, 49):
             return f"Switch {special}: not implemented yet"
         return None
+
+    def do_donut(self, line) -> bool:
+        """EV_DoDonut: ring rises to the pool, pillar drops into it."""
+        rtn = False
+        for s1 in self.find_sectors_from_tag(line.tag):
+            if s1.specialdata is not None:
+                continue  # already moving: keep going
+            if not s1.lines:
+                continue
+            first = s1.lines[0]
+            if not (first.flags & ML_TWOSIDED):
+                continue
+            s2 = (first.backsector if first.frontsector is s1
+                  else first.frontsector)
+            if s2 is None:
+                continue
+            for ld in s2.lines:
+                if not (ld.flags & ML_TWOSIDED):
+                    continue
+                if ld.backsector is s1:
+                    continue
+                s3 = ld.backsector
+                if s3 is None:
+                    continue
+                # NOTE: rising slime takes the pool's skin and clears.
+                rise = FloorMover(sector=s2, type="donutRaise", crush=False)
+                rise.direction, rise.speed = 1, FLOORSPEED // 2
+                rise.floordestheight = s3.floorheight
+                rise.texture, rise.newspecial = s3.floorpic, 0
+                self.thinkers.append(rise)
+                s2.specialdata = rise
+                drop = FloorMover(sector=s1, type="lowerFloor", crush=False)
+                drop.direction, drop.speed = -1, FLOORSPEED // 2
+                drop.floordestheight = s3.floorheight
+                self.thinkers.append(drop)
+                s1.specialdata = drop
+                rtn = True
+                break
+        return rtn
+
+    def shoot_special_line(self, line, is_player: bool) -> None:
+        """P_ShootSpecialLine: guns pop 24/46/47 (monsters only 46)."""
+        if not is_player and line.special != 46:
+            return
+        if line.special == 24:
+            if self.do_floor(line, "raiseFloor"):
+                self.change_switch_texture(line, False)
+        elif line.special == 46:
+            if self.do_door(line, DoorType.OPEN):
+                self.change_switch_texture(line, True)
+        elif line.special == 47:
+            if self.do_plat(line, "raiseToNearestAndChange", 0):
+                self.change_switch_texture(line, False)
 
     def cross_special_line(self, line, is_player: bool, mover=None,
                              physics=None, mobjs=None) -> str | None:
@@ -875,6 +945,8 @@ class World:
     def _fire_walk(self, kind: str, arg, line) -> str | None:
         if kind == "door":
             self.do_door(line, arg)
+        elif kind == "stairs":
+            self.build_stairs(line, 8 * FRACUNIT, FLOORSPEED // 4)
         elif kind == "floor":
             self.do_floor(line, arg)
         elif kind == "plat":
