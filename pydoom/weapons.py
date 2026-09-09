@@ -47,7 +47,9 @@ FLASH_TICS = {WP_FIST: 0, WP_PISTOL: 7, WP_SHOTGUN: 7, WP_CHAINGUN: 5,
 # attack states: the kick reads because it lasts, like vanilla.
 ATTACK_BODY = {
     WP_FIST: "BBBBCCCCDDDDDCCCCBBBBB",
-    WP_PISTOL: "AAAABBBBBBCCCCBBBBB",
+    # NOTE: the pistol timeline starts at the peak: vanilla fires (and
+    # flashes) on S_PISTOL2/B, the A wind-up settles the cycle instead.
+    WP_PISTOL: "BBBBBBCCCCBBBBBAAAA",
     WP_SHOTGUN: ("AAAAAAAAAABBBBBCCCCCDDDDCCCCCBBBBBAAAAAAAAAA"),
     WP_CHAINGUN: "AABB",
     WP_MISSILE: "B" * 20,
