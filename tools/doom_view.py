@@ -533,8 +533,8 @@ def main() -> int:
             # NOTE: S_PUNCH1..5 rhythm across the cooldown window.
             span = max(1, state.get("melee_span", 1))
             step = (state["melee_until"] - state.get("tics", 0)) / span
-            frames = weapons.MELEE_FRAMES[ps.readyweapon]
-            pick = frames[min(4, int((1 - step) * 5))]
+            moves = weapons.MELEE_FRAMES[ps.readyweapon]
+            pick = moves[min(4, int((1 - step) * 5))]
             if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
                                          pick):
                 renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
