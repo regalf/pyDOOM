@@ -1,0 +1,79 @@
+"""Player inventory (player_t lite): ammo, weapons, armor, keys, powers.
+
+Health itself lives on the player mobj (mo.health); everything carried
+goes here. Vanilla names and limits are kept so combat/pickup/doors can
+share the same constants.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+# Ammo types (ammotype_t order).
+AM_CLIP, AM_SHELL, AM_CELL, AM_MISL = 0, 1, 2, 3
+AMMO_NAMES = ("clip", "shell", "cell", "rocket")
+MAX_AMMO = [200, 50, 50, 300]
+# Clip size per ammo type (clipammo[]): box/ammo pickups scale by this.
+CLIP_AMMO = [10, 4, 20, 1]
+
+# Weapon slots (weapontype_t order); the viewer fires the pistol only,
+# but ownership/pending are tracked vanilla-style for the weapons phase.
+WP_FIST, WP_PISTOL, WP_SHOTGUN, WP_CHAINGUN, WP_MISSILE = 0, 1, 2, 3, 4
+WP_PLASMA, WP_BFG, WP_CHAINSAW, WP_SSG = 5, 6, 7, 8
+WEAPON_NAMES = ("fist", "pistol", "shotgun", "chaingun", "missile",
+                "plasma", "bfg", "chainsaw", "ssg")
+# Ammo type per weapon, -1 for none (weaponinfo[].ammo).
+WEAPON_AMMO = (-1, AM_CLIP, AM_SHELL, AM_CLIP, AM_MISL,
+               AM_CELL, AM_CELL, -1, AM_SHELL)
+
+# Key bitmask (card_t order: cards then skulls, either opens its color).
+KEY_BLUE, KEY_YELLOW, KEY_RED = 1, 2, 4
+KEY_BSKULL, KEY_YSKULL, KEY_RSKULL = 8, 16, 32
+KEY_COLORS = {"blue": KEY_BLUE | KEY_BSKULL,
+              "yellow": KEY_YELLOW | KEY_YSKULL,
+              "red": KEY_RED | KEY_RSKULL}
+
+# Powers (powertype_t names); tics remaining, strength is level-long.
+PW_INVULN, PW_STRENGTH, PW_INVIS = "invuln", "strength", "invis"
+PW_IRONFEET, PW_ALLMAP, PW_INFRARED = "ironfeet", "allmap", "infrared"
+
+MAXHEALTH = 100
+GODHEALTH = 200  # soulsphere/health-bonus cap (maxhealth stays 100)
+
+# NOTE: bundled IWAD is shareware E1: plasma/BFG/SSG never spawn, and
+# vanilla gates them out of the CheckAmmo fallback (p_pspr.c).
+GAMEMODE = "shareware"
+
+
+@dataclass(eq=False)
+class PlayerState:
+    """Everything a Doom player carries (player_t minus position)."""
+
+    ammo: list = field(default_factory=lambda: [50, 0, 0, 0])
+    maxammo: list = field(default_factory=lambda: list(MAX_AMMO))
+    weapons: int = (1 << WP_FIST) | (1 << WP_PISTOL)
+    readyweapon: int = WP_PISTOL
+    pendingweapon: int = WP_PISTOL
+    switchtics: int = 0  # raise delay while pending != ready
+    backpack: bool = False
+    armorpoints: int = 0
+    armortype: int = 0  # 0 none, 1 green (1/3), 2 blue (1/2)
+    keys: int = 0
+    powers: dict = field(default_factory=dict)
+
+    def tick(self, player_mo=None) -> None:
+        """P_PlayerThink power counters: strength counts up (never
+        fades), allmap is level-long; invisibility drops its shadow."""
+        if self.powers.get(PW_STRENGTH):
+            self.powers[PW_STRENGTH] += 1
+        for name in list(self.powers):
+            if name in (PW_STRENGTH, PW_ALLMAP):
+                continue
+            left = self.powers[name] - 1
+            if left <= 0:
+                del self.powers[name]
+                if name == PW_INVIS and player_mo is not None:
+                    from pydoom.info import MF_FLAGS
+                    player_mo.flags &= ~MF_FLAGS["MF_SHADOW"]
+            else:
+                self.powers[name] = left

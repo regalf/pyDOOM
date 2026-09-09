@@ -1,0 +1,13 @@
+# python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# local env and test cache
+.venv/
+.pytest_cache/
+.hypothesis/
+
+# local reference material, not part of the game
+DOOM-master/
+DOOM_ENGINE_ANALYSIS.md
