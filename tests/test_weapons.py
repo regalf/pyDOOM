@@ -230,3 +230,16 @@ def test_attack_timelines_match_cooldowns():
         if weapon == WP_CHAINGUN:
             continue  # NOTE: vanilla flash (5) bridges its 4-tic cycle
         assert weapons.FLASH_TICS[weapon] <= cd, weapon
+
+
+@requires_wad
+def test_weapons_fire_pistol_hits(setup):
+    """Pistol through weapons.fire must damage (no blank branches)."""
+    game_map, phys, index, ctx = setup
+    player, troop, ps, ctx, _ = make_range(setup)
+    ctx.mobjs = [player, troop]
+    hp = troop.health
+    for _ in range(6):
+        assert weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                            True, ctx) >= 0
+    assert troop.health < hp

@@ -247,6 +247,9 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
                    shooter.x, shooter.y)
     elif weapon == WP_PISTOL:
         audio.play("pistol", shooter.x, shooter.y)
+        slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
+        gunshot(shooter, accurate, slope, physics, index, mobjs,
+                skyflat, ctx)
     elif weapon == WP_SHOTGUN:
         audio.play("shotgn", shooter.x, shooter.y)
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
