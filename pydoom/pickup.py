@@ -205,6 +205,7 @@ def give_power(ps, picker_mo, name: str, tics: int) -> bool:
 
 def touch_special_thing(item, picker_mo, ps, ctx=None):
     """P_TouchSpecialThing: try one pickup. Returns (picked, message)."""
+    from pydoom import audio
     from pydoom.info import MT_INDEX
     if picker_mo.health <= 0 or not getattr(picker_mo, "is_player", False):
         return False, None
@@ -212,7 +213,7 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
         return False, None
     delta = item.z - picker_mo.z
     if delta > picker_mo.height or delta < -8 * FRACUNIT:
-        return False, None  # out of vertical reach
+        return False, None  # out of reach
     dropped = bool(item.flags & _MF_DROPPED)
     spec = _BY_DOOMED.get(getattr(item, "doomednum", None))
     if spec is None:
@@ -223,6 +224,24 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
         spec = by_mt.get(item.type)
     if spec is None:
         return False, None
+    kind = spec[0]
+    sound = None
+    if kind == "weapon":
+        # NOTE: shareware has no wpnup lump; everything chimes itemup.
+        sound = "itemup"
+    elif kind in ("power", "berserk", "soul", "mega"):
+        sound = "getpow"
+    elif kind in ("ammo", "body", "hbonus", "abonus", "armor", "backpack",
+                  "key"):
+        sound = "itemup"
+    picked, msg = _apply_touch(item, picker_mo, ps, spec, dropped)
+    if picked and sound is not None:
+        audio.play(sound, picker_mo.x, picker_mo.y)
+    return picked, msg
+
+
+def _apply_touch(item, picker_mo, ps, spec, dropped):
+    """The per-kind give table; returns (picked, message)."""
     kind = spec[0]
     if kind == "ammo":
         _, ammo, clips, msg = spec

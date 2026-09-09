@@ -12,8 +12,8 @@ Scope (documented, never silent):
   paces re-aiming.
 * No floaters: MF_FLOAT height adjustment in P_Move is skipped, so
   flying monsters keep their spawn height until AI flight lands.
-* Sounds are silent (no audio); seesound/activesound branches kept as
-  no-ops for structure.
+* Sounds play through pydoom.audio (seesound on wake, activesound
+  growls); without a mixer everything stays silent.
 * Single-level validcount stamp is shared with physics (one counter,
   like the C global), bumped by check_sight/noise_alert.
 * Player powers, netgame retargeting, zatemissy deathmatch and
@@ -408,8 +408,25 @@ def _face_target(actor, ctx=None) -> None:
                                       actor.target.x, actor.target.y)
 
 
+def _wake_sound(actor) -> None:
+    """A_Look seeyou: posit cycle, bgsit cycle, direct otherwise."""
+    from pydoom import audio
+    from pydoom.info import MT_NAMES
+    entry = audio.MONSTERS.get(MT_NAMES[actor.type])
+    if entry is None:
+        return
+    see = entry[0]
+    if see is None:
+        return
+    if see == "posit1":
+        see = f"posit{p_random() % 3 + 1}"
+    elif see == "bgsit1":
+        see = f"bgsit{p_random() % 2 + 1}"
+    audio.play(see, actor.x, actor.y)
+
+
 def a_look(actor, ctx: AIContext) -> None:
-    """A_Look: stay idle until a player is sighted (silent)."""
+    """A_Look: stay idle until a player is sighted (then growl)."""
     from pydoom.mobjs import set_mobj_state
     actor.threshold = 0
     targ = actor.sector.soundtarget if actor.sector is not None else None
@@ -417,13 +434,16 @@ def a_look(actor, ctx: AIContext) -> None:
         actor.target = targ
         if actor.flags & _MF_AMBUSH:
             if check_sight(actor, actor.target, ctx):
+                _wake_sound(actor)
                 set_mobj_state(actor, actor.seestate, ctx)
                 return
         else:
+            _wake_sound(actor)
             set_mobj_state(actor, actor.seestate, ctx)
             return
     if not look_for_players(actor, ctx, False):
         return
+    _wake_sound(actor)
     set_mobj_state(actor, actor.seestate, ctx)
 
 
@@ -469,6 +489,12 @@ def a_chase(actor, ctx: AIContext) -> None:
     actor.movecount -= 1
     if actor.movecount < 0 or not move_actor(actor, ctx):
         new_chase_dir(actor, ctx)
+    from pydoom import audio
+    from pydoom.info import MT_NAMES
+    entry = audio.MONSTERS.get(MT_NAMES[actor.type])
+    if entry is not None and entry[3] is not None \
+            and p_random() < 3:
+        audio.play(entry[3], actor.x, actor.y)  # NOTE: idle growl
 
 
 def _face_target(actor, ctx=None) -> None:

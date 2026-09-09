@@ -1,0 +1,128 @@
+"""Tests for audio.py: DS decode, vanilla attenuation, channels."""
+
+import os
+
+import pytest
+
+from pydoom import audio
+from pydoom.audio import SoundEngine, attenuate, decode_lump
+from pydoom.fixed import FRACUNIT
+from pydoom.wad import WadFile
+
+WAD_PATH = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
+
+requires_wad = pytest.mark.skipif(
+    not os.path.exists(WAD_PATH), reason="DOOM1.WAD not found"
+)
+
+
+def test_decode_lump_roundtrip():
+    pcm = bytes([0, 64, 128, 192, 255] * 20)
+    import struct
+    data = struct.pack("<HHI", 3, 11025, len(pcm)) + pcm
+    assert decode_lump(data) == pcm
+    with pytest.raises(ValueError):
+        decode_lump(b"\x03\x00")
+    with pytest.raises(ValueError):
+        decode_lump(struct.pack("<HHI", 3, 11025, 999) + b"\x80" * 10)
+
+
+def test_attenuate_close_full_far_silent():
+    lx, ly, la = 0, 0, 0
+    heard = attenuate(lx, ly, la, 10 << 16, 0)
+    assert heard is not None
+    vol, left, right = heard
+    assert vol == 1.0 and left == right == 1.0  # on top of it
+    assert attenuate(lx, ly, la, 1300 << 16, 0) is None  # past 1200
+    mid = attenuate(lx, ly, la, 680 << 16, 0)
+    assert mid is not None and 0.3 < mid[0] < 0.7  # linear-ish middle
+
+
+def test_attenuate_stereo_sides():
+    lx, ly = 0, 0
+    east = 0  # BAM facing east
+    _, left, right = attenuate(lx, ly, east, 500 << 16, 0)
+    assert left == right  # dead ahead: centered
+    _, left, right = attenuate(lx, ly, east, 0, 500 << 16)
+    assert (left > right) != (left < right)  # off-axis: split
+    ahead = attenuate(lx, ly, east, 500 << 16, 0)
+    to_side = attenuate(lx, ly, east, 0, 500 << 16)
+    assert ahead is not None and to_side is not None
+
+
+def test_engine_without_mixer_is_silent():
+    eng = SoundEngine()  # never init: no mixer, no wad
+    assert eng.play("pistol", 0, 0) is False
+    assert eng.sound("pistol") is None
+    eng.start_music("D_E1M1")  # stub never raises
+
+
+@requires_wad
+def test_engine_decodes_real_lump():
+    import pygame
+    eng = SoundEngine()
+    try:
+        ok = eng.init(WadFile(WAD_PATH))
+    except Exception:
+        pytest.skip("no audio device")
+        return
+    if not ok:
+        pytest.skip("mixer unavailable")
+        return
+    snd = eng.sound("pistol")
+    assert snd is not None
+    assert eng.sound("plasma") is None  # NOTE: shareware lacks it
+    assert eng.sound("nope") is None
+    pygame.mixer.quit()
+
+
+@requires_wad
+def test_link_sounds_never_stack():
+    import pygame
+    eng = SoundEngine()
+    try:
+        ok = eng.init(WadFile(WAD_PATH))
+    except Exception:
+        pytest.skip("no audio device")
+        return
+    if not ok:
+        pytest.skip("mixer unavailable")
+        return
+    eng.set_listener(0, 0, 0)
+    assert eng.play("itemup", 0, 0) is True
+    assert eng.play("itemup", 0, 0) is False  # NOTE: linked, no stack
+    pygame.mixer.quit()
+
+
+@requires_wad
+def test_priority_preempts_quiet():
+    import pygame
+    eng = SoundEngine()
+    try:
+        ok = eng.init(WadFile(WAD_PATH))
+    except Exception:
+        pytest.skip("no audio device")
+        return
+    if not ok:
+        pytest.skip("mixer unavailable")
+        return
+    eng.set_listener(0, 0, 0)
+    for _ in range(8):
+        eng.play("telept", 0, 0)  # priority 32 fills the board
+    assert eng.play("doropn", 0, 0) is True  # 100 kicks a 32 out
+    assert eng.play("telept", 0, 0) is False  # 32 cannot kick back
+    pygame.mixer.quit()
+
+
+def test_mute_switch():
+    eng = SoundEngine()
+    assert eng.toggle_mute() is True
+    assert eng.play("pistol", 0, 0) is False
+    assert eng.toggle_mute() is False
+
+
+def test_monster_table_covers_e1_cast():
+    for mt in ("POSSESSED", "SHOTGUY", "TROOP", "SERGEANT", "BRUISER"):
+        see, pain, death, act = audio.MONSTERS[mt]
+        for name in (see, pain, death, act):
+            assert name is None or name in audio.SFX, (mt, name)

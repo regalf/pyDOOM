@@ -233,27 +233,43 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
     ammo, cost = COST[weapon]
     if ammo >= 0:
         ps.ammo[ammo] -= cost
+    from pydoom import audio
     if weapon == WP_FIST:
+        # NOTE: vanilla fists swing silent.
         _melee(ps, shooter, physics, index, mobjs, skyflat, ctx, False)
     elif weapon == WP_CHAINSAW:
+        target = getattr(shooter, "target", None)
+        before = getattr(target, "health", None)
         _melee(ps, shooter, physics, index, mobjs, skyflat, ctx, True)
+        after = getattr(target, "health", None)
+        audio.play("sawhit" if after is not None and before is not None
+                   and after < before else "sawful",
+                   shooter.x, shooter.y)
+    elif weapon == WP_PISTOL:
+        audio.play("pistol", shooter.x, shooter.y)
     elif weapon == WP_SHOTGUN:
+        audio.play("shotgn", shooter.x, shooter.y)
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
         for _ in range(7):  # NOTE: A_FireShotgun never auto-aims straight
             gunshot(shooter, False, slope, physics, index, mobjs,
                     skyflat, ctx)
     elif weapon == WP_MISSILE:
+        audio.play("rlaunc", shooter.x, shooter.y)
         spawn_player_missile(shooter, MT_INDEX["ROCKET"], physics, index,
                              mobjs)
     elif weapon == WP_PLASMA:
+        # NOTE: shareware has no plasma lump; feel free to hear nothing.
         spawn_player_missile(shooter, MT_INDEX["PLASMA"], physics, index,
                              mobjs)
     elif weapon == WP_BFG:
+        # NOTE: shareware has no BFG lump either.
         # NOTE: A_FireBFG only launches; A_BFGSpray runs on the ball.
         ball = spawn_player_missile(shooter, MT_INDEX["BFG"], physics,
                                     index, mobjs)
         _bfg_spray(ball, shooter, physics, index, mobjs, skyflat, ctx)
     else:  # pistol, chaingun (SSG never fires in Doom 1 maps)
+        # NOTE: vanilla chainguns bark through the pistol lump.
+        audio.play("pistol", shooter.x, shooter.y)
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
         gunshot(shooter, accurate, slope, physics, index, mobjs,
                 skyflat, ctx)

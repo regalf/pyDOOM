@@ -27,6 +27,7 @@ import pygame
 from pydoom import combat
 from pydoom import flow
 from pydoom import weapons
+from pydoom import audio
 from pydoom.automap import Automap
 from pydoom.ai import AIContext, check_sight
 from pydoom.doors import World
@@ -177,6 +178,10 @@ def main() -> int:
     screen = pygame.display.set_mode((WIN_W, WIN_H))
     pygame.display.set_caption(f"pydoom - {game_map.marker}")
     try:
+        audio.init(wad)  # silent no-op when the mixer is missing
+    except Exception:
+        pass
+    try:
         font = pygame.font.SysFont(None, 18)
     except Exception:
         font = None
@@ -271,6 +276,11 @@ def main() -> int:
                     am_zoom_out = False
                 elif ev.key == pygame.K_x:
                     show_ai = not show_ai
+                elif ev.key == pygame.K_m:
+                    if audio.toggle_mute():
+                        message, message_tics = "SOUND OFF", TICRATE
+                    else:
+                        message, message_tics = "SOUND ON", TICRATE
                 elif pygame.K_1 <= ev.key <= pygame.K_7:
                     weapons.request_weapon(state["ps"], chr(ev.key))
             elif ev.type == pygame.MOUSEMOTION:
@@ -485,6 +495,7 @@ def main() -> int:
             target = floor + VIEWHEIGHT_ABOVE_FLOOR
             cam.viewz += (target - cam.viewz) * 0.3
 
+        audio.set_listener(player_mo.x, player_mo.y, cam.bam)
         if amap is not None:
             # NOTE: fullscreen automap (TAB): the game keeps running.
             amap.plr_x, amap.plr_y = player_mo.x, player_mo.y
@@ -583,8 +594,8 @@ def main() -> int:
                                 (8, 64))
             screen.blit(font.render(
                 "WASD/arrows move+turn, mouse look, Shift run, E use, "
-                "1-7 weapons, TAB map, N noclip, F freeze AI, X AI info, "
-                "PgUp/PgDn map, G mouse, Esc quit",
+                "1-7 weapons, TAB map, M sound, N noclip, F freeze AI, "
+                "X AI info, PgUp/PgDn map, G mouse, Esc quit",
                 True, (180, 180, 180)), (8, WIN_H - 120))
             if state["won"]:
                 big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
