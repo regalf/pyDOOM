@@ -12,6 +12,7 @@ from pydoom.mobjs import (
     ThingIndex,
     set_mobj_state,
     spawn_map,
+    spawn_mobj,
     think_mobj,
 )
 from pydoom.physics import Mover, Physics
@@ -102,3 +103,44 @@ def test_mobjs_frame_matches_static_frame(setup):
     fb_static = renderer.render_view(*args)
     fb_live = renderer.render_view(*args, mobjs=mobjs)
     assert np.array_equal(fb_static, fb_live)
+
+
+@requires_wad
+def test_corpse_rides_lift_down(setup):
+    """Stationary bodies track moving platforms instead of hovering."""
+    from pydoom.combat import damage_mobj, register_combat_actions
+    from pydoom.doors import World
+    from pydoom.info import MT_INDEX
+    from pydoom.textures import TextureManager
+    register_combat_actions()
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, TextureManager(wad))
+    from pydoom.ai import AIContext
+    ctx = AIContext(physics=phys, world=world, players=[])
+    ctx.mobjs = []
+    line = game_map.lines[195]
+    assert line.special == 88
+    sec = game_map.sectors[70]
+    corpse = spawn_mobj(game_map, phys, index, 3546 << 16, -3872 << 16, -1,
+                        MT_INDEX["POSSESSED"])
+    assert corpse.sector is sec
+    damage_mobj(corpse, None, None, 1000, ctx)
+    assert corpse.health <= 0 and corpse.z == sec.floorheight
+    top = sec.floorheight
+    assert world.do_plat(line, "downWaitUpStay", 0)
+    lagged = False
+    for _ in range(120):
+        world.tick()
+        think_mobj(corpse, phys, ctx)
+        assert corpse.z <= top  # never hovers above the start height
+        if corpse.z != sec.floorheight:
+            lagged = True  # mid-fall gravity lag is fine...
+    assert sec.floorheight < top  # ...but the lift really moved
+    for _ in range(60):
+        world.tick()
+        think_mobj(corpse, phys, ctx)
+    assert corpse.z == sec.floorheight  # ...and the body landed on it

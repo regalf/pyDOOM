@@ -271,6 +271,13 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
         if (mo.x, mo.y) != (ox, oy):
             # Re-link like P_SetThingPosition after a move.
             refresh_sector(mo, physics)
+    sec = mo.sector
+    if sec is not None and sec.specialdata is not None:
+        # NOTE: riding a lift: vanilla refreshes floorz on every move
+        # (P_TryMove), so bodies track the platform instead of hovering.
+        # Stationary bodies never move, hence this explicit re-glue.
+        mo.floorz = sec.floorheight
+        mo.ceilingz = sec.ceilingheight
     if mo.z != mo.floorz or mo.momz:
         _z_movement(mo, ctx)
         if mo.dead:
