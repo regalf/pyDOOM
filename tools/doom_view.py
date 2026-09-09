@@ -157,7 +157,7 @@ def main() -> int:
         ctx.player_state = ps
         state = {"cooldown": 0, "refire": False, "firing": False,
                  "start": start, "ps": ps, "won": False,
-                 "flash_until": 0, "bob": 0}
+                 "flash_until": 0, "melee_until": 0, "bob": 0}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
 
     game_map, cam, phys, player_mo, world, mobjs, ctx, state = load_map(
@@ -335,6 +335,10 @@ def main() -> int:
                     if flash is not None:
                         state["flash_until"] = (
                             state.get("tics", 0) + weapons.FLASH_TICS)
+                    elif ps.readyweapon in weapons.MELEE_FRAMES:
+                        state["melee_until"] = (
+                            state.get("tics", 0) + cd)
+                        state["melee_span"] = max(1, cd)
                 # NOTE: cd < 0 means still switching or just auto-switched
                 # off a dry gun (vanilla never clicks empty).
             state["refire"] = want_fire
@@ -508,6 +512,8 @@ def main() -> int:
         bobx = int(amp * math.cos(bob * 0.35))
         boby = int(amp * math.sin(bob * 0.35))
         firing = state.get("tics", 0) < state["flash_until"]
+        melee = (state.get("tics", 0) < state.get("melee_until", 0)
+                 and ps.readyweapon in weapons.MELEE_FRAMES)
         if ps.pendingweapon != ps.readyweapon:
             # NOTE: A_Lower/A_Raise dip: old gun sinks, new gun rises.
             travel = 1 - ps.switchtics / weapons.SWITCH_TICS
@@ -516,12 +522,21 @@ def main() -> int:
             else:
                 body, flash = weapons.PSPRITES[ps.pendingweapon]
                 yoff = int(96 * (1 - (travel - 0.5) * 2))
-            firing = False
+            firing = melee = False
         else:
             yoff = 0
         if firing:
             # NOTE: attack frames kick the body while the flash shows.
             if not renderer.draw_psprite(fb, body, bobx, boby + yoff, "B"):
+                renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+        elif melee:
+            # NOTE: S_PUNCH1..5 rhythm across the cooldown window.
+            span = max(1, state.get("melee_span", 1))
+            step = (state["melee_until"] - state.get("tics", 0)) / span
+            frames = weapons.MELEE_FRAMES[ps.readyweapon]
+            pick = frames[min(4, int((1 - step) * 5))]
+            if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
+                                         pick):
                 renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
         else:
             renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")

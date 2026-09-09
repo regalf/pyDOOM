@@ -48,12 +48,17 @@ KEYMAP = {"1": (WP_CHAINSAW, WP_FIST), "2": (WP_PISTOL,),
           "3": (WP_SSG, WP_SHOTGUN), "4": (WP_CHAINGUN,),
           "5": (WP_MISSILE,), "6": (WP_PLASMA,), "7": (WP_BFG,)}
 # NOTE: HUD sprites (body, flash); plasma/BFG lumps only exist in the
-# registered WAD, the renderer skips missing ones silently.
+# registered WAD, the renderer skips missing ones silently. CSAW is the
+# floor pickup; the held saw is SAWG (all shareware-present).
 PSPRITES = {WP_FIST: ("PUNG", None), WP_PISTOL: ("PISG", "PISF"),
             WP_SHOTGUN: ("SHTG", "SHTF"), WP_CHAINGUN: ("CHGG", "CHGF"),
             WP_MISSILE: ("MISG", "MISF"), WP_PLASMA: ("PLSG", "PLSF"),
-            WP_BFG: ("BFGG", "BFGF"), WP_CHAINSAW: ("CSAW", None),
+            WP_BFG: ("BFGG", "BFGF"), WP_CHAINSAW: ("SAWG", None),
             WP_SSG: ("SHT2", "SHTF")}
+# NOTE: melee attack frames cycled across the cooldown window: the
+# punch runs B-C-D-C-B (S_PUNCH1..5), the saw bites on B (S_SAW2).
+MELEE_FRAMES = {WP_FIST: ("B", "C", "D", "C", "B"),
+                WP_CHAINSAW: ("B", "B", "B", "B", "B")}
 FLASH_TICS = 4
 
 
