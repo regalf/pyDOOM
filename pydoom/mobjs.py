@@ -218,8 +218,8 @@ def spawn_map(game_map: Map, physics, index: ThingIndex,
             raise ValueError(
                 f"P_SpawnMapThing: unknown type {thing.type} "
                 f"at ({thing.x}, {thing.y})")
-        if rec["flags"] & _MF_NOTDMATCH:
-            continue  # deathmatch-only in a single-player view
+        # NOTE: MF_NOTDMATCH skips only in deathmatch (vanilla); this
+        # engine is single-player, so keys always spawn.
         mo = spawn_mobj(game_map, physics, index,
                         thing.x << 16, thing.y << 16,
                         -2 if rec["flags"] & _MF_SPAWNCEILING else -1,

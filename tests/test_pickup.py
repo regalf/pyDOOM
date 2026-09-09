@@ -343,3 +343,29 @@ def test_spent_armor_clears_type(setup):
     damage_mobj(player, None, None, 30, ctx)
     assert player.health == 70  # nothing absorbed...
     assert ps.armortype == 0  # ...but vanilla still clears the type
+
+
+@requires_wad
+def test_e1m2_red_key_spawns_and_opens(setup):
+    """NOTDMATCH means deathmatch-only skip: keys spawn in solo play."""
+    from pydoom.doors import World
+    from pydoom.mobjs import spawn_map
+    from pydoom.textures import TextureManager
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M2")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    mobjs = spawn_map(game_map, phys, index)
+    keys = [mo for mo in mobjs if mo.doomednum == 13]
+    assert len(keys) == 1  # the red keycard is really there
+    game_map1, phys1, index1, ctx = setup
+    player, ps, ctx, _ = make_player(setup)
+    keys[0].x, keys[0].y, keys[0].z = player.x, player.y, player.z
+    picked, msg = touch_special_thing(keys[0], player, ps, ctx)
+    assert picked and ps.keys & KEY_RED
+    world = World(game_map, TextureManager(wad))
+    line = game_map.lines[527]
+    assert line.special == 28  # red manual door
+    assert world.use_special_line(line, 0, True, ps.keys) is None
+    assert len(world.thinkers) == 1  # opens with the key
