@@ -220,3 +220,13 @@ def test_chaingun_honors_accurate_flag(setup, monkeypatch):
     weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     weapons.fire(ps, player, phys, index, ctx.mobjs, None, False, ctx)
     assert calls == [True, False]  # aimed first, sprayed on refire
+
+
+def test_attack_timelines_match_cooldowns():
+    """Body-frame timelines must span exactly one attack cycle."""
+    from pydoom.player import WP_CHAINGUN
+    for weapon, cd in weapons.COOLDOWN.items():
+        assert len(weapons.ATTACK_BODY[weapon]) == cd, weapon
+        if weapon == WP_CHAINGUN:
+            continue  # NOTE: vanilla flash (5) bridges its 4-tic cycle
+        assert weapons.FLASH_TICS[weapon] <= cd, weapon

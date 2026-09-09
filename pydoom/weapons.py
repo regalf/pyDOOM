@@ -33,11 +33,29 @@ from pydoom.player import (
     WP_SSG,
 )
 
-# Viewer-tuned tics between shots (no raise/lower/flash sprites yet).
+# NOTE: viewer-tuned attack cycles were 2-8x vanilla; these are the
+# real state durations (p_pspr.c), so held-fire rates match Doom.
 SWITCH_TICS = 10
-COOLDOWN = {WP_FIST: 8, WP_PISTOL: 8, WP_SHOTGUN: 25, WP_CHAINGUN: 4,
-            WP_MISSILE: 20, WP_PLASMA: 3, WP_BFG: 30, WP_CHAINSAW: 4,
-            WP_SSG: 25}
+COOLDOWN = {WP_FIST: 22, WP_PISTOL: 19, WP_SHOTGUN: 44, WP_CHAINGUN: 4,
+            WP_MISSILE: 20, WP_PLASMA: 23, WP_BFG: 60, WP_CHAINSAW: 4,
+            WP_SSG: 44}
+# NOTE: muzzle-flash lengths from the FLASH states (lights skipped).
+FLASH_TICS = {WP_FIST: 0, WP_PISTOL: 7, WP_SHOTGUN: 7, WP_CHAINGUN: 5,
+              WP_MISSILE: 7, WP_PLASMA: 4, WP_BFG: 17, WP_CHAINSAW: 0,
+              WP_SSG: 7}
+# NOTE: body frames across each cycle (one char per tic), from the
+# attack states: the kick reads because it lasts, like vanilla.
+ATTACK_BODY = {
+    WP_FIST: "BBBBCCCCDDDDDCCCCBBBBB",
+    WP_PISTOL: "AAAABBBBBBCCCCBBBBB",
+    WP_SHOTGUN: ("AAAAAAAAAABBBBBCCCCCDDDDCCCCCBBBBBAAAAAAAAAA"),
+    WP_CHAINGUN: "AABB",
+    WP_MISSILE: "B" * 20,
+    WP_PLASMA: "AAA" + "B" * 20,
+    WP_BFG: "A" * 20 + "B" * 40,
+    WP_CHAINSAW: "AABB",
+    WP_SSG: "A" * 44,
+}
 # (ammo type, rounds per shot); ammo < 0 means unarmed.
 COST = {WP_FIST: (-1, 0), WP_PISTOL: (AM_CLIP, 1), WP_SHOTGUN: (AM_SHELL, 1),
         WP_CHAINGUN: (AM_CLIP, 1), WP_MISSILE: (AM_MISL, 1),
@@ -55,11 +73,6 @@ PSPRITES = {WP_FIST: ("PUNG", None), WP_PISTOL: ("PISG", "PISF"),
             WP_MISSILE: ("MISG", "MISF"), WP_PLASMA: ("PLSG", "PLSF"),
             WP_BFG: ("BFGG", "BFGF"), WP_CHAINSAW: ("SAWG", None),
             WP_SSG: ("SHT2", "SHTF")}
-# NOTE: melee attack frames cycled across the cooldown window: the
-# punch runs B-C-D-C-B (S_PUNCH1..5), the saw bites on B (S_SAW2).
-MELEE_FRAMES = {WP_FIST: ("B", "C", "D", "C", "B"),
-                WP_CHAINSAW: ("B", "B", "B", "B", "B")}
-FLASH_TICS = 4
 
 
 def has_ammo_for(ps, weapon: int) -> bool:
