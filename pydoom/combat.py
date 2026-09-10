@@ -136,6 +136,8 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
         target.momx += fixed_mul(thrust, tables.finecosine(fa))
         target.momy += fixed_mul(thrust, tables.finesine[fa])
     target.health -= damage
+    if getattr(target, "is_player", False):
+        target.attacker = source  # NOTE: face-turn tracking (no AI use)
     if target.health <= 0:
         kill_mobj(source, target, ctx)
         return

@@ -39,7 +39,7 @@ from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
 from pydoom.player import PlayerState, WP_CHAINSAW, palette_index
-from pydoom.statusbar import draw_status_bar
+from pydoom.statusbar import FaceState, draw_status_bar, update_face
 from pydoom.renderer import SCREENHEIGHT, SCREENWIDTH, Renderer
 from pydoom.textures import TextureManager
 from pydoom.wad import WadFile
@@ -165,7 +165,7 @@ def main() -> int:
         state = {"cooldown": 0, "refire": False, "firing": False,
                  "start": start, "ps": ps, "won": False,
                  "flash_until": 0, "atk_until": 0, "atk_span": 1,
-                 "bob": 0}
+                 "bob": 0, "face": FaceState()}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
 
     game_map, cam, phys, player_mo, world, mobjs, ctx, state = load_map(
@@ -368,6 +368,9 @@ def main() -> int:
                 # NOTE: cd < 0 means still switching or just auto-switched
                 # off a dry gun (vanilla never clicks empty).
             state["refire"] = want_fire
+            # NOTE: Doomguy face ticks with the gamesim (ST_updateFaceWidget).
+            state["facelump"] = update_face(state["face"], ps, player_mo,
+                                            bool(want_fire))
             if (ps.readyweapon == WP_CHAINSAW
                     and ps.pendingweapon == WP_CHAINSAW
                     and not state["cooldown"]
@@ -582,7 +585,8 @@ def main() -> int:
         if firing and flash is not None:
             renderer.draw_psprite(fb, flash, bobx, boby + yoff)
         # NOTE: classic bottom strip (covers the gun base, like vanilla).
-        draw_status_bar(renderer, fb, ps, player_mo.health)
+        draw_status_bar(renderer, fb, ps, player_mo.health,
+                        state.get("facelump", "STFST00"))
         frame = pygame.image.frombuffer(
             palette_luts[palette_index(ps)][fb].tobytes(),
             (SCREENWIDTH, SCREENHEIGHT), "RGB"

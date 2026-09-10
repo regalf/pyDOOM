@@ -129,3 +129,34 @@ def test_extra_light_brightens_view(setup):
     lit = hashlib.md5(bytes(bytearray(
         renderer.render_view(*args, extra_light=2)))).hexdigest()
     assert dark != lit
+
+
+@requires_wad
+def test_face_cascade():
+    """Doomguy grins, hurts, rampages and dies through ST indices."""
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
+    from pydoom.physics import Physics
+    from pydoom.player import PlayerState
+    from pydoom.statusbar import FaceState, face_lump, update_face
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    mo = spawn_mobj(game_map, phys, index, 1056 << 16, -3616 << 16, 0,
+                    MT_INDEX["PLAYER"])
+    assert face_lump(0) == "STFST00"
+    assert face_lump(40) == "STFGOD0"
+    assert face_lump(41) == "STFDEAD0"
+    assert face_lump(8 + 5) == "STFOUCH1"
+    # NOTE: idle picks a straight face and settles.
+    fs, ps = FaceState(), PlayerState()
+    assert update_face(fs, ps, mo, False).startswith("STFST")
+    # NOTE: weapon bonus grins (priority 8 beats pain below).
+    ps.bonuscount = 6
+    ps.weapons |= 1 << 2
+    assert update_face(fs, ps, mo, False).startswith("STFEVL")
+    # NOTE: corpse face wins over everything while dead.
+    mo.health = 0
+    assert update_face(fs, ps, mo, False) == "STFDEAD0"

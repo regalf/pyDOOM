@@ -106,6 +106,7 @@ class Mobj:
     meleestate: int = 0
     missilestate: int = 0
     target: "Mobj | None" = field(default=None, repr=False)
+    attacker: "Mobj | None" = field(default=None, repr=False)  # face-turn
     floorz: int = 0
     ceilingz: int = 0
     sector: object = field(default=None, repr=False)

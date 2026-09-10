@@ -97,7 +97,8 @@ def _draw_number(renderer, fb, value: int, x_right: int, y: int,
     return x_right
 
 
-def draw_status_bar(renderer, fb, ps, health: int) -> None:
+def draw_status_bar(renderer, fb, ps, health: int,
+                      face: str = "STFST00") -> None:
     """ST_Ticker lite: background, face, ammo/health/armor/arms/keys."""
     _blit(renderer, fb, "STBAR", 0, ST_Y)
     _blit(renderer, fb, "STARMS", ARMSBG_X, ARMSBG_Y)
@@ -110,7 +111,7 @@ def draw_status_bar(renderer, fb, ps, health: int) -> None:
     _blit(renderer, fb, "STTPRCNT", HEALTH_X, HEALTH_Y)
     _draw_number(renderer, fb, ps.armorpoints, ARMOR_X, ARMOR_Y, "STTNUM")
     _blit(renderer, fb, "STTPRCNT", ARMOR_X, ARMOR_Y)
-    _blit(renderer, fb, "STFST00", FACE_X, FACE_Y)
+    _blit(renderer, fb, face, FACE_X, FACE_Y)
     for i in range(6):  # NOTE: arms 2-7 light up when owned.
         if ps.weapons & (1 << (i + 1)):
             _blit(renderer, fb, f"STGNUM{i + 2}",
@@ -125,3 +126,122 @@ def draw_status_bar(renderer, fb, ps, health: int) -> None:
     for ammo, y in MINI_Y.items():
         _draw_number(renderer, fb, ps.ammo[ammo], MINI_X, y, "STYSNUM")
         _draw_number(renderer, fb, ps.maxammo[ammo], MAX_X, y, "STYSNUM")
+
+
+# -- Doomguy face (ST_updateFaceWidget lite) --
+
+TICRATE = 35
+MUCHPAIN = 20
+
+
+class FaceState:
+    """st_faceindex/priority/count statics, per viewer run."""
+
+    def __init__(self) -> None:
+        self.priority = 0
+        self.facecount = 0
+        self.faceindex = 0
+        self.oldhealth = -1
+        self.lastattackdown = -1
+        self.oldweapons = 0
+        self.lastcalc = 0
+        self.calchealth = -1
+
+
+def _pain_offset(fs: FaceState, health: int) -> int:
+    h = min(health, 100)
+    if h != fs.calchealth:
+        fs.lastcalc = 8 * (((100 - h) * 5) // 101)
+        fs.calchealth = h
+    return fs.lastcalc
+
+
+def face_lump(faceindex: int) -> str:
+    """Face table name for a st_faceindex (god/dead past the grid)."""
+    if faceindex == 40:
+        return "STFGOD0"
+    if faceindex == 41:
+        return "STFDEAD0"
+    pain, sub = faceindex // 8, faceindex % 8
+    if sub <= 2:
+        return f"STFST{pain}{sub}"
+    if sub == 3:
+        return f"STFTR{pain}0"
+    if sub == 4:
+        return f"STFTL{pain}0"
+    if sub == 5:
+        return f"STFOUCH{pain}"
+    if sub == 6:
+        return f"STFEVL{pain}"
+    return f"STFKILL{pain}"
+
+
+def update_face(fs: FaceState, ps, mo, attackdown: bool) -> str:
+    """ST_updateFaceWidget: dead/grin/pain/rampage/invuln/idle cascade."""
+    from pydoom.angles import point_to_angle2
+    from pydoom.fixed import ANG45, ANG180
+    from pydoom.m_random import m_random
+    from pydoom.player import PW_INVULN
+    health = mo.health
+    if fs.priority < 10 and health == 0:
+        fs.priority, fs.faceindex, fs.facecount = 9, 41, 1
+    if fs.priority < 9 and ps.bonuscount:
+        grin = False
+        for i in range(9):
+            if bool(fs.oldweapons & (1 << i)) != bool(ps.weapons & (1 << i)):
+                grin = True
+                fs.oldweapons = ps.weapons
+        if grin:
+            fs.priority, fs.facecount = 8, 2 * TICRATE
+            fs.faceindex = _pain_offset(fs, health) + 6
+    if fs.priority < 8 and ps.damagecount and mo.attacker is not None \
+            and mo.attacker is not mo:
+        fs.priority = 7
+        if health - fs.oldhealth > MUCHPAIN:
+            fs.facecount = TICRATE
+            fs.faceindex = _pain_offset(fs, health) + 5
+        else:
+            badguy = point_to_angle2(mo.x, mo.y, mo.attacker.x,
+                                     mo.attacker.y)
+            if badguy > mo.angle:
+                diffang = (badguy - mo.angle) & 0xFFFFFFFF
+                side = diffang > ANG180
+            else:
+                diffang = (mo.angle - badguy) & 0xFFFFFFFF
+                side = diffang <= ANG180
+            fs.facecount = TICRATE
+            fs.faceindex = _pain_offset(fs, health)
+            if diffang < ANG45:
+                fs.faceindex += 7  # NOTE: head-on rampage glare
+            elif side:
+                fs.faceindex += 3  # NOTE: turn right
+            else:
+                fs.faceindex += 4  # NOTE: turn left
+    if fs.priority < 7 and ps.damagecount:
+        if health - fs.oldhealth > MUCHPAIN:
+            fs.priority, fs.facecount = 7, TICRATE
+            fs.faceindex = _pain_offset(fs, health) + 5
+        else:
+            fs.priority, fs.facecount = 6, TICRATE
+            fs.faceindex = _pain_offset(fs, health) + 7
+    if fs.priority < 6:
+        if attackdown:
+            if fs.lastattackdown == -1:
+                fs.lastattackdown = 2 * TICRATE
+            else:
+                fs.lastattackdown -= 1
+                if not fs.lastattackdown:
+                    fs.priority, fs.faceindex, fs.facecount = \
+                        5, _pain_offset(fs, health) + 7, 1
+                    fs.lastattackdown = 1
+        else:
+            fs.lastattackdown = -1
+    if fs.priority < 5 and ps.powers.get(PW_INVULN):
+        fs.priority, fs.faceindex, fs.facecount = 4, 40, 1
+    if not fs.facecount:
+        fs.faceindex = _pain_offset(fs, health) + m_random() % 3
+        fs.facecount = TICRATE // 2
+        fs.priority = 0
+    fs.facecount -= 1
+    fs.oldhealth = health
+    return face_lump(fs.faceindex)
