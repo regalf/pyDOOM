@@ -369,3 +369,45 @@ def test_e1m2_red_key_spawns_and_opens(setup):
     assert line.special == 28  # red manual door
     assert world.use_special_line(line, 0, True, ps.keys) is None
     assert len(world.thinkers) == 1  # opens with the key
+
+
+@requires_wad
+def test_flash_counters_and_palette():
+    from pydoom.player import PlayerState, palette_index
+    ps = PlayerState()
+    assert palette_index(ps) == 0
+    ps.damagecount = 20
+    assert palette_index(ps) == 4  # NOTE: (20+7)>>3 + 1 red ramp
+    ps.damagecount = 100
+    assert palette_index(ps) == 8  # capped at the deepest red
+    ps.damagecount = 0
+    ps.bonuscount = 6
+    assert palette_index(ps) == 10  # NOTE: (6+7)>>3 + 9 gold ramp
+    ps.bonuscount = 0
+    ps.powers["ironfeet"] = 200
+    assert palette_index(ps) == 13  # radsuit green
+    ps.powers["ironfeet"] = 4
+    assert palette_index(ps) == 0  # NOTE: last moments blink out
+
+
+@requires_wad
+def test_damage_feeds_red_flash(setup):
+    game_map, phys, index, ctx = setup
+    player, ps, ctx, _ = make_player(setup)
+    ps.armortype, ps.armorpoints = 0, 0
+    damage_mobj(player, None, None, 30, ctx)
+    assert ps.damagecount == 30
+    assert player.health == 70
+    damage_mobj(player, None, None, 500, ctx)
+    assert ps.damagecount == 100  # capped like vanilla
+    for _ in range(5):
+        ps.tick(player)
+    assert ps.damagecount == 95 and ps.bonuscount == 0
+
+
+@requires_wad
+def test_pickup_feeds_gold_flash(setup):
+    game_map, phys, index, ctx = setup
+    player, ps, ctx, _ = make_player(setup)
+    picked, _ = touch_special_thing(make_item(setup, 2007), player, ps, ctx)
+    assert picked and ps.bonuscount == 6  # NOTE: BONUSADD per item

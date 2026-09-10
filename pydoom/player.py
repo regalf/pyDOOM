@@ -60,10 +60,15 @@ class PlayerState:
     armortype: int = 0  # 0 none, 1 green (1/3), 2 blue (1/2)
     keys: int = 0
     powers: dict = field(default_factory=dict)
+    damagecount: int = 0  # NOTE: red palette flash, decays per tic
+    bonuscount: int = 0  # NOTE: gold pickup flash, decays per tic
 
     def tick(self, player_mo=None) -> None:
-        """P_PlayerThink power counters: strength counts up (never
-        fades), allmap is level-long; invisibility drops its shadow."""
+        """P_PlayerThink counters: powers, palette flash countdowns."""
+        if self.damagecount:
+            self.damagecount -= 1
+        if self.bonuscount:
+            self.bonuscount -= 1
         if self.powers.get(PW_STRENGTH):
             self.powers[PW_STRENGTH] += 1
         for name in list(self.powers):
@@ -77,3 +82,22 @@ class PlayerState:
                     player_mo.flags &= ~MF_FLAGS["MF_SHADOW"]
             else:
                 self.powers[name] = left
+
+
+def palette_index(ps) -> int:
+    """ST_doPaletteStuff: PLAYPAL slot (0 normal, 1-8 red, 9-12 gold,
+    13 radsuit) from the flash counters."""
+    cnt = ps.damagecount
+    if ps.powers.get(PW_STRENGTH):
+        # NOTE: berserk red slowly fades as strength counts up.
+        bzc = 12 - (ps.powers[PW_STRENGTH] >> 6)
+        if bzc > cnt:
+            cnt = bzc
+    if cnt:
+        return min((cnt + 7) >> 3, 7) + 1
+    if ps.bonuscount:
+        return min((ps.bonuscount + 7) >> 3, 3) + 9
+    iron = ps.powers.get(PW_IRONFEET, 0)
+    if iron > 4 * 32 or iron & 8:
+        return 13
+    return 0

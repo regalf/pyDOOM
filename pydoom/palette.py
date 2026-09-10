@@ -7,7 +7,7 @@ flashes and are used by the renderer and status bar later.
 
 from __future__ import annotations
 
-__all__ = ["NUM_PALETTES", "load_playpal"]
+__all__ = ["NUM_PALETTES", "load_playpal", "load_playpal_index"]
 
 
 NUM_PALETTES = 14
@@ -15,8 +15,15 @@ NUM_PALETTES = 14
 
 def load_playpal(data: bytes) -> list[tuple[int, int, int]]:
     """Parse the first (base) palette of a PLAYPAL lump into 256 RGB tuples."""
-    if len(data) < 768:
-        raise ValueError(f"PLAYPAL lump too short: {len(data)} bytes")
+    return load_playpal_index(data, 0)
+
+
+def load_playpal_index(data: bytes, index: int) -> list[tuple[int, int, int]]:
+    """Parse one palette (0 base, 1-8 red, 9-12 gold, 13 suit)."""
+    base = index * 768
+    if len(data) < base + 768:
+        raise ValueError(f"PLAYPAL lump too short for index {index}")
     return [
-        (data[i], data[i + 1], data[i + 2]) for i in range(0, 768, 3)
+        (data[base + i], data[base + i + 1], data[base + i + 2])
+        for i in range(0, 768, 3)
     ]

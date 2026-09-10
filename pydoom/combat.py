@@ -117,6 +117,8 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
                 ps.armortype = 0
             ps.armorpoints -= saved
             damage -= saved
+        # NOTE: red flash tracks post-armor damage, capped at 100.
+        ps.damagecount = min(100, ps.damagecount + damage)
     chainsawing = (ps is not None and ps.readyweapon == WP_CHAINSAW)
     if (inflictor is not None and not (target.flags & MF_FLAGS["MF_NOCLIP"])
             and (source is None or not getattr(source, "is_player", False)

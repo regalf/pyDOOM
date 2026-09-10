@@ -235,8 +235,10 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
                   "key"):
         sound = "itemup"
     picked, msg = _apply_touch(item, picker_mo, ps, spec, dropped)
-    if picked and sound is not None:
-        audio.play(sound, picker_mo.x, picker_mo.y)
+    if picked:
+        ps.bonuscount += 6  # NOTE: BONUSADD gold flash per item
+        if sound is not None:
+            audio.play(sound, picker_mo.x, picker_mo.y)
     return picked, msg
 
 

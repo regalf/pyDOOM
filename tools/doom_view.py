@@ -35,10 +35,10 @@ from pydoom.info import MT_INDEX, MT_NAMES, STATE_INDEX
 from pydoom.mapdata import Map
 from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map, spawn_mobj
 from pydoom.mobjs import think_mobj
-from pydoom.palette import load_playpal
+from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
-from pydoom.player import PlayerState
+from pydoom.player import PlayerState, palette_index
 from pydoom.statusbar import draw_status_bar
 from pydoom.renderer import SCREENHEIGHT, SCREENWIDTH, Renderer
 from pydoom.textures import TextureManager
@@ -109,6 +109,12 @@ def main() -> int:
         ver = "nogit"
     palette_lut = np.array(load_playpal(wad.read_lump("PLAYPAL")),
                            dtype=np.uint8)
+    # NOTE: damage/bonus/suit flash palettes (ST_doPaletteStuff).
+    _playpal_data = wad.read_lump("PLAYPAL")
+    palette_luts = {
+        i: np.array(load_playpal_index(_playpal_data, i), dtype=np.uint8)
+        for i in range(NUM_PALETTES)
+    }
     renderer = Renderer(wad, texman)
     maps = wad.list_maps()
 
@@ -557,7 +563,8 @@ def main() -> int:
         # NOTE: classic bottom strip (covers the gun base, like vanilla).
         draw_status_bar(renderer, fb, ps, player_mo.health)
         frame = pygame.image.frombuffer(
-            palette_lut[fb].tobytes(), (SCREENWIDTH, SCREENHEIGHT), "RGB"
+            palette_luts[palette_index(ps)][fb].tobytes(),
+            (SCREENWIDTH, SCREENHEIGHT), "RGB"
         )
         screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)), (0, 0))
         if font is not None:
