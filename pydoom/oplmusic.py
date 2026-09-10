@@ -15,7 +15,7 @@ import threading
 
 TICK_HZ = 140  # MUS delay units per second (DMX score clock)
 SAMPLE_RATE = 11025  # matches the SFX mixer (Sound Blaster did the same)
-CHUNK_SEC = 0.25  # streaming slice (queue holds ~1s against hitches)
+CHUNK_SEC = 0.25  # streaming slice (queue holds ~4 s against hitches)
 N_VOICES = 9  # OPL2, like vanilla DMX (no OPL3 second array)
 PERCUSSION_CH = 15  # MUS drum channel (MIDI 9 after mus2mid)
 
@@ -576,7 +576,8 @@ class MusicPlayer:
         self.chunk_n = int(chunk_sec * rate)
         self.rate = rate
         self._cmd: queue.Queue = queue.Queue()
-        self._out: queue.Queue = queue.Queue(maxsize=8)
+        self._out: queue.Queue = queue.Queue(maxsize=16)  # NOTE: ~4 s
+        # of ride-through for transient CPU spikes (background tasks).
         self._muted = False
         self._live = True
         self._dc_x = 0.0  # NOTE: one-pole DC blocker state (below)
