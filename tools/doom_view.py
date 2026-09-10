@@ -34,6 +34,7 @@ from pydoom import cheats
 from pydoom import flow
 from pydoom import interm
 from pydoom import menu
+from pydoom import oplmusic
 from pydoom import weapons
 from pydoom import audio
 from pydoom.automap import Automap
@@ -190,6 +191,8 @@ def main() -> int:
                                  f"(baby/easy/normal/hard/nightmare)")
         elif a == "--fast":
             fast = True
+    audio.verbose = debug  # NOTE: terminal chatter needs --debug
+    oplmusic.verbose = debug
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
     default_wad = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
     wad_path = args[1] if len(args) > 1 else default_wad

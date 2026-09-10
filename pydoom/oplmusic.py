@@ -13,6 +13,8 @@ audio and is imported lazily, so music degrades to silence without it.
 import queue
 import threading
 
+verbose = False  # terminal chatter (viewer sets it from --debug)
+
 TICK_HZ = 140  # MUS delay units per second (DMX score clock)
 SAMPLE_RATE = 11025  # matches the SFX mixer (Sound Blaster did the same)
 CHUNK_SEC = 0.25  # streaming slice (queue holds ~4 s against hitches)
@@ -557,7 +559,8 @@ def create_backend():
     try:
         backend = PyOplBackend()
     except ImportError:
-        print("music: PyOPL missing (pip install PyOPL), silent")
+        if verbose:
+            print("music: PyOPL missing (pip install PyOPL), silent")
         return NullBackend()
     return backend
 
@@ -632,7 +635,8 @@ class MusicPlayer:
             self._serve(parse_mus)
         except Exception as exc:  # NOTE: a dead song thread used to
             self.error = exc  # look exactly like "music never starts"
-            print(f"music: worker died: {exc!r}")
+            if verbose:
+                print(f"music: worker died: {exc!r}")
 
     def _serve(self, parse_mus) -> None:
         sched = None

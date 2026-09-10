@@ -257,6 +257,8 @@ class SoundEngine:
 
 engine = SoundEngine()
 
+verbose = False  # terminal chatter (viewer sets it from --debug)
+
 
 def init(wad, master: float = 1.0) -> bool:
     return engine.init(wad, master)
@@ -330,7 +332,8 @@ def music_play(lump_name: str, trigger: str = "") -> bool:
     _music_player.play_song(data, _music_main, _music_perc,
                             _music_vol * 127 // 15)
     music_log.append((lump_name, trigger))
-    print(f"music: {lump_name} [{trigger}]")
+    if verbose:
+        print(f"music: {lump_name} [{trigger}]")
     return True
 
 
