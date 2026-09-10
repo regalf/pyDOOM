@@ -207,12 +207,17 @@ class Scheduler:
 
     def _init_chip(self) -> None:
         write = self.backend.write_reg
-        write(0x01, 0x20)  # NOTE: waveform select enable
-        write(0x08, 0x00)  # NOTE: CSM/keyboard split off
-        write(0xBD, 0x00)  # NOTE: rhythm mode off (melodic drums)
-        for i in range(N_VOICES):
-            write(REG_FREQ1 + i, 0)
-            write(REG_FREQ2 + i, 0)
+        # NOTE: OPL_InitRegisters (OPL2 branch): levels hot-muted,
+        # everything else zeroed, timers reset, waveforms enabled.
+        for reg in range(REG_LEVEL, REG_LEVEL + 22):
+            write(reg, 0x3F)
+        for reg in range(REG_ATTACK, REG_WAVEFORM + 22):
+            write(reg, 0x00)
+        for reg in range(1, REG_LEVEL):
+            write(reg, 0x00)
+        write(0x04, 0x60)
+        write(0x04, 0x80)
+        write(0x01, 0x20)
 
     def set_music_volume(self, volume: int) -> None:
         """I_OPL_SetMusicVolume: master, drums track it directly."""
@@ -259,6 +264,35 @@ class Scheduler:
             self.start_volume = self.music_volume
             for i in range(16):
                 self.channels[i] = _new_channel(self.main[0])
+
+    def next_time(self) -> float:
+        """Absolute song time of the next score event (loop-aware)."""
+        if self.pos < len(self.events):
+            return self.base + self.events[self.pos][0]
+        return self.base + self.total
+
+    def render_chunk(self, backend, rate: int, ntarget: int):
+        """Event-exact PCM for ~ntarget samples: slice the span at
+        score events (Chocolate schedules per-event callbacks) so
+        short notes never collapse into the chunk-end state."""
+        import numpy as np
+        end = self.now + ntarget / rate
+        if self.total <= 0:
+            # NOTE: degenerate song (all events at tick 0, or empty):
+            # fire them, render the span whole, never loop-spin.
+            self.advance(end - self.now)
+            return backend.render(ntarget)
+        parts: list = []
+        while self.now < end - 1e-9:
+            seg = min(max(self.next_time() - self.now, 0.0),
+                      end - self.now)
+            nsamp = int(round(seg * rate))
+            if nsamp > 0:
+                parts.append(backend.render(nsamp))
+            self.advance(seg if nsamp == 0 else nsamp / rate)
+        if not parts:
+            return np.zeros(0, dtype=np.int16)
+        return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
     def _fire(self, kind: str, channel: int, args: tuple) -> None:
         if kind == "on":
@@ -607,9 +641,9 @@ class MusicPlayer:
                     self._drain()
             if sched is None or isinstance(self.backend, NullBackend):
                 continue
-            sched.advance(self.chunk_n / self.rate)
-            pcm = self.backend.render(self.chunk_n)
-            if pcm is None:
+            pcm = sched.render_chunk(self.backend, self.rate,
+                                     self.chunk_n)
+            if len(pcm) == 0:
                 continue
             import numpy as np
             # NOTE: the chip sums small DC biases (half-sine waves);

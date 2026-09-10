@@ -49,7 +49,9 @@ def test_tables():
 def test_init_programs_chip():
     _, back = sched([])
     assert (0x01, 0x20) in back.writes  # NOTE: waveform enable
+    assert (0x04, 0x80) in back.writes  # NOTE: timer reset pair
     assert (0xBD, 0x00) in back.writes  # NOTE: rhythm mode off
+    assert (0x40, 0x3F) in back.writes  # NOTE: levels hot-muted
 
 
 def test_note_on_off_keyon_bit():
@@ -158,8 +160,9 @@ def test_real_song_drives_voices():
 
 
 def _tiny_mus():
-    score = bytes((0x10, 60, 0x80, 60, 0x46, 0xE0))  # on, off @70, end
-    head = b"MUS\x1a" + (6).to_bytes(2, "little") + (14).to_bytes(
+    # NOTE: on@0, off@70 (delay follows the last-flagged event), end.
+    score = bytes((0x90, 60, 0x46, 0x80, 60, 0x00, 0xE0))
+    head = b"MUS\x1a" + (7).to_bytes(2, "little") + (14).to_bytes(
         2, "little") + (1).to_bytes(2, "little") * 3
     return head + score
 
@@ -177,9 +180,44 @@ def test_player_streams_chunks():
                 break
             time.sleep(0.02)
         assert chunk is not None
-        assert len(chunk) == int(0.05 * 11025)
+        assert abs(len(chunk) - int(0.05 * 11025)) <= 2  # NOTE: slicing
         player.set_volume(64)
         player.set_muted(True)
         player.stop()
     finally:
         player.close()
+
+
+def test_short_notes_survive_chunk():
+    """Two quick notes inside one chunk both reach the render (the
+    old collapse-to-chunk-end swallowed the first)."""
+
+    class RenderVoices(MockBackend):
+        def render(self, n):
+            import numpy as np
+            keys = sorted(v["key"] for v in sched.alloced)
+            val = keys[0] + 1 if keys else 0
+            return np.full(n, val, dtype=np.int16)
+
+    back = RenderVoices()
+    main = [plain() for _ in range(128)]
+    perc = [plain() for _ in range(47)]
+    sched = Scheduler([(0, "on", 0, (60, 100)),
+                       (17, "off", 0, (60,)),
+                       (18, "on", 0, (64, 100)),
+                       (35, "off", 0, (64,))], main, perc, back)
+    pcm = sched.render_chunk(back, 11025, 2756)
+    assert 61 in pcm  # NOTE: first note rang before the second struck
+    assert 65 in pcm
+
+
+def test_degenerate_song_terminates():
+    """All events at tick 0 (or none): render whole span, never spin."""
+    back = MockBackend()
+    main = [plain() for _ in range(128)]
+    perc = [plain() for _ in range(47)]
+    sched = Scheduler([(0, "on", 0, (60, 100))], main, perc, back)
+    pcm = sched.render_chunk(back, 11025, 100)
+    assert len(pcm) == 100
+    sched2 = Scheduler([], main, perc, MockBackend())
+    assert len(sched2.render_chunk(MockBackend(), 11025, 100)) == 100
