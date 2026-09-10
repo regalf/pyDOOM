@@ -157,6 +157,26 @@ class SoundEngine:
         self.muted = not self.muted
         return self.muted
 
+    def playing(self, names, origin=None) -> bool:
+        """True while any of these sounds rings from origin (lets attack
+        tails finish before the idle rev kicks back in)."""
+        if isinstance(names, str):
+            names = (names,)
+        for entry in self.slots:
+            if entry is None:
+                continue
+            name, _prio, ch, org = entry
+            if name not in names:
+                continue
+            if origin is not None and org is not origin:
+                continue
+            try:
+                if ch.get_busy():
+                    return True
+            except Exception:
+                continue
+        return False
+
     def sound(self, name: str):
         """Decoded mixer.Sound, cached (None when missing/silent)."""
         if name in self.cache:
