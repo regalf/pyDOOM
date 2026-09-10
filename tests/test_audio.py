@@ -238,3 +238,29 @@ def test_shotgun_blast_cries_once(monkeypatch):
     finally:
         audio_mod.engine.play = orig
     assert cries.count("dmpain") == 1, cries
+
+
+@requires_wad
+def test_every_played_sound_resolves():
+    """Every sfx name the engine can utter must be in the SFX table
+    and decode from the WAD (sawidl went missing silently once)."""
+    import re
+    wad = WadFile(WAD_PATH)
+    lumps = {l.name for l in wad.lumps}
+    names = set()
+    import pydoom.audio as audio_mod
+    for table in (audio_mod.MONSTERS.values(),):
+        for entry in table:
+            names.update(n for n in entry if n is not None)
+    names.update(audio_mod.MISSILE_DEATHS.values())
+    src = ""
+    for path in ("pydoom/weapons.py", "pydoom/combat.py", "pydoom/ai.py",
+                 "pydoom/pickup.py", "pydoom/doors.py", "tools/doom_view.py"):
+        with open(path) as fh:
+            src += fh.read()
+    names.update(re.findall(r'audio\.play\("(\w+)"', src))
+    names.discard("plasma")
+    names.discard("bfg")  # NOTE: shareware has no lumps for these
+    missing = [n for n in names
+               if n not in audio_mod.SFX or ("DS" + n.upper()) not in lumps]
+    assert missing == [], missing

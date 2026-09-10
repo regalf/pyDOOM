@@ -49,6 +49,7 @@ SFX = {
     "bgdth1": (70, False), "sgtdth": (70, False), "brsdth": (32, False),
     "posact": (120, True), "bgact": (120, True), "dmact": (120, True),
     "noway": (78, False), "punch": (64, False),
+    "sawidl": (118, False),
     "sawhit": (64, False), "sawful": (64, False),
     "pldeth": (32, False), "pdiehi": (32, False),
     "slop": (78, False),
