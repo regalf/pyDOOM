@@ -539,6 +539,7 @@ class Ceiling:
                     self.speed = CEILSPEED // 8
 
 
+@dataclass(eq=False)
 class Plat:
     """plat_t thinker (p_plats.c); status as a string name."""
 
