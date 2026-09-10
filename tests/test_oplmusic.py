@@ -232,3 +232,21 @@ def test_pyopl_backend_tolerates_tiny_fills():
     assert len(back.render(1)) == 1
     assert len(back.render(2)) == 2
     assert len(back.render(513)) == 513
+
+
+@requires_wad
+def test_loop_wrap_terminates_and_replays():
+    """Float dust at the loop wrap used to spin render_chunk forever
+    (worker at 100% CPU, music stopping after one pass)."""
+    from pydoom.genmidi import parse_genmidi
+    from pydoom.mus import parse_mus
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    main, perc = parse_genmidi(wad.read_lump("GENMIDI"))
+    events = parse_mus(wad.read_lump("D_INTRO"))["events"]
+    back = MockBackend()
+    sched = Scheduler(events, main, perc, back)
+    ntarget = int((sched.total + 0.5) * 11025)
+    pcm = sched.render_chunk(back, 11025, ntarget)
+    assert len(pcm) == ntarget  # NOTE: chunks come out exact
+    assert sched.base > 0  # NOTE: wrapped around at least once

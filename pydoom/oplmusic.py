@@ -254,8 +254,11 @@ class Scheduler:
         """Fire due score events; loop the song past its end."""
         self.now += seconds
         while True:
+            elapsed = self.now - self.base
+            # NOTE: 1e-9 absorbs float dust (nsamp/rate sums vs tick/140
+            # can miss by 1 ULP and spin the worker forever at a wrap).
             while self.pos < len(self.events) \
-                    and self.events[self.pos][0] <= self.now - self.base:
+                    and self.events[self.pos][0] <= elapsed + 1e-9:
                 _, kind, channel, args = self.events[self.pos]
                 self.pos += 1
                 self._fire(kind, channel, args)
@@ -285,16 +288,25 @@ class Scheduler:
             self.advance(end - self.now)
             return backend.render(ntarget)
         parts: list = []
+        total = 0
         while self.now < end - 1e-9:
             seg = min(max(self.next_time() - self.now, 0.0),
                       end - self.now)
             nsamp = int(round(seg * rate))
             if nsamp > 0:
                 parts.append(backend.render(nsamp))
+                total += nsamp
             self.advance(seg if nsamp == 0 else nsamp / rate)
+        if total < ntarget:
+            # NOTE: rounding dust: top the chunk up exactly (song time
+            # follows the audio, so nothing drifts).
+            parts.append(backend.render(ntarget - total))
+            self.advance((ntarget - total) / rate)
+            total = ntarget
         if not parts:
             return np.zeros(0, dtype=np.int16)
-        return parts[0] if len(parts) == 1 else np.concatenate(parts)
+        pcm = parts[0] if len(parts) == 1 else np.concatenate(parts)
+        return pcm[:ntarget] if total > ntarget else pcm
 
     def _fire(self, kind: str, channel: int, args: tuple) -> None:
         if kind == "on":
