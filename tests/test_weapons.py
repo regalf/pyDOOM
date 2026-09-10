@@ -243,3 +243,12 @@ def test_weapons_fire_pistol_hits(setup):
         assert weapons.fire(ps, player, phys, index, ctx.mobjs, None,
                             True, ctx) >= 0
     assert troop.health < hp
+
+
+def test_flash_light_levels():
+    """A_Light1 everywhere, step-up mid-flash for shotgun/BFG."""
+    for weapon, level in weapons.FLASH_LIGHT.items():
+        assert level in (0, 1, 2), weapon
+    assert weapons.FLASH_LIGHT_STEP[2 - 2 + 2] == (4, 2)  # shotgun
+    from pydoom.player import WP_BFG
+    assert weapons.FLASH_LIGHT_STEP[WP_BFG] == (11, 2)

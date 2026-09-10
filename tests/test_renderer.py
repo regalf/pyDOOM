@@ -116,3 +116,16 @@ def test_plane_light_index_never_escapes(setup):
     for height in (-2 ** 31, -1, 0, 1, 10 ** 9, 10 ** 12, 2 ** 40):
         renderer._plane_height = height
         renderer._map_plane(100, 10, 20)  # must not raise
+
+
+@requires_wad
+def test_extra_light_brightens_view(setup):
+    """Muzzle-flash room light (A_Light1/2) must move pixels."""
+    import hashlib
+    renderer, game_map, start = setup
+    args = (game_map, start.x << 16, start.y << 16, 0, 41 << 16, [])
+    dark = hashlib.md5(bytes(bytearray(
+        renderer.render_view(*args)))).hexdigest()
+    lit = hashlib.md5(bytes(bytearray(
+        renderer.render_view(*args, extra_light=2)))).hexdigest()
+    assert dark != lit

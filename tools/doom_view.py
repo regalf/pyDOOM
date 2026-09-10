@@ -529,9 +529,20 @@ def main() -> int:
                 print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
                 running = False
             continue
+        # NOTE: muzzle-flash room light (A_Light1/2 levels, with the
+        # shotgun/BFG step-up mid-flash), like the psprite flash.
+        ps = state["ps"]
+        extra = 0
+        left = state.get("flash_until", 0) - state.get("tics", 0)
+        if left > 0:
+            extra = weapons.FLASH_LIGHT[ps.readyweapon]
+            split = weapons.FLASH_LIGHT_STEP.get(ps.readyweapon)
+            if split is not None and \
+                    weapons.FLASH_TICS[ps.readyweapon] - left >= split[0]:
+                extra = split[1]
         fb = renderer.render_view(
             game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
-            int(cam.viewz * 65536), mobjs,
+            int(cam.viewz * 65536), mobjs, extra_light=extra,
         )
         # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob,
         # lower/raise travel while switching, kick frame while firing.

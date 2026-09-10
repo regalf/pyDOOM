@@ -43,6 +43,12 @@ COOLDOWN = {WP_FIST: 22, WP_PISTOL: 19, WP_SHOTGUN: 44, WP_CHAINGUN: 4,
 FLASH_TICS = {WP_FIST: 0, WP_PISTOL: 7, WP_SHOTGUN: 7, WP_CHAINGUN: 5,
               WP_MISSILE: 7, WP_PLASMA: 4, WP_BFG: 17, WP_CHAINSAW: 0,
               WP_SSG: 7}
+# NOTE: A_Light1/2 levels per flash (shotgun/BFG step up mid-flash).
+FLASH_LIGHT = {WP_FIST: 0, WP_PISTOL: 1, WP_SHOTGUN: 1, WP_CHAINGUN: 1,
+               WP_MISSILE: 1, WP_PLASMA: 1, WP_BFG: 1, WP_CHAINSAW: 0,
+               WP_SSG: 1}
+FLASH_LIGHT_STEP = {WP_SHOTGUN: (4, 2), WP_BFG: (11, 2),
+                    }  # NOTE: (elapsed tics, level) once past the split
 # NOTE: body frames across each cycle (one char per tic), from the
 # attack states: the kick reads because it lasts, like vanilla.
 ATTACK_BODY = {
