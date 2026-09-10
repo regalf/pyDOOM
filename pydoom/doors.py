@@ -293,7 +293,7 @@ class VerticalDoor:
                     door.direction = -1
                     from pydoom import audio
                     audio.play("dorcls", door.sector.soundorg[0],
-                               door.sector.soundorg[1])
+                               door.sector.soundorg[1], door.sector)
                 elif door.type == DoorType.CLOSE30THENOPEN:
                     door.direction = 1
         elif door.direction == 2:
@@ -457,7 +457,7 @@ class World:
             if t.dead and isinstance(t, Plat) and t.sector is not None:
                 from pydoom import audio
                 audio.play("pstop", t.sector.soundorg[0],
-                           t.sector.soundorg[1])
+                           t.sector.soundorg[1], t.sector)
         self.thinkers = [t for t in self.thinkers if not t.dead]
         for button in self.buttons:
             if button.btimer:
@@ -635,7 +635,7 @@ class World:
             sec.specialdata = plat
             self.activeplats.append(plat)
             from pydoom import audio
-            audio.play("stnmov", sec.soundorg[0], sec.soundorg[1])
+            audio.play("stnmov", sec.soundorg[0], sec.soundorg[1], sec)
             if len(self.activeplats) > MAXPLATS:
                 raise OverflowError("P_AddActivePlat: no more plats!")
             if ptype in ("raiseToNearestAndChange", "raiseAndChange"):
@@ -716,7 +716,7 @@ class World:
                                                  DoorType.CLOSE,
                                                  DoorType.CLOSE30THENOPEN)
                        else "doropn",
-                       sec.soundorg[0], sec.soundorg[1])
+                       sec.soundorg[0], sec.soundorg[1], sec)
             if dtype == DoorType.BLAZECLOSE:
                 door.topheight = self.find_lowest_ceiling(sec) - 4 * FRACUNIT
                 door.direction = -1
@@ -746,7 +746,7 @@ class World:
                 if not is_player:
                     return None  # monsters never open locked doors
                 sec0 = self.map.sides[line.sidenum[0]].sector
-                audio.play("noway", sec0.soundorg[0], sec0.soundorg[1])
+                audio.play("noway", sec0.soundorg[0], sec0.soundorg[1], line)
                 return _MANUAL_LOCKS[line.special]
         if line.sidenum[1] == -1:
             return None  # guard: vanilla would crash here
@@ -756,18 +756,18 @@ class World:
             if line.special in (1, 26, 27, 28, 117):
                 if door.direction == -1:
                     door.direction = 1  # go back up
-                    audio.play("doropn", sec.soundorg[0], sec.soundorg[1])
+                    audio.play("doropn", sec.soundorg[0], sec.soundorg[1], sec)
                 else:
                     if not is_player:
                         return None  # monsters never close doors
                     door.direction = -1
-                    audio.play("dorcls", sec.soundorg[0], sec.soundorg[1])
+                    audio.play("dorcls", sec.soundorg[0], sec.soundorg[1], sec)
             return None
         door = VerticalDoor(sector=sec, direction=1, speed=VDOORSPEED,
                             topwait=VDOORWAIT)
         self.thinkers.append(door)
         sec.specialdata = door
-        audio.play("doropn", sec.soundorg[0], sec.soundorg[1])
+        audio.play("doropn", sec.soundorg[0], sec.soundorg[1], sec)
         if line.special in (1, 26, 27, 28):
             door.type = DoorType.NORMAL
         elif line.special in (31, 32, 33, 34):
@@ -795,7 +795,7 @@ class World:
         from pydoom import audio
         audio.play("swtchx" if special == 11 else "swtchn",
                    (line.v1.x + line.v2.x) // 2,
-                   (line.v1.y + line.v2.y) // 2)
+                   (line.v1.y + line.v2.y) // 2, line)
         if not use_again:
             line.special = 0
         side = self.map.sides[line.sidenum[0]]
@@ -846,7 +846,7 @@ class World:
             if not (keys & KEY_COLORS[_SWITCH_LOCK_COLOR[special]]):
                 from pydoom import audio
                 if mover is not None:
-                    audio.play("noway", mover.x, mover.y)
+                    audio.play("noway", mover.x, mover.y, mover)
                 return _SWITCH_LOCKS[special]
             # NOTE: key held, fall through to the door action below.
         if special == 97:
@@ -1049,7 +1049,7 @@ class World:
         fog = spawn_mobj(None, physics, physics.things, mover.x, mover.y,
                          mover.z, MT_INDEX["TFOG"])
         fog.momz = 65536
-        audio.play("telept", mover.x, mover.y)
+        audio.play("telept", mover.x, mover.y, fog)
         if physics.things is not None:
             from pydoom.physics import MAPBLOCKSHIFT, MAXRADIUS
             bm = physics.map.blockmap
@@ -1084,7 +1084,7 @@ class World:
                           dest.y + 20 * tables.finesine[fa],
                           mover.z, MT_INDEX["TFOG"])
         fog2.momz = 65536
-        audio.play("telept", mover.x, mover.y)
+        audio.play("telept", fog2.x, fog2.y, fog2)
         mobjs.append(fog)
         mobjs.append(fog2)
         return True

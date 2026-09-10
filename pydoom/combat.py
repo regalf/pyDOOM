@@ -241,7 +241,7 @@ def explode_missile(mo, ctx=None) -> None:
     mo.flags &= ~MF_FLAGS["MF_MISSILE"]  # NOTE: spent shells go inert
     voice = audio.MISSILE_DEATHS.get(MT_NAMES[mo.type])
     if voice is not None:
-        audio.play(voice, mo.x, mo.y)
+        audio.play(voice, mo.x, mo.y, mo)
 
 
 def radius_attack(spot, source, damage: int, ctx) -> None:
@@ -553,7 +553,7 @@ def _a_posattack(actor, ctx, pellets: int, sound: str) -> None:
         return
     _face(actor)
     from pydoom import audio
-    audio.play(sound, actor.x, actor.y)
+    audio.play(sound, actor.x, actor.y, actor)
     for _ in range(pellets):
         slope, _t = aim_line_attack(actor, actor.angle, MISSILERANGE,
                                     ctx.physics, ctx.physics.things,
@@ -580,11 +580,11 @@ def a_troopattack(actor, ctx) -> None:
     from pydoom import audio
     from pydoom.ai import check_melee_range
     if check_melee_range(actor, ctx):
-        audio.play("claw", actor.x, actor.y)
+        audio.play("claw", actor.x, actor.y, actor)
         damage_mobj(actor.target, actor, actor, (p_random() % 8 + 1) * 3,
                     ctx)
         return
-    audio.play("firsht", actor.x, actor.y)
+    audio.play("firsht", actor.x, actor.y, actor)
     spawn_missile(actor, actor.target, MT_INDEX["TROOPSHOT"], ctx.physics,
                   ctx.physics.things, ctx.mobjs)
 
@@ -596,7 +596,7 @@ def a_sargattack(actor, ctx) -> None:
     from pydoom import audio
     from pydoom.ai import check_melee_range
     if check_melee_range(actor, ctx):
-        audio.play("claw", actor.x, actor.y)
+        audio.play("claw", actor.x, actor.y, actor)
         damage_mobj(actor.target, actor, actor, (p_random() % 10 + 1) * 4,
                     ctx)
 
@@ -608,11 +608,11 @@ def a_headattack(actor, ctx) -> None:
     from pydoom import audio
     from pydoom.ai import check_melee_range
     if check_melee_range(actor, ctx):
-        audio.play("claw", actor.x, actor.y)
+        audio.play("claw", actor.x, actor.y, actor)
         damage_mobj(actor.target, actor, actor, (p_random() % 6 + 1) * 10,
                     ctx)
         return
-    audio.play("firsht", actor.x, actor.y)
+    audio.play("firsht", actor.x, actor.y, actor)
     spawn_missile(actor, actor.target, MT_INDEX["HEADSHOT"], ctx.physics,
                   ctx.physics.things, ctx.mobjs)
 
@@ -623,11 +623,11 @@ def a_bruisattack(actor, ctx) -> None:
     from pydoom import audio
     from pydoom.ai import check_melee_range
     if check_melee_range(actor, ctx):
-        audio.play("claw", actor.x, actor.y)
+        audio.play("claw", actor.x, actor.y, actor)
         damage_mobj(actor.target, actor, actor, (p_random() % 8 + 1) * 10,
                     ctx)
         return
-    audio.play("firsht", actor.x, actor.y)
+    audio.play("firsht", actor.x, actor.y, actor)
     spawn_missile(actor, actor.target, MT_INDEX["BRUISERSHOT"],
                   ctx.physics, ctx.physics.things, ctx.mobjs)
 
@@ -655,11 +655,11 @@ def _affliction_cry(actor, idx: int, player_sound: str) -> None:
     """Shared pain/death lookup (vanilla A_Pain/A_Scream placement)."""
     from pydoom import audio
     if getattr(actor, "is_player", False):
-        audio.play(player_sound, actor.x, actor.y)
+        audio.play(player_sound, actor.x, actor.y, actor)
     else:
         entry = audio.MONSTERS.get(MT_NAMES[actor.type])
         if entry is not None and entry[idx] is not None:
-            audio.play(entry[idx], actor.x, actor.y)
+            audio.play(entry[idx], actor.x, actor.y, actor)
 
 
 def a_pain(actor, ctx) -> None:
@@ -678,12 +678,12 @@ def a_scream(actor, ctx) -> None:
 
 def a_xscream(actor, ctx) -> None:
     from pydoom import audio
-    audio.play("slop", actor.x, actor.y)
+    audio.play("slop", actor.x, actor.y, actor)
 
 
 def a_playerscream(actor, ctx) -> None:
     from pydoom import audio
-    audio.play("pldeth", actor.x, actor.y)  # NOTE: see a_scream
+    audio.play("pldeth", actor.x, actor.y, actor)  # NOTE: see a_scream
 
 
 def a_fall(actor, ctx) -> None:

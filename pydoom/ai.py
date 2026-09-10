@@ -422,7 +422,7 @@ def _wake_sound(actor) -> None:
         see = f"posit{p_random() % 3 + 1}"
     elif see == "bgsit1":
         see = f"bgsit{p_random() % 2 + 1}"
-    audio.play(see, actor.x, actor.y)
+    audio.play(see, actor.x, actor.y, actor)
 
 
 def a_look(actor, ctx: AIContext) -> None:
@@ -494,7 +494,7 @@ def a_chase(actor, ctx: AIContext) -> None:
     entry = audio.MONSTERS.get(MT_NAMES[actor.type])
     if entry is not None and entry[3] is not None \
             and p_random() < 3:
-        audio.play(entry[3], actor.x, actor.y)  # NOTE: idle growl
+        audio.play(entry[3], actor.x, actor.y, actor)  # NOTE: idle growl
 
 
 def _face_target(actor, ctx=None) -> None:

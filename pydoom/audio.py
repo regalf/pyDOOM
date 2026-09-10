@@ -171,14 +171,19 @@ class SoundEngine:
         return result
 
     def play(self, name: str, x: int | None = None,
-             y: int | None = None) -> bool:
-        """S_StartSound: positional (or full-volume UI) one-shot."""
+             y: int | None = None, origin=None) -> bool:
+        """S_StartSound: positional (or full-volume UI) one-shot.
+
+        Same origin restarts its channel instead of stacking (chainsaw
+        revving, multi-pellet victims); when full, vanilla kicks the
+        first slot at least as hot, quirks included.
+        """
         if self.mixer is None or self.muted:
             return False
         spec = SFX.get(name)
         if spec is None:
             return False
-        priority, link = spec
+        priority, _link = spec
         snd = self.sound(name)
         if snd is None:
             return False
@@ -193,32 +198,31 @@ class SoundEngine:
         if vol <= 0:
             return False
         channels = [self.mixer.Channel(i) for i in range(N_CHANNELS)]
-        live = []
+        while len(self.slots) < N_CHANNELS:
+            self.slots.append(None)
+        pick = None
         for i, ch in enumerate(channels):
-            entry = self.slots[i] if i < len(self.slots) else None
-            if entry is not None and ch.get_busy():
-                if link and entry[0] == name:
-                    return False  # NOTE: linked sounds never stack
-                live.append((entry[1], i))
-            else:
-                while len(self.slots) <= i:
-                    self.slots.append(None)
-                self.slots[i] = (name, priority, ch)
-                ch.set_volume(left * vol, right * vol)
-                ch.play(snd)
-                return True
-        if not live:
-            return False
-        live.sort()
-        if live[0][0] < priority:
-            i = live[0][1]
-            ch = channels[i]
-            ch.stop()
-            self.slots[i] = (name, priority, ch)
-            ch.set_volume(left * vol, right * vol)
-            ch.play(snd)
-            return True
-        return False  # NOTE: all channels hold hotter sounds
+            entry = self.slots[i]
+            if entry is None or not ch.get_busy():
+                pick = i
+                break
+            if origin is not None and entry[3] is origin:
+                ch.stop()
+                pick = i
+                break
+        if pick is None:
+            for i, ch in enumerate(channels):
+                if self.slots[i][1] >= priority:
+                    ch.stop()
+                    pick = i
+                    break
+            if pick is None:
+                return False  # NOTE: nothing kickable, sorry Charlie
+        ch = channels[pick]
+        self.slots[pick] = (name, priority, ch, origin)
+        ch.set_volume(left * vol, right * vol)
+        ch.play(snd)
+        return True
 
     def start_music(self, name: str) -> None:
         """Music stub (Linux reference: external MUS server, absent)."""
@@ -238,8 +242,8 @@ def set_listener(x: int, y: int, angle_bam: int) -> None:
 
 
 def play(name: str, x: int | None = None,
-         y: int | None = None) -> bool:
-    return engine.play(name, x, y)
+         y: int | None = None, origin=None) -> bool:
+    return engine.play(name, x, y, origin)
 
 
 def toggle_mute() -> bool:

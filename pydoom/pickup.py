@@ -238,7 +238,7 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
     if picked:
         ps.bonuscount += 6  # NOTE: BONUSADD gold flash per item
         if sound is not None:
-            audio.play(sound, picker_mo.x, picker_mo.y)
+            audio.play(sound, picker_mo.x, picker_mo.y, picker_mo)
     return picked, msg
 
 

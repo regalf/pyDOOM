@@ -90,7 +90,31 @@ def test_link_sounds_never_stack():
         return
     eng.set_listener(0, 0, 0)
     assert eng.play("itemup", 0, 0) is True
-    assert eng.play("itemup", 0, 0) is False  # NOTE: linked, no stack
+    # NOTE: vanilla has no name stacking guard (link only tweaks
+    # pitch/volume); distinct origins layer like the real mix.
+    assert eng.play("itemup", 500 << 16, 0) is True
+    pygame.mixer.quit()
+
+
+@requires_wad
+def test_same_origin_restarts_instead_of_stacking():
+    import pygame
+    eng = SoundEngine()
+    try:
+        ok = eng.init(WadFile(WAD_PATH))
+    except Exception:
+        pytest.skip("no audio device")
+        return
+    if not ok:
+        pytest.skip("mixer unavailable")
+        return
+    eng.set_listener(0, 0, 0)
+    origin = object()
+    assert eng.play("sawful", 0, 0, origin) is True
+    assert eng.play("sawful", 0, 0, origin) is True  # restarts same slot
+    busy = [e for e in eng.slots
+            if e is not None and e[0] == "sawful" and e[2].get_busy()]
+    assert len(busy) == 1  # NOTE: revving never layers on itself
     pygame.mixer.quit()
 
 
@@ -109,8 +133,9 @@ def test_priority_preempts_quiet():
     eng.set_listener(0, 0, 0)
     for _ in range(8):
         eng.play("telept", 0, 0)  # priority 32 fills the board
-    assert eng.play("doropn", 0, 0) is True  # 100 kicks a 32 out
-    assert eng.play("telept", 0, 0) is False  # 32 cannot kick back
+    # NOTE: vanilla quirk, kept verbatim: with every slot colder than
+    # the newcomer, S_getChannel finds nothing to kick ("Sorry Charlie").
+    assert eng.play("doropn", 0, 0) is False
     pygame.mixer.quit()
 
 
@@ -203,7 +228,7 @@ def test_shotgun_blast_cries_once(monkeypatch):
     cries = []
     import pydoom.audio as audio_mod
     orig = audio_mod.engine.play
-    audio_mod.engine.play = lambda n, x=None, y=None: (
+    audio_mod.engine.play = lambda n, x=None, y=None, origin=None: (
         cries.append(n), False)[1]
     try:
         weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)

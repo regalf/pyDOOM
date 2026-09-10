@@ -244,20 +244,20 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
         after = getattr(target, "health", None)
         audio.play("sawhit" if after is not None and before is not None
                    and after < before else "sawful",
-                   shooter.x, shooter.y)
+                   shooter.x, shooter.y, shooter)
     elif weapon == WP_PISTOL:
-        audio.play("pistol", shooter.x, shooter.y)
+        audio.play("pistol", shooter.x, shooter.y, shooter)
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
         gunshot(shooter, accurate, slope, physics, index, mobjs,
                 skyflat, ctx)
     elif weapon == WP_SHOTGUN:
-        audio.play("shotgn", shooter.x, shooter.y)
+        audio.play("shotgn", shooter.x, shooter.y, shooter)
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
         for _ in range(7):  # NOTE: A_FireShotgun never auto-aims straight
             gunshot(shooter, False, slope, physics, index, mobjs,
                     skyflat, ctx)
     elif weapon == WP_MISSILE:
-        audio.play("rlaunc", shooter.x, shooter.y)
+        audio.play("rlaunc", shooter.x, shooter.y, shooter)
         spawn_player_missile(shooter, MT_INDEX["ROCKET"], physics, index,
                              mobjs)
     elif weapon == WP_PLASMA:
@@ -272,7 +272,7 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
         _bfg_spray(ball, shooter, physics, index, mobjs, skyflat, ctx)
     else:  # pistol, chaingun (SSG never fires in Doom 1 maps)
         # NOTE: vanilla chainguns bark through the pistol lump.
-        audio.play("pistol", shooter.x, shooter.y)
+        audio.play("pistol", shooter.x, shooter.y, shooter)
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
         gunshot(shooter, accurate, slope, physics, index, mobjs,
                 skyflat, ctx)
