@@ -32,6 +32,14 @@ requires_wad = pytest.mark.skipif(
     not os.path.exists(WAD_PATH), reason="DOOM1.WAD not found"
 )
 
+def movers(world):
+    """Door/floor/plat movers, excluding ambient light thinkers."""
+    from pydoom.doors import FloorMover, Plat, VerticalDoor
+    return [t for t in world.thinkers
+            if isinstance(t, (VerticalDoor, FloorMover, Plat))]
+
+
+
 _MF_DROPPED = MF_FLAGS["MF_DROPPED"]
 
 
@@ -211,10 +219,10 @@ def test_locked_door_needs_key():
     assert line.special == 28  # red manual door
     msg = world.use_special_line(line, 0, True, 0)
     assert msg == "You need a red key to open this door"
-    assert not world.thinkers  # stays shut
+    assert not movers(world)  # stays shut
     msg = world.use_special_line(line, 0, True, KEY_RED)
     assert msg is None  # opens silently
-    assert len(world.thinkers) == 1
+    assert len(movers(world)) == 1
 
 
 @requires_wad
@@ -368,7 +376,7 @@ def test_e1m2_red_key_spawns_and_opens(setup):
     line = game_map.lines[527]
     assert line.special == 28  # red manual door
     assert world.use_special_line(line, 0, True, ps.keys) is None
-    assert len(world.thinkers) == 1  # opens with the key
+    assert len(movers(world)) == 1  # opens with the key
 
 
 @requires_wad

@@ -18,6 +18,14 @@ requires_wad = pytest.mark.skipif(
     not os.path.exists(WAD_PATH), reason="DOOM1.WAD not found"
 )
 
+def movers(world):
+    """Door/floor/plat movers, excluding ambient light thinkers."""
+    from pydoom.doors import FloorMover, Plat, VerticalDoor
+    return [t for t in world.thinkers
+            if isinstance(t, (VerticalDoor, FloorMover, Plat))]
+
+
+
 
 @pytest.fixture(scope="module")
 def setup():
@@ -60,15 +68,15 @@ def test_walk_over_lift_cycles(setup):
     line = next(li for li in game_map.lines if li.special == 88)
     mo, msgs = cross_line(ph, world, game_map, line)
     assert msgs == []
-    assert len(world.thinkers) == 1
-    plat = world.thinkers[0]
+    assert len(movers(world)) == 1
+    plat = movers(world)[0]
     home = plat.sector.floorheight
     assert plat.status == "down"
     for _ in range(1200):
         world.tick()
-        if not world.thinkers:
+        if not movers(world):
             break
-    assert not world.thinkers  # down-wait-up-stay finished
+    assert not movers(world)  # down-wait-up-stay finished
     assert plat.sector.floorheight == home  # back where it started
     assert plat.sector.specialdata is None
 
@@ -90,7 +98,7 @@ def test_walk_over_turbo_lower(setup):
     assert line.special == 0  # W1 clears
     for _ in range(600):
         world.tick()
-        if not world.thinkers:
+        if not movers(world):
             break
     assert sec.floorheight == want
 
@@ -163,7 +171,7 @@ def test_s1_plat_22_raises(setup):
     line = next(li for li in game_map.lines if li.special == 22)
     assert world.use_special_line(line, 0, True) is None
     assert line.special == 0  # one-shot switch spent
-    assert world.thinkers  # a lift is moving
+    assert movers(world)  # a lift is moving
 
 
 @requires_wad
@@ -176,7 +184,7 @@ def test_w1_stairs_build(setup):
     assert line.special == 8
     assert world.cross_special_line(line, True) is None
     assert line.special == 0  # walk-once spent
-    assert world.thinkers  # steps are rising
+    assert movers(world)  # steps are rising
 
 
 @requires_wad
@@ -189,7 +197,7 @@ def test_s1_donut_pillar_drops(setup):
     assert line.special == 9
     assert world.use_special_line(line, 0, True) is None
     assert line.special == 0
-    assert len(world.thinkers) == 2  # ring rises, hole drops
+    assert len(movers(world)) == 2  # ring rises, hole drops
 
 
 @requires_wad
@@ -222,7 +230,7 @@ def test_gunshot_opens_impact_door(setup):
     _hit_line(shot, line, FRACUNIT // 2)
     # NOTE: G1 impact doors retrigger (special kept), but one opens now.
     assert line.special == 46
-    assert len(world.thinkers) == 1
+    assert len(movers(world)) == 1
 
 
 @requires_wad

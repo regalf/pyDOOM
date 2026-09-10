@@ -339,6 +339,105 @@ class Button:
 
 
 @dataclass(eq=False)
+class LightFlash:
+    """T_LightFlash: broken random flicker between min and max."""
+
+    sector: object = field(default=None, repr=False)
+    maxlight: int = 0
+    minlight: int = 0
+    maxtime: int = 64
+    mintime: int = 7
+    count: int = 0
+    dead: bool = False
+
+    def think(self, world: "World") -> None:
+        """T_LightFlash (p_lights.c); P_Random via m_random."""
+        from pydoom.m_random import p_random
+        self.count -= 1
+        if self.count:
+            return
+        if self.sector.lightlevel == self.maxlight:
+            self.sector.lightlevel = self.minlight
+            self.count = (p_random() & self.mintime) + 1
+        else:
+            self.sector.lightlevel = self.maxlight
+            self.count = (p_random() & self.maxtime) + 1
+
+
+@dataclass(eq=False)
+class StrobeFlash:
+    """T_StrobeFlash: regular dark/bright strobe (sync or not)."""
+
+    sector: object = field(default=None, repr=False)
+    maxlight: int = 0
+    minlight: int = 0
+    darktime: int = 35
+    brighttime: int = 5
+    count: int = 0
+    dead: bool = False
+
+    def think(self, world: "World") -> None:
+        """T_StrobeFlash (p_lights.c)."""
+        self.count -= 1
+        if self.count:
+            return
+        if self.sector.lightlevel == self.minlight:
+            self.sector.lightlevel = self.maxlight
+            self.count = self.brighttime
+        else:
+            self.sector.lightlevel = self.minlight
+            self.count = self.darktime
+
+
+@dataclass(eq=False)
+class GlowLight:
+    """T_Glow: lightlevel breathes between min and max (GLOWSPEED)."""
+
+    sector: object = field(default=None, repr=False)
+    maxlight: int = 0
+    minlight: int = 0
+    direction: int = -1
+    dead: bool = False
+
+    def think(self, world: "World") -> None:
+        """T_Glow (p_lights.c)."""
+        if self.direction == -1:
+            self.sector.lightlevel -= 8
+            if self.sector.lightlevel <= self.minlight:
+                self.sector.lightlevel += 8
+                self.direction = 1
+        else:
+            self.sector.lightlevel += 8
+            if self.sector.lightlevel >= self.maxlight:
+                self.sector.lightlevel -= 8
+                self.direction = -1
+
+
+@dataclass(eq=False)
+class FireFlicker:
+    """T_FireFlicker: torch-like jitter under the max (every 4 tics)."""
+
+    sector: object = field(default=None, repr=False)
+    maxlight: int = 0
+    minlight: int = 0
+    count: int = 0
+    dead: bool = False
+
+    def think(self, world: "World") -> None:
+        """T_FireFlicker (p_lights.c)."""
+        from pydoom.m_random import p_random
+        self.count -= 1
+        if self.count:
+            return
+        amount = (p_random() & 3) * 16
+        if self.sector.lightlevel - amount < self.minlight:
+            self.sector.lightlevel = self.minlight
+        else:
+            self.sector.lightlevel = self.maxlight - amount
+        self.count = 4
+
+
+@dataclass(eq=False)
 class FloorMover:
     """floormove_t thinker (p_floor.c), type as a string name."""
 
@@ -442,6 +541,7 @@ class World:
         # NOTE: P_SpawnSpecials scrolling walls (first-side offset anim).
         self.scroll_lines = [li for li in game_map.lines
                              if li.special == 48]
+        self.spawn_light_thinkers()
 
     # -- per-tic updates (p_tick.c lite + P_UpdateSpecials buttons) --
 
@@ -499,6 +599,55 @@ class World:
                      else line.frontsector)
             if other is not None:
                 yield other
+
+    def find_min_light(self, sector, maxlight: int) -> int:
+        """P_FindMinSurroundingLight: dimmest neighboring lightlevel."""
+        low = maxlight
+        for other in self._neighbors(sector):
+            if other.lightlevel < low:
+                low = other.lightlevel
+        return low
+
+    def spawn_light_thinkers(self) -> None:
+        """P_SpawnSpecials light part: flicker/strobe/glow/fire thinkers
+        per sector special (damage/secret/exit specials stay live)."""
+        from pydoom.m_random import p_random
+        for sec in self.map.sectors:
+            special = sec.special
+            if special == 1:
+                fl = LightFlash(sector=sec, maxlight=sec.lightlevel,
+                                minlight=self.find_min_light(
+                                    sec, sec.lightlevel),
+                                maxtime=64, mintime=7,
+                                count=(p_random() & 64) + 1)
+                self.thinkers.append(fl)
+                sec.special = 0
+            elif special in (2, 3, 4, 12, 13):
+                fast = special in (2, 4, 13)
+                strobe = StrobeFlash(
+                    sector=sec, maxlight=sec.lightlevel,
+                    minlight=self.find_min_light(sec, sec.lightlevel),
+                    darktime=15 if fast else 35, brighttime=5,
+                    count=1 if special in (12, 13)
+                    else (p_random() & 7) + 1)
+                if strobe.minlight == strobe.maxlight:
+                    strobe.minlight = 0
+                self.thinkers.append(strobe)
+                if special != 4:
+                    sec.special = 0  # NOTE: 4 keeps hurting (strobe+slime)
+            elif special == 8:
+                self.thinkers.append(GlowLight(
+                    sector=sec, maxlight=sec.lightlevel,
+                    minlight=self.find_min_light(sec, sec.lightlevel),
+                    direction=-1))
+                sec.special = 0
+            elif special == 17:
+                self.thinkers.append(FireFlicker(
+                    sector=sec, maxlight=sec.lightlevel,
+                    minlight=self.find_min_light(
+                        sec, sec.lightlevel) + 16,
+                    count=4))
+                sec.special = 0
 
     def find_lowest_floor(self, sector) -> int:
         floor = sector.floorheight

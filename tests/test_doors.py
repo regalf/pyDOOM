@@ -18,6 +18,13 @@ requires_wad = pytest.mark.skipif(
 )
 
 
+def movers(world):
+    """Door/floor/plat movers, excluding ambient light thinkers."""
+    from pydoom.doors import FloorMover, Plat, VerticalDoor
+    return [t for t in world.thinkers
+            if isinstance(t, (VerticalDoor, FloorMover, Plat))]
+
+
 @pytest.fixture(scope="module")
 def setup():
     wad = WadFile(WAD_PATH)
@@ -62,7 +69,7 @@ def test_manual_door_opens_walk_through_closes(setup):
     ang = int((math.atan2(my - py, mx - px) / (2 * math.pi)
                * 0x100000000)) & 0xFFFFFFFF
     assert world.use_lines(px, py, ang, phys) is None
-    assert len(world.thinkers) == 1
+    assert len(movers(world)) == 1
 
     for _ in range(120):
         world.tick()
@@ -76,9 +83,9 @@ def test_manual_door_opens_walk_through_closes(setup):
     # Normal doors close again after the wait; thinker goes away.
     for _ in range(600):
         world.tick()
-        if not world.thinkers:
+        if not movers(world):
             break
-    assert not world.thinkers
+    assert not movers(world)
     assert doorsec.specialdata is None
     assert doorsec.ceilingheight == closed
 
@@ -94,7 +101,7 @@ def test_locked_door_denied_without_key(setup):
                 world = World(game_map, texman)
                 msg = world.vertical_door(line, True)
                 assert msg is not None and "key" in msg
-                assert not world.thinkers
+                assert not movers(world)
                 return
     pytest.skip("no locked manual door in this WAD")
 
@@ -121,7 +128,7 @@ def test_switch_flips_texture_and_opens(setup):
             after = (side.toptexture, side.midtexture, side.bottomtexture)
             assert after != before  # texture flipped...
             assert line.special == 0  # ...once (S1 clears special)
-            assert len(world.thinkers) == 1  # ...and the door runs
+            assert len(movers(world)) == 1  # ...and the door runs
             return
     pytest.skip("no S1 door switch found")
 
@@ -166,3 +173,74 @@ def test_move_plane_crushes_blocker():
     assert move_plane(sec, 64 * FRACUNIT, 0, False, 1, -1, None) == (
         PlaneResult.PASTDEST)
     assert sec.ceilingheight == 0
+
+
+@requires_wad
+def test_light_thinkers_spawn_and_clear(setup):
+    from pydoom.doors import FireFlicker, GlowLight, LightFlash, StrobeFlash
+    wad, texman, _ = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    kinds = {type(t).__name__ for t in world.thinkers}
+    assert {"LightFlash", "GlowLight", "StrobeFlash"} <= kinds
+    leftovers = {s.special for s in game_map.sectors if s.special}
+    assert not (leftovers & {1, 2, 3, 8, 12, 13, 17})  # consumed
+    assert leftovers & {5, 7, 9}  # NOTE: damage/secrets stay live
+
+
+@requires_wad
+def test_strobe_toggles_min_max_only(setup):
+    from pydoom.doors import StrobeFlash
+    wad, texman, _ = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    strobes = [t for t in world.thinkers if isinstance(t, StrobeFlash)]
+    assert strobes
+    seen = set()
+    for _ in range(300):
+        world.tick()
+        for st in strobes:
+            assert st.sector.lightlevel in (st.minlight, st.maxlight)
+            seen.add((id(st.sector), st.sector.lightlevel))
+    assert any(len({lv for sid, lv in seen if sid == id(st.sector)}) > 1
+               for st in strobes)  # every strobe actually blinks
+
+
+@requires_wad
+def test_glow_breathes_and_reverses(setup):
+    from pydoom.doors import GlowLight
+    wad, texman, _ = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    glows = [t for t in world.thinkers if isinstance(t, GlowLight)]
+    assert glows
+    g = glows[0]
+    dirs = set()
+    for _ in range(400):
+        world.tick()
+        assert g.minlight <= g.sector.lightlevel <= g.maxlight
+        dirs.add(g.direction)
+    assert dirs == {-1, 1}  # reversed at least once
+
+
+@requires_wad
+def test_flicker_stays_in_bounds(setup):
+    from pydoom.doors import FireFlicker, LightFlash
+    wad, texman, _ = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    flickers = [t for t in world.thinkers
+                if isinstance(t, (LightFlash, FireFlicker))]
+    assert flickers
+    seen = set()
+    for _ in range(400):
+        world.tick()
+        for f in flickers:
+            assert f.minlight <= f.sector.lightlevel <= f.maxlight
+            seen.add((id(f.sector), f.sector.lightlevel))
+    assert any(len({lv for sid, lv in seen if sid == id(f.sector)}) > 1
+               for f in flickers)
