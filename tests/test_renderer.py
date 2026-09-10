@@ -160,3 +160,15 @@ def test_face_cascade():
     # NOTE: corpse face wins over everything while dead.
     mo.health = 0
     assert update_face(fs, ps, mo, False) == "STFDEAD0"
+
+
+@requires_wad
+def test_fullbright_visor_lifts_dark(setup):
+    renderer, game_map, start = setup
+    args = dict(game_map=game_map, x=start.x << 16, y=start.y << 16,
+                angle=thing_degrees_to_bam(start.angle))
+    dark = renderer.render_view(**args)
+    lit = renderer.render_view(**args, fullbright=True)
+    assert lit.shape == dark.shape and lit.dtype == dark.dtype
+    assert not (lit == dark).all()  # NOTE: flag reaches the pipeline
+    assert float(lit.mean()) >= float(dark.mean())

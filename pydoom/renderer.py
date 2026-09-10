@@ -397,13 +397,16 @@ class Renderer:
         viewz: int | None = None,
         mobjs=None,
         extra_light: int = 0,
+        fullbright: bool = False,
     ) -> np.ndarray:
         """Render opaque walls from (x, y, viewz, angle); palette indices.
 
         mobjs projects live mobjs (viewer); None keeps the legacy
         static projection from map things (tests). extra_light is the
         player muzzle-flash boost (A_Light1/2), added to every light
-        level like vanilla, clamped as usual.
+        level like vanilla, clamped as usual. fullbright is the light
+        amplification visor (fixedcolormap): everything renders at
+        maximum light, orientation and distance ignored.
         """
         self.map = game_map
         self.viewx = x
@@ -417,6 +420,7 @@ class Renderer:
             viewz = sub.sector.floorheight + VIEWHEIGHT
         self.viewz = viewz
         self._extralight = extra_light
+        self._fixedlight = fullbright
 
         self.fb = np.zeros((SCREENHEIGHT, SCREENWIDTH), dtype=np.uint8)
         self.solidsegs: list[list[int]] = [
@@ -854,7 +858,9 @@ class Renderer:
 
             lightnum = ((frontsector.lightlevel >> LIGHTSEGSHIFT)
                         + self._extralight)
-            if seg.v1.y == seg.v2.y:
+            if self._fixedlight:
+                lightnum = LIGHTLEVELS - 1
+            elif seg.v1.y == seg.v2.y:
                 lightnum -= 1
             elif seg.v1.x == seg.v2.x:
                 lightnum += 1
@@ -1176,6 +1182,8 @@ class Renderer:
             )
             self._plane_height = abs(pl.height - self.viewz)
             light = (pl.lightlevel >> 4) + self._extralight  # LIGHTSEGSHIFT
+            if self._fixedlight:
+                light = LIGHTLEVELS - 1
             light = min(max(light, 0), LIGHTLEVELS - 1)
             self._plane_zlight = self.zlight[light]
             pl.top[pl.maxx + 2] = 0xFF
@@ -1351,6 +1359,8 @@ class Renderer:
             colormap = 0
         else:
             lightnum = (lightlevel >> LIGHTSEGSHIFT) + self._extralight
+            if self._fixedlight:
+                lightnum = LIGHTLEVELS - 1
             index = xscale >> LIGHTSCALESHIFT
             if index >= MAXLIGHTSCALE:
                 index = MAXLIGHTSCALE - 1
@@ -1496,7 +1506,9 @@ class Renderer:
         texnum = seg.sidedef.midtexture  # translation is identity
         lightnum = ((seg.frontsector.lightlevel >> LIGHTSEGSHIFT)
                     + self._extralight)
-        if seg.v1.y == seg.v2.y:
+        if self._fixedlight:
+            lightnum = LIGHTLEVELS - 1
+        elif seg.v1.y == seg.v2.y:
             lightnum -= 1
         elif seg.v1.x == seg.v2.x:
             lightnum += 1

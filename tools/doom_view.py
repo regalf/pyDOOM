@@ -48,6 +48,8 @@ from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
 from pydoom.player import (
     CF_NOCLIP,
+    PW_ALLMAP,
+    PW_INFRARED,
     PlayerState,
     WP_CHAINSAW,
     palette_index,
@@ -282,6 +284,8 @@ def main() -> int:
     combat.register_combat_actions()
     cheat = cheats.CheatEngine()  # iddqd/idkfa/idclip/... on typed chars
     noclip = False
+    paused = False  # P freezes the sim (vanilla pause, music plays on)
+    quickslot = None  # F6/F9 slot (vanilla quickSaveSlot, menu sets it)
     show_ai = False  # X toggles a nearest-monster AI readout
     amap = None  # TAB automap overlay (vanilla keeps the game running)
     am_zoom_in = am_zoom_out = False
@@ -290,6 +294,7 @@ def main() -> int:
     message_tics = 0
     map_idx = maps.index(game_map.marker) if game_map.marker in maps else 0
     msettings = menu.Settings()
+    menu.settings_load(menu.CONFIG_PATH, msettings)
     game_menu = menu.Menu(
         wad, msettings,
         menu.SKILLS.index(skill) if skill in menu.SKILLS else 2)
@@ -322,6 +327,7 @@ def main() -> int:
         fb = renderer.render_view(
             game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
             int(cam.viewz * 65536), mobjs, extra_light=extra,
+            fullbright=bool(state["ps"].powers.get(PW_INFRARED)),
         )
         # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob,
         # lower/raise travel while switching, kick frame while firing.
@@ -436,21 +442,30 @@ def main() -> int:
         """Menu selections: quit, or a wiped fresh start on E1M1."""
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
             mobjs, ctx, state, map_idx, amap, message, message_tics, \
-            noclip, skill, running, has_level
+            noclip, skill, running, has_level, paused, quickslot
         if mev == "close":
             gamestate = "level" if has_level else "title"
         elif mev == "quit":
             audio.play(random.choice(QUITSOUNDS))
+            menu.settings_save(menu.CONFIG_PATH, msettings)
             running = False
         elif isinstance(mev, tuple) and mev[0] == "load_game":
             from pydoom import saveg
             apply_snapshot(saveg.read_slot(mev[1]))
+        elif mev == "endgame":
+            # NOTE: M_EndGameResponse: back to the title (netgame N/A).
+            has_level = False
+            paused = False
+            amap = None
+            audio.music_play(TITLE_SONG, "end-game")
+            gamestate = "title"
         elif isinstance(mev, tuple) and mev[0] == "save_game":
             if not has_level:
                 audio.play("oof")
                 return
             from pydoom import saveg
             saveg.write_slot(mev[1], build_snapshot(mev[2]))
+            quickslot = mev[1]  # NOTE: manual saves arm quicksave
             gamestate = "level"  # NOTE: vanilla closes after saving
         elif isinstance(mev, tuple) and mev[0] == "new_game":
             old = last_fb.copy() if last_fb is not None else None
@@ -462,6 +477,7 @@ def main() -> int:
             amap = None
             message, message_tics = None, 0
             noclip = False
+            paused = False
             cheat.reset()
             pygame.display.set_caption("pydoom - E1M1")
             audio.music_play(song_for_map("E1M1"), "new-game")
@@ -559,6 +575,7 @@ def main() -> int:
                 elif ev.type == pygame.MOUSEBUTTONUP:
                     rec_events.append(("btn", ev.button, False))
             if ev.type == pygame.QUIT:
+                menu.settings_save(menu.CONFIG_PATH, msettings)
                 running = False
             elif ev.type == pygame.KEYDOWN:
                 if gamestate == "title":
@@ -735,6 +752,50 @@ def main() -> int:
                         am_zoom_in = am_zoom_out = False
                     else:
                         amap = None
+                elif ev.key == pygame.K_F1:
+                    # NOTE: vanilla help key: straight to Read This!.
+                    if has_level and gamestate == "level":
+                        gamestate = "menu"
+                        game_menu.open_readthis()
+                        audio.play("swtchn")
+                elif ev.key == pygame.K_F6:
+                    # NOTE: vanilla quicksave (pick a slot first time).
+                    if has_level and gamestate == "level":
+                        from pydoom import saveg
+                        if quickslot is None:
+                            gamestate = "menu"
+                            game_menu.open()
+                            game_menu.enter_slots("save")
+                            audio.play("swtchn")
+                        else:
+                            name = saveg.slot_name(quickslot)
+                            if name == saveg.EMPTY:
+                                name = "QUICKSAVE"
+                            saveg.write_slot(quickslot,
+                                             build_snapshot(name))
+                            message = "QUICKSAVED"
+                            message_tics = 2 * TICRATE
+                elif ev.key == pygame.K_F9:
+                    if has_level and gamestate == "level":
+                        from pydoom import saveg
+                        if quickslot is None:
+                            audio.play("oof")
+                            message = ("you haven't picked a quicksave "
+                                       "slot yet!")
+                            message_tics = 3 * TICRATE
+                        else:
+                            apply_snapshot(saveg.read_slot(quickslot))
+                elif ev.key in (pygame.K_p, pygame.K_PAUSE):
+                    # NOTE: P doubles as a cheat letter (idclip ends on
+                    # it): the cheat fires first, pause toggles after.
+                    # Vanilla pauses on Pause/Break, bound here too.
+                    if has_level:
+                        paused = not paused
+                elif ev.key == pygame.K_m:
+                    # NOTE: vanilla TAB-mode M drops a mark; outside the
+                    # automap M is mute (keyup below skips open maps).
+                    if amap is not None and gamestate == "level":
+                        amap.add_mark()
                 elif ev.key in (pygame.K_EQUALS, pygame.K_PLUS,
                                 pygame.K_KP_PLUS):
                     am_zoom_in = True
@@ -750,10 +811,11 @@ def main() -> int:
                     if debug:
                         show_ai = not show_ai
                 elif ev.key == pygame.K_m:
-                    if audio.toggle_mute():
-                        message, message_tics = "SOUND OFF", TICRATE
-                    else:
-                        message, message_tics = "SOUND ON", TICRATE
+                    if amap is None:
+                        if audio.toggle_mute():
+                            message, message_tics = "SOUND OFF", TICRATE
+                        else:
+                            message, message_tics = "SOUND ON", TICRATE
                 elif pygame.K_1 <= ev.key <= pygame.K_7:
                     weapons.request_weapon(state["ps"], chr(ev.key))
             elif ev.type == pygame.MOUSEMOTION:
@@ -810,7 +872,7 @@ def main() -> int:
                 wipe_after = "level"
                 gamestate = "wipe"
         tic_acc += dt
-        if gamestate != "level":
+        if gamestate != "level" or paused:
             tic_acc = 0  # NOTE: no catch-up burst when unpausing
             if frames % 2 == 0:
                 if gamestate == "menu":
@@ -818,7 +880,7 @@ def main() -> int:
                 elif gamestate == "inter" and inter is not None:
                     inter.tick()  # tally count-up sweep
         while tic_acc >= 1.0 / TICRATE and not state["won"] \
-                and gamestate == "level":
+                and gamestate == "level" and not paused:
             tic_acc -= 1.0 / TICRATE
             state["tics"] = state.get("tics", 0) + 1
             if message_tics:
@@ -1051,7 +1113,10 @@ def main() -> int:
             amap.plr_x, amap.plr_y = player_mo.x, player_mo.y
             amap.plr_angle = cam.bam
             screen.fill((0, 0, 0))
-            amap.draw(screen)
+            amap.draw(screen, mobjs
+                       if (amap.cheating == 2
+                           or state["ps"].powers.get(PW_ALLMAP))
+                       else None)
             if font is not None:
                 hint = font.render(
                     "AUTOMAP +-zoom F-follow G-grid TAB-close",
@@ -1070,6 +1135,9 @@ def main() -> int:
             game_menu.draw_title(fb)  # NOTE: TITLESCREEN backdrop
         if gamestate == "menu":
             game_menu.draw(fb)  # NOTE: menu floats over the frozen sim
+        elif paused and gamestate == "level":
+            pw = game_menu._patch_w("M_PAUSE")
+            game_menu._blit("M_PAUSE", fb, (320 - pw) // 2, 4)
         elif gamestate == "inter" and inter is not None:
             fb = np.zeros((200, 320), dtype=np.uint8)
             inter.draw(fb, game_menu)
@@ -1123,7 +1191,8 @@ def main() -> int:
                                 (8, 64))
             help_line = (
                 "WASD/arrows move+turn, mouse look, Shift run, E use, "
-                "1-7 weapons, TAB map, M sound, Esc menu"
+                "1-7 weapons, TAB map, M sound/mark, P pause, F1 help, "
+                "F6/F9 quicksave, Esc menu"
             )
             if debug:
                 help_line += " [N noclip F freeze X AI PgUp/PgDn G mouse]"

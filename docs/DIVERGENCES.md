@@ -42,8 +42,8 @@ than it gives. This file lists every known one, by area. Rules:
   align), PLAYPAL damage/bonus/suit flashes.
 - Fixed 320×200 (upscaled ×3): no low-detail mode, no gamma (F11),
   no screensize (+/−). The status bar is baked into the framebuffer.
-- Infrared (light amp) and computer-map powers are picked up and
-  tick down, but have no visible world effect yet (renderer work).
+- The light-amplification visor renders everything at maximum light
+  (`fixedcolormap`); the computer map shows live monster dots.
 
 ## Monsters and AI
 
@@ -93,9 +93,8 @@ than it gives. This file lists every known one, by area. Rules:
 - Vanilla widgets, arms 2–7 lamps, ammo readout (fists count
   bullets), animated face cascade with rampage glare and death.
 - Automap is a TAB overlay while the sim runs (follow/grid/zoom,
-  full iddt cheat cycle). Marks exist (`add_mark`) but no key
-  reaches them — `M` is mute. The `pw_allmap` branch is skipped
-  (reveal defaults to full anyway).
+  full iddt cheat cycle, `M` drops marks in map mode). The
+  `pw_allmap` branch is skipped (reveal defaults to full anyway).
 
 ## Flow, exits, teleports
 
@@ -120,8 +119,8 @@ than it gives. This file lists every known one, by area. Rules:
 - Main → Episode (shareware scolds on 2/3, vanilla-true) → Skill,
   Options (messages, mouse sens, SFX/music volume), ReadThis!,
   Load/Save, Quit with the shareware death jingle.
-- Omitted until needed: End Game (needs nothing now that a title
-  state exists — just unwired), graphic detail, screen size.
+- Omitted until needed: graphic detail, screen size. (End Game
+  is wired since the title state exists.)
 - Thermo bars sit right of the label instead of below (layout
   simplification); dialog text is uppercase-only (the shareware
   `STCFN` font has no lowercase glyphs).
@@ -180,6 +179,10 @@ than it gives. This file lists every known one, by area. Rules:
   behind it yet); any key opens the menu.
 - Fixed bindings, fixed mouse look curve on a slider; the messages
   toggle hides all HUD text including cheat confirmations.
+- `P` (and Pause/Break, like vanilla) freezes the sim with the
+  `M_PAUSE` patch while music plays on; `F1` opens Read This!;
+  `F6`/`F9` quicksave to the last manual slot (or open the slots);
+  options persist in `pydoom.cfg` (volumes, sens, messages).
 
 ## Randomness
 

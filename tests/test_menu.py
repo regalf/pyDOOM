@@ -107,6 +107,7 @@ def test_sliders_clamp():
 def test_messages_toggle():
     m = fresh()
     m.current = "options"
+    m.menus["options"].last_on = 1  # NOTE: messages row (0 is endgame)
     assert m.settings.messages is True
     m.key("enter")
     assert m.settings.messages is False
@@ -174,6 +175,10 @@ def test_event_protocol_matches_viewer():
     m.key("q")  # quit asks
     collect(m.key("y"))  # quit
     m = fresh()
+    m.current = "options"
+    m.key("enter")  # endgame asks
+    collect(m.key("y"))  # endgame
+    m = fresh()
     m.key("l")  # load slots
     assert m.mode == "slots"
     m.key("down")
@@ -186,7 +191,7 @@ def test_event_protocol_matches_viewer():
         m.key(ch)
     m.key("backspace")
     collect(m.key("enter"))  # (save_game, 0, "AB")
-    assert seen == {"close", "quit", "new_game", "save_game"}
+    assert seen == {"close", "quit", "new_game", "save_game", "endgame"}
 
 
 def test_load_slot_emits_event(tmp_path, monkeypatch):
@@ -198,3 +203,41 @@ def test_load_slot_emits_event(tmp_path, monkeypatch):
     assert m.slot_names[1] == "HANGAR"
     m.key("down")
     assert m.key("enter") == [("load_game", 1)]
+
+
+def test_endgame_returns_title_event():
+    m = fresh()
+    m.current = "options"
+    assert m.key("enter") == []  # endgame asks first
+    assert m.mode == "confirm"
+    assert m.key("y") == ["endgame"]
+    m.key("enter")
+    assert m.key("n") == []
+    assert m.mode == "menu"
+
+
+def test_config_round_trip(tmp_path):
+    from pydoom.menu import settings_load, settings_save
+    path = str(tmp_path / "pydoom.cfg")
+    s = Settings()
+    s.sfx_vol = 3
+    s.mus_vol = 12
+    s.mouse_sens = 7
+    s.messages = False
+    settings_save(path, s)
+    back = Settings()
+    settings_load(path, back)
+    assert (back.sfx_vol, back.mus_vol, back.mouse_sens,
+            back.messages) == (3, 12, 7, False)
+
+
+def test_config_tolerates_garbage(tmp_path):
+    from pydoom.menu import settings_load
+    path = str(tmp_path / "pydoom.cfg")
+    with open(path, "w") as f:
+        f.write("sfx_vol 99\nbogus line here\nmus_vol seven\n")
+    back = Settings()
+    settings_load(path, back)  # NOTE: clamps, skips, never raises
+    assert back.sfx_vol == 15
+    assert back.mus_vol == 8
+    settings_load(str(tmp_path / "missing.cfg"), back)  # NOTE: no file

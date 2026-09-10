@@ -16,4 +16,6 @@ DOOM_ENGINE_ANALYSIS.md
 
 # local savegames (menu slots)
 savegames/
+# local options (menu sliders)
+pydoom.cfg
 *.wav

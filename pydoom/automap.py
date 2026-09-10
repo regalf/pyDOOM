@@ -451,7 +451,7 @@ class Automap:
 
     # -- drawing (AM_Drawer and friends) --
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, live=None) -> None:
         surface.fill(self.palette[BACKGROUND])
         if self.grid:
             self._draw_grid(surface, GRIDCOLORS)
@@ -459,6 +459,8 @@ class Automap:
         self._draw_player(surface)
         if self.cheating == 2:
             self._draw_things(surface)
+        if live:
+            self._draw_live(surface, live)
         surface.set_at((self.f_w // 2, self.f_h // 2), self.palette[XHAIRCOLORS])
         self._draw_marks(surface)
 
@@ -578,6 +580,22 @@ class Automap:
         self._draw_line_character(
             surface, PLAYER_ARROW, 0, self.plr_angle, WHITE, self.plr_x, self.plr_y
         )
+
+    def _draw_live(self, surface: pygame.Surface, mobjs) -> None:
+        """Computer-map dots: live mobjs (vanilla shows map things;
+        positions here track the sim instead of spawn spots)."""
+        for mo in mobjs:
+            if getattr(mo, "dead", False):
+                continue
+            self._draw_line_character(
+                surface,
+                THIN_TRIANGLE_GUY,
+                16 << FRACBITS,
+                mo.angle,
+                THINGCOLORS,
+                mo.x,
+                mo.y,
+            )
 
     def _draw_things(self, surface: pygame.Surface) -> None:
         for t in self.map.things:

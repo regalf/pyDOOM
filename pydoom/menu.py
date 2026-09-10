@@ -17,6 +17,7 @@ SKULL_YOFF = -5
 SKILLS = ("baby", "easy", "normal", "hard", "nightmare")
 
 QUITMSG = "are you sure you want to\nquit this great game?"
+ENDGAME = "are you sure you want to\nend the game?"
 SWSTRING = ("this is the shareware version of doom.\n\n"
             "you need to order the entire trilogy.")
 NIGHTMARE = ("are you sure? this skill level\n"
@@ -35,6 +36,49 @@ class Settings:
     mus_vol: int = 8
     mouse_sens: int = 4
     messages: bool = True
+
+
+CONFIG_PATH = "pydoom.cfg"
+
+
+def settings_load(path: str, settings: Settings) -> None:
+    """Read back an options file (vanilla default.cfg idea, tolerant:
+    bad lines and out-of-range values never crash the boot)."""
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        key, raw = parts
+        try:
+            val = int(raw)
+        except ValueError:
+            continue
+        if key == "sfx_vol":
+            settings.sfx_vol = max(0, min(SFX_MAX, val))
+        elif key == "mus_vol":
+            settings.mus_vol = max(0, min(MUS_MAX, val))
+        elif key == "mouse_sens":
+            settings.mouse_sens = max(0, min(SENS_MAX, val))
+        elif key == "messages":
+            settings.messages = bool(val)
+
+
+def settings_save(path: str, settings: Settings) -> None:
+    """Persist options (written on real exits only, never by --frames
+    smoke runs, so headless testing stays side-effect free)."""
+    try:
+        with open(path, "w") as f:
+            f.write(f"sfx_vol {settings.sfx_vol}\n"
+                    f"mus_vol {settings.mus_vol}\n"
+                    f"mouse_sens {settings.mouse_sens}\n"
+                    f"messages {int(settings.messages)}\n")
+    except OSError:
+        pass
 
 
 @dataclass
@@ -85,6 +129,7 @@ def build_menus() -> dict:
             MenuItem("skill4", "M_NMARE", shortcut="n"),
         ], 48, 63, "episode", 2),
         "options": MenuDef("options", "M_OPTTTL", [
+            MenuItem("endgame", "M_ENDGAM", shortcut="e"),
             MenuItem("messages", "M_MESSG", "toggle", "m"),
             MenuItem("sens", "M_MSENS", "slider", "m"),
             MenuItem("sound", "M_SVOL", shortcut="s"),
@@ -156,6 +201,21 @@ class Menu:
         """M_StartControlPanel: always lands on Main (lastOn kept)."""
         self.current = "main"
         self.mode = "menu"
+
+    def open_readthis(self) -> None:
+        """F1 help: straight to the Read This! screens."""
+        self.current = "main"
+        self.mode = "readthis"
+        self.readpage = 0
+
+    def enter_slots(self, kind: str) -> None:
+        """Jump straight to the load/save slots (quicksave needs one)."""
+        from pydoom import saveg
+        self.slot_kind = kind
+        self.slot_idx = 0
+        self.slot_names = [saveg.slot_name(i)
+                           for i in range(saveg.SLOT_COUNT)]
+        self.mode = "slots"
 
     def tick(self) -> None:
         """Skull animation (whichSkull flips every 8 tics)."""
@@ -287,6 +347,8 @@ class Menu:
             self.readpage = 0
         elif act == "quit":
             self._ask(QUITMSG, "quit")
+        elif act == "endgame":
+            self._ask(ENDGAME, "endgame")
         elif act.startswith("ep"):
             ep = int(act[2:])
             if ep:  # NOTE: shareware scolds and shows Read This!

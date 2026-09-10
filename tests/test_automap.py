@@ -135,3 +135,19 @@ def test_draw_e1m1():
     am.cycle_cheat()
     assert am.cheating == 2
     am.draw(surf2)
+
+
+def test_draw_live_things():
+    from types import SimpleNamespace
+    am = Automap(make_square_map(), 320, 200, PALETTE)
+    surf = pygame.Surface((320, 200))
+    am.draw(surf)
+    base = count_non_bg(surf, PALETTE[0])
+    live = [SimpleNamespace(x=0, y=0, angle=0, dead=False)]
+    surf2 = pygame.Surface((320, 200))
+    am.draw(surf2, live)
+    assert count_non_bg(surf2, PALETTE[0]) > base  # NOTE: dot added
+    ghost = [SimpleNamespace(x=0, y=0, angle=0, dead=True)]
+    surf3 = pygame.Surface((320, 200))
+    am.draw(surf3, ghost)
+    assert count_non_bg(surf3, PALETTE[0]) == base  # NOTE: corpses skip
