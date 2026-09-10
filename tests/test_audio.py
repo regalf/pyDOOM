@@ -284,3 +284,28 @@ def test_music_init_play_stop():
     finally:
         audio.music_shutdown()
     assert _a._music_player is None
+
+
+def test_music_pump_caps_backlog():
+    """One queued chunk max: switches stay tight, memory never grows."""
+    from pydoom.audio import _feed_action
+
+    class FakeChannel:
+        def __init__(self):
+            self.busy = False
+            self.queued = None
+
+        def get_busy(self):
+            return self.busy
+
+        def get_queue(self):
+            return self.queued
+
+    fake = FakeChannel()
+    assert _feed_action(fake) == "play"  # NOTE: idle starts now
+    fake.busy = True
+    assert _feed_action(fake) == "queue"  # NOTE: one lines up
+    fake.queued = object()
+    assert _feed_action(fake) == "skip"  # NOTE: never two waiting
+    fake.queued = None  # NOTE: mixer consumed it
+    assert _feed_action(fake) == "queue"

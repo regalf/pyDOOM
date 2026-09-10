@@ -329,16 +329,44 @@ def music_stop() -> None:
         _music_player.stop()
 
 
+def _feed_action(channel: str) -> str:
+    """play (idle), queue (one max) or skip: the backlog cap, unit
+    tested with a fake channel (no mixer needed)."""
+    try:
+        busy = channel.get_busy()
+    except Exception:
+        return "skip"
+    if not busy:
+        return "play"
+    try:
+        if channel.get_queue() is not None:
+            return "skip"  # NOTE: channel fed; backpressure parks worker
+    except Exception:
+        return "skip"
+    return "queue"
+
+
 def music_pump() -> None:
-    """Queue one rendered chunk (main-thread only, never blocks)."""
+    """Feed the music channel (main-thread only, never blocks).
+
+    Idle channels get play(), busy ones at most one queued chunk:
+    the backlog never grows, so song switches land tight.
+    """
     if _music_player is None or _music_channel is None:
+        return
+    action = _feed_action(_music_channel)
+    if action == "skip":
         return
     chunk = _music_player.pump()
     if chunk is None:
         return
     try:
         import pygame
-        _music_channel.queue(pygame.mixer.Sound(buffer=chunk))
+        sound = pygame.mixer.Sound(buffer=chunk)
+        if action == "queue":
+            _music_channel.queue(sound)
+        else:
+            _music_channel.play(sound)
     except Exception:
         pass
 
