@@ -264,3 +264,23 @@ def test_every_played_sound_resolves():
     missing = [n for n in names
                if n not in audio_mod.SFX or ("DS" + n.upper()) not in lumps]
     assert missing == [], missing
+
+
+@requires_wad
+def test_music_init_play_stop():
+    from pydoom import audio as _a
+    wad = WadFile(os.path.join(os.path.dirname(__file__), "..",
+                               "DOOM1.WAD"))
+    assert audio.music_init(wad)
+    try:
+        assert audio.music_play("D_E1M1")
+        assert not audio.music_play("D_NOPE")
+        audio.music_set_volume(0)
+        audio.music_set_volume(15)
+        audio.music_set_volume(99)  # NOTE: clamps, never crashes
+        audio.music_pump()  # NOTE: no mixer here, must stay silent-safe
+        audio.music_stop()
+        assert _a._music_vol == 15
+    finally:
+        audio.music_shutdown()
+    assert _a._music_player is None

@@ -137,6 +137,15 @@ def _move_keys(mv) -> list:
     return keys
 
 
+MAP_SONGS = {f"E1M{i}": f"D_E1M{i}" for i in range(1, 10)}
+TITLE_SONG, INTER_SONG, FINALE_SONG = "D_INTRO", "D_INTER", "D_VICTOR"
+
+
+def song_for_map(marker: str) -> str:
+    """E1Mn music lump (idmus digits land here too)."""
+    return MAP_SONGS.get(marker.upper(), "D_E1M1")
+
+
 def set_noclip(on: bool, player_mo, cam, phys) -> None:
     """Shared N-key/idclip toggle: MF_NOCLIP flag plus a floor resync
     when clipping back in (so the body never hovers over the void)."""
@@ -420,6 +429,7 @@ def main() -> int:
         cheat.reset()
         map_idx = maps.index(game_map.marker)
         pygame.display.set_caption(f"pydoom - {game_map.marker}")
+        audio.music_play(song_for_map(game_map.marker))
         gamestate = "level"
 
     def apply_menu_event(mev):
@@ -454,6 +464,7 @@ def main() -> int:
             noclip = False
             cheat.reset()
             pygame.display.set_caption("pydoom - E1M1")
+            audio.music_play(song_for_map("E1M1"))
             if old is None:
                 gamestate = "level"
             else:
@@ -465,6 +476,12 @@ def main() -> int:
     pygame.display.set_caption(f"pydoom - {game_map.marker}")
     try:
         audio.init(wad)  # silent no-op when the mixer is missing
+    except Exception:
+        pass
+    try:
+        audio.music_init(wad)  # song thread (silent without PyOPL)
+        audio.music_play(TITLE_SONG if gamestate == "title"
+                         else song_for_map(game_map.marker))
     except Exception:
         pass
     try:
@@ -584,6 +601,7 @@ def main() -> int:
                 if gamestate == "finale":
                     # NOTE: E1TEXT read: any key returns to the title.
                     has_level = False
+                    audio.music_play(TITLE_SONG)
                     gamestate = "title"
                     continue
                 if gamestate != "level":
@@ -640,7 +658,11 @@ def main() -> int:
                                 pygame.display.set_caption(
                                     f"pydoom - {game_map.marker}")
                     elif cname == "idmus":
-                        message = cheats.MUS  # music stub, message only
+                        # NOTE: shareware jukebox is E1M1-E1M9.
+                        if len(carg) == 2 and carg[0] == "1" \
+                                and carg[1] in "123456789":
+                            audio.music_play(f"D_E1M{carg[1]}")
+                        message = cheats.MUS
                         message_tics = 3 * TICRATE
                     elif cname == "idbehold":
                         message = cheats.apply_behold(_ps, player_mo,
@@ -686,6 +708,7 @@ def main() -> int:
                     message, message_tics = None, 0
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
+                    audio.music_play(song_for_map(game_map.marker))
                 elif ev.key == pygame.K_PAGEDOWN:
                     if not debug:
                         continue
@@ -696,6 +719,7 @@ def main() -> int:
                     message, message_tics = None, 0
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
+                    audio.music_play(song_for_map(game_map.marker))
                 elif ev.key == pygame.K_f:
                     if amap is not None:
                         amap.toggle_follow()  # vanilla TAB-mode F
@@ -762,6 +786,8 @@ def main() -> int:
         run = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         speed = RUN_SPEED if run else WALK_SPEED
         audio.engine.master = msettings.sfx_vol / 15  # options slider
+        audio.music_set_volume(msettings.mus_vol)  # change-detected
+        audio.music_pump()  # one OPL chunk into the mixer, if ready
         if gamestate == "inter" and inter is not None \
                 and inter.finished_tally():
             # NOTE: tally over: wipe into the carried next level.
@@ -772,6 +798,7 @@ def main() -> int:
             map_idx = maps.index(game_map.marker)
             message, message_tics = None, 0
             pygame.display.set_caption(f"pydoom - {next_map}")
+            audio.music_play(song_for_map(next_map))
             inter = None
             if old is None:
                 gamestate = "level"
@@ -987,6 +1014,7 @@ def main() -> int:
                 if nxt is None:
                     # NOTE: E1M8 exit melts to the black finale screen.
                     melt.start(old, np.zeros((200, 320), dtype=np.uint8))
+                    audio.music_play(FINALE_SONG)
                     wipe_after = "finale"
                     gamestate = "wipe"
                 else:
@@ -999,6 +1027,7 @@ def main() -> int:
                     first = np.zeros((200, 320), dtype=np.uint8)
                     inter.draw(first, game_menu)
                     melt.start(old, first)
+                    audio.music_play(INTER_SONG)
                     wipe_after = "inter"
                     gamestate = "wipe"
             # Ease viewz toward standing height on the current floor.
@@ -1123,6 +1152,7 @@ def main() -> int:
         print(f"demo: recorded {len(demo_log)} frames, checksum {demo_sum}")
     if play_path is not None:
         print(f"demo: replayed {demo_idx} frames, checksum {demo_sum}")
+    audio.music_shutdown()  # song thread out before the mixer dies
     pygame.quit()
     return 0
 

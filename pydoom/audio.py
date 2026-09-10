@@ -269,8 +269,99 @@ def play(name: str, x: int | None = None,
 
 
 def toggle_mute() -> bool:
-    return engine.toggle_mute()
+    muted = engine.toggle_mute()
+    music_sync_mute()
+    return muted
 
 
 def start_music(name: str) -> None:
     engine.start_music(name)
+
+
+# -- streamed OPL music (oplmusic.py song thread + one mixer channel) --
+
+_music_player = None
+_music_channel = None
+_music_wad = None
+_music_main: list = []
+_music_perc: list = []
+_music_vol = 8  # options slider 0-15 (mus_vol finally does something)
+
+
+def music_init(wad) -> bool:
+    """Parse GENMIDI, reserve a mixer channel, start the song thread."""
+    global _music_player, _music_channel, _music_wad
+    global _music_main, _music_perc
+    from pydoom.genmidi import parse_genmidi
+    from pydoom.oplmusic import MusicPlayer
+    _music_wad = wad
+    try:
+        _music_main, _music_perc = parse_genmidi(wad.read_lump("GENMIDI"))
+    except Exception:
+        return False
+    _music_player = MusicPlayer()
+    _music_player.set_volume(_music_vol * 127 // 15)
+    _music_player.set_muted(engine.muted)
+    if engine.mixer is not None:
+        try:
+            engine.mixer.set_num_channels(N_CHANNELS + 1)
+            _music_channel = engine.mixer.Channel(N_CHANNELS)
+        except Exception:
+            _music_channel = None
+    return True
+
+
+def music_play(lump_name: str) -> bool:
+    """Loop a D_ lump (map songs, title, intermission, idmus)."""
+    if _music_player is None or _music_wad is None:
+        return False
+    try:
+        data = bytes(_music_wad.read_lump(lump_name))
+    except Exception:
+        return False
+    _music_player.play_song(data, _music_main, _music_perc,
+                            _music_vol * 127 // 15)
+    return True
+
+
+def music_stop() -> None:
+    if _music_player is not None:
+        _music_player.stop()
+
+
+def music_pump() -> None:
+    """Queue one rendered chunk (main-thread only, never blocks)."""
+    if _music_player is None or _music_channel is None:
+        return
+    chunk = _music_player.pump()
+    if chunk is None:
+        return
+    try:
+        import pygame
+        _music_channel.queue(pygame.mixer.Sound(buffer=chunk))
+    except Exception:
+        pass
+
+
+def music_set_volume(index: int) -> None:
+    """Options slider 0-15 straight into the OPL voice math."""
+    global _music_vol
+    index = max(0, min(15, index))
+    if index == _music_vol:
+        return
+    _music_vol = index
+    if _music_player is not None:
+        _music_player.set_volume(index * 127 // 15)
+
+
+def music_sync_mute() -> None:
+    if _music_player is not None:
+        _music_player.set_muted(engine.muted)
+
+
+def music_shutdown() -> None:
+    global _music_player, _music_channel
+    if _music_player is not None:
+        _music_player.close()
+        _music_player = None
+    _music_channel = None
