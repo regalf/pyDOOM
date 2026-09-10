@@ -6,15 +6,19 @@ is 35 Hz ticcmds driving a bit-exact sim — so this is really an engine
 fidelity project with a file format on top. Work happens on the branch;
 `main` stays untouched until small verified pieces merge back.
 
-## A. ticcmd layer (input)
+## A. ticcmd layer (input) — done on bit-exact-emu (`pydoom/ticcmd.py`)
 
-- [ ] Sample input once per tic at 35 Hz, decoupled from render rate
-      (`tools/doom_view.py`: input currently polled per display frame,
-      mouse turning applied instantly in the event handler).
-- [ ] Quantize mouse look to int16 `angleturn` per tic.
-- [ ] Map movement/keys to vanilla `ticcmd_t` units (forward/side
-      speeds, `BT_ATTACK`/`BT_USE`/weapon-change bits).
-- [ ] Keep the current intent-recorder as the fallback/debug path.
+- [x] Sample input once per tic at 35 Hz, decoupled from render rate
+      (`tools/doom_view.py` builds one `Ticcmd` per tic iteration from
+      a fresh key snapshot; mouse motion accumulates between tics).
+- [x] Quantize mouse look to int16 `angleturn` per tic (slider rad/px
+      converts to angleturn units/px, rounded per tic).
+- [x] Map movement/keys to vanilla `ticcmd_t` units (forward/side
+      tables 25/50 + 24/40, key-turn ramp 320/640/1280, `BT_ATTACK` /
+      `BT_USE` / `BT_CHANGE` + weapon bits; use/weapon edges latch so
+      sub-frame taps still reach a tic).
+- [x] Keep the current intent-recorder as the fallback/debug path
+      (unchanged pickle format; record/replay checksums still agree).
 
 ## B. Player physics rewrite
 

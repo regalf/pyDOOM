@@ -35,6 +35,7 @@ from pydoom import flow
 from pydoom import interm
 from pydoom import menu
 from pydoom import oplmusic
+from pydoom import ticcmd
 from pydoom import weapons
 from pydoom import audio
 from pydoom.automap import Automap
@@ -78,7 +79,8 @@ _E1TEXT_LINES = (
 TICRATE = 35
 WALK_SPEED = 7.0  # map units per tic
 RUN_SPEED = 13.0
-TURN_SPEED = 0.075  # radians per tic
+# NOTE: key turning now rides ticcmd ANGLETURN units (640/1280/320 with
+# the SLOWTURNTICS ramp, like vanilla); radians live in ticcmd.py.
 # NOTE: mouse radians/px rides the options slider (0.0004 + idx*6e-4,
 # so idx 4 lands on the old 0.0028); the const below is history.
 MOUSE_SENS = 0.0028  # radians per pixel (default slider position)
@@ -277,7 +279,7 @@ def main() -> int:
             flow.strip_for_next_level(ps)
         ctx.player_state = ps
         state = {"cooldown": 0, "refire": False, "firing": False,
-                 "start": start, "ps": ps, "won": False,
+                 "usedown": False, "start": start, "ps": ps, "won": False,
                  "flash_until": 0, "atk_until": 0, "atk_span": 1,
                  "bob": 0, "face": FaceState()}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
@@ -529,6 +531,7 @@ def main() -> int:
     demo_keys = None  # virtual pressed-set while replaying
     demo_sum = 0  # framebuffer checksum (record and replay agree)
     rec_events: list = []
+    tbuilder = ticcmd.TiccmdBuilder()  # 35 Hz input packets (milestone A)
     while running:
         if recording or replaying:
             clock.tick(60)
@@ -565,6 +568,11 @@ def main() -> int:
             else:
                 replaying = False
         for ev in pygame.event.get():
+            if ev.type == pygame.KEYUP and pygame.K_1 <= ev.key <= pygame.K_7:
+                # NOTE: ungated release: a digit let go in the menu must
+                # not stick as a held weapon (vanilla re-sends BT_CHANGE
+                # every tic while the key is down).
+                tbuilder.note_weapon_up(ev.key - pygame.K_1)
             if recording:
                 if ev.type == pygame.KEYDOWN:
                     rec_events.append(
@@ -709,16 +717,13 @@ def main() -> int:
                         noclip = not noclip
                         set_noclip(noclip, player_mo, cam, phys)
                 elif ev.key == pygame.K_e:
-                    message = world.use_lines(
-                        player_mo.x, player_mo.y, cam.bam, phys,
-                        state["ps"].keys, player_mo, mobjs)
-                    message_tics = 3 * TICRATE if message else 0
-                    if world.teleport_angle is not None:
-                        cam.angle = (world.teleport_angle
-                                     * 2 * math.pi / 0x100000000)
-                        cam.x = player_mo.x / 65536.0
-                        cam.y = player_mo.y / 65536.0
-                        world.teleport_angle = None
+                    # NOTE: use rides the next ticcmd as BT_USE (the tic
+                    # loop edges it with usedown, like vanilla); latching
+                    # keeps sub-frame taps from getting lost.
+                    tbuilder.note_use()
+                elif pygame.K_1 <= ev.key <= pygame.K_7:
+                    # NOTE: digits latch into the next ticcmd (BT_CHANGE).
+                    tbuilder.note_weapon_down(ev.key - pygame.K_1)
                 elif ev.key == pygame.K_PAGEUP:
                     if not debug:
                         continue
@@ -819,13 +824,12 @@ def main() -> int:
                             message, message_tics = "SOUND OFF", TICRATE
                         else:
                             message, message_tics = "SOUND ON", TICRATE
-                elif pygame.K_1 <= ev.key <= pygame.K_7:
-                    weapons.request_weapon(state["ps"], chr(ev.key))
             elif ev.type == pygame.MOUSEMOTION:
                 if gamestate == "level" and (pygame.event.get_grab()
                                              or demo_frame):
-                    sens = 0.0004 + msettings.mouse_sens * 0.0006
-                    cam.turn(-ev.rel[0] * sens)
+                    # NOTE: motion accumulates; each tic quantizes its
+                    # share to int16 angleturn (milestone A).
+                    tbuilder.add_mouse(ev.rel[0], ev.rel[1])
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if gamestate == "level" and ev.button == 1:
                     state["firing"] = True
@@ -851,8 +855,11 @@ def main() -> int:
                        bool(keys[pygame.K_SPACE])],
             })
             rec_events = []
-        run = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-        speed = RUN_SPEED if run else WALK_SPEED
+        # NOTE: slider rad/px into angleturn units/px (vanilla parity is
+        # 8.0); the builder quantizes per tic, so demos store int16.
+        tbuilder.mouse_units_per_px = (
+            (0.0004 + msettings.mouse_sens * 0.0006) * 65536.0
+            / (2 * math.pi))
         audio.engine.master = msettings.sfx_vol / 15  # options slider
         audio.music_set_volume(msettings.mus_vol)  # change-detected
         audio.music_pump()  # one OPL chunk into the mixer, if ready
@@ -925,12 +932,26 @@ def main() -> int:
                             mo.sector.thinglist.remove(mo)
                         except ValueError:
                             pass
-            # Weapon raise ticks, then fire/switch (mouse-left or Space).
+            # Weapon raise ticks, then one input packet per tic: held
+            # keys are sampled here (35 Hz), not per display frame.
             ps = state["ps"]
             weapons.tick_weapon(ps)
             if state["cooldown"]:
                 state["cooldown"] -= 1
-            want_fire = state["firing"] or keys[pygame.K_SPACE]
+            tkeys = pygame.key.get_pressed()
+            if demo_keys is not None:
+                tkeys = demo_keys  # NOTE: replayed held-keys, not hardware
+            cmd = tbuilder.build(ticcmd.RawInput(
+                up=bool(tkeys[pygame.K_w] or tkeys[pygame.K_UP]),
+                down=bool(tkeys[pygame.K_s] or tkeys[pygame.K_DOWN]),
+                strafeleft=bool(tkeys[pygame.K_a]),
+                straferight=bool(tkeys[pygame.K_d]),
+                turnleft=bool(tkeys[pygame.K_LEFT]),
+                turnright=bool(tkeys[pygame.K_RIGHT]),
+                speed=bool(tkeys[pygame.K_LSHIFT]
+                            or tkeys[pygame.K_RSHIFT]),
+                attack=bool(state["firing"] or tkeys[pygame.K_SPACE])))
+            want_fire = bool(cmd.buttons & ticcmd.BT_ATTACK)
             if want_fire and not state["cooldown"]:
                 player_mo.angle = cam.bam
                 cd = weapons.fire(ps, player_mo, phys, index, mobjs,
@@ -948,6 +969,28 @@ def main() -> int:
                 # NOTE: cd < 0 means still switching or just auto-switched
                 # off a dry gun (vanilla never clicks empty).
             state["refire"] = want_fire
+            # NOTE: BT_USE edges through usedown (vanilla P_MovePlayer):
+            # holding E must not re-trigger doors every tic.
+            if cmd.buttons & ticcmd.BT_USE and not state["usedown"]:
+                message = world.use_lines(
+                    player_mo.x, player_mo.y, cam.bam, phys,
+                    state["ps"].keys, player_mo, mobjs)
+                message_tics = 3 * TICRATE if message else 0
+                if world.teleport_angle is not None:
+                    cam.angle = (world.teleport_angle
+                                 * 2 * math.pi / 0x100000000)
+                    cam.x = player_mo.x / 65536.0
+                    cam.y = player_mo.y / 65536.0
+                    world.teleport_angle = None
+                state["usedown"] = True
+            elif not cmd.buttons & ticcmd.BT_USE:
+                state["usedown"] = False
+            if cmd.buttons & ticcmd.BT_CHANGE:
+                # NOTE: bit i is digit i+1 through the KEYMAP toggle
+                # (request_weapon is idempotent, holds don't stall it).
+                weapons.request_weapon(
+                    ps, str(((cmd.buttons & ticcmd.BT_WEAPONMASK)
+                             >> ticcmd.BT_WEAPONSHIFT) + 1))
             # NOTE: Doomguy face ticks with the gamesim (ST_updateFaceWidget).
             state["facelump"] = update_face(state["face"], ps, player_mo,
                                             bool(want_fire))
@@ -988,19 +1031,16 @@ def main() -> int:
                 # NOTE: vanilla rebirth resets the inventory to pistol+50.
                 state["ps"] = PlayerState()
                 ctx.player_state = state["ps"]
-            fwd = strafe = 0.0
-            if keys[pygame.K_w] or keys[pygame.K_UP]:
-                fwd += speed
-            if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-                fwd -= speed
-            if keys[pygame.K_a]:
-                strafe -= speed
-            if keys[pygame.K_d]:
-                strafe += speed
-            if keys[pygame.K_LEFT]:
-                cam.turn(TURN_SPEED)
-            if keys[pygame.K_RIGHT]:
-                cam.turn(-TURN_SPEED)
+            # NOTE: the packet drives the kinematic mover until the
+            # section-B momentum rewrite; scales keep today's walk/run
+            # feel (vanilla units 25/50 map to WALK/RUN_SPEED).
+            if tkeys[pygame.K_LSHIFT] or tkeys[pygame.K_RSHIFT]:
+                tic_scale = RUN_SPEED / 50.0
+            else:
+                tic_scale = WALK_SPEED / 25.0
+            cam.turn(ticcmd.angleturn_to_rad(cmd.angleturn))
+            fwd = cmd.forwardmove * tic_scale
+            strafe = cmd.sidemove * tic_scale
             if fwd or strafe:
                 # NOTE: weapon bob amplitude chases speed (P_CalcHeight);
                 # the sway phase rides the tic clock, like vanilla.

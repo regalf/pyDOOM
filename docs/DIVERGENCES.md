@@ -30,6 +30,11 @@ than it gives. This file lists every known one, by area. Rules:
 - No momentum: movement sets position per tic (effectively permanent
   `CF_NOMOMENTUM`), no acceleration/friction curve, no key rebinding,
   no mouse-button or joystick setup.
+- Input already rides vanilla `ticcmd_t` packets at 35 Hz
+  (`pydoom/ticcmd.py`, bit-exact-emu: forward/side units, int16
+  angleturn with the key-turn ramp, `BT_ATTACK`/`BT_USE`/`BT_CHANGE`
+  bits) — but the kinematic mover still applies them without momentum
+  (section-B rewrite pending), and key/mouse bindings stay fixed.
 - Gravity lite plus floor glue instead of full `P_ZMovement`: lifts
   carry the body via re-glue, falls snap when close. No falling
   damage (vanilla has none either), no jumping/crouching (same).
