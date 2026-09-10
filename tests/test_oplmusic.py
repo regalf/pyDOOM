@@ -221,3 +221,14 @@ def test_degenerate_song_terminates():
     assert len(pcm) == 100
     sched2 = Scheduler([], main, perc, MockBackend())
     assert len(sched2.render_chunk(MockBackend(), 11025, 100)) == 100
+
+
+def test_pyopl_backend_tolerates_tiny_fills():
+    """Thread-crash regression: sub-2-sample segments (tight events)
+    clamp to PyOPL's minimum instead of raising in the worker."""
+    pyopl = pytest.importorskip("pyopl")
+    from pydoom.oplmusic import PyOplBackend
+    back = PyOplBackend()
+    assert len(back.render(1)) == 1
+    assert len(back.render(2)) == 2
+    assert len(back.render(513)) == 513

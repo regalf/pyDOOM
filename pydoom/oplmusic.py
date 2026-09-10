@@ -532,15 +532,24 @@ class PyOplBackend:
 
     def render(self, n: int):
         import numpy as np
-        out = np.zeros(n, dtype=np.int16)
-        while n > 0:
-            step = min(n, 512)  # NOTE: PyOPL caps fills at 512 samples
+        # NOTE: PyOPL fills 2..512 samples; lone tails overshoot by
+        # one sample (0.09 ms, trimmed below, scheduler stays exact).
+        sizes: list = []
+        left = max(int(n), 2)
+        while left > 0:
+            step = min(left, 512)
+            if step < 2:
+                step = 2
+            sizes.append(step)
+            left -= step
+        out = np.zeros(sum(sizes), dtype=np.int16)
+        off = 0
+        for step in sizes:
             buf = bytearray(step * 2)
             self.chip.getSamples(buf)
-            out[len(out) - n:len(out) - n + step] = np.frombuffer(
-                buf, dtype="<i2")
-            n -= step
-        return out
+            out[off:off + step] = np.frombuffer(buf, dtype="<i2")
+            off += step
+        return out[:int(n)]
 
 
 def create_backend():
