@@ -2,3 +2,6 @@ numpy
 pygame-ce
 numba
 pytest
+# OPL music chip (optional: without it music stays silent, like vanilla
+# LinuxDoom without its MUS server). DOSBox synth, GPL-3.0-only.
+PyOPL
