@@ -273,7 +273,9 @@ def test_music_init_play_stop():
                                "DOOM1.WAD"))
     assert audio.music_init(wad)
     try:
+        _a.music_log.clear()
         assert audio.music_play("D_E1M1")
+        assert _a.music_log[-1][0] == "D_E1M1"  # NOTE: song switch logged
         assert not audio.music_play("D_NOPE")
         audio.music_set_volume(0)
         audio.music_set_volume(15)

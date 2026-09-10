@@ -286,6 +286,7 @@ _music_wad = None
 _music_main: list = []
 _music_perc: list = []
 _music_vol = 8  # options slider 0-15 (mus_vol finally does something)
+music_log: list = []  # (lump, trigger) per song start, newest last
 
 
 def music_init(wad) -> bool:
@@ -311,8 +312,12 @@ def music_init(wad) -> bool:
     return True
 
 
-def music_play(lump_name: str) -> bool:
-    """Loop a D_ lump (map songs, title, intermission, idmus)."""
+def music_play(lump_name: str, trigger: str = "") -> bool:
+    """Loop a D_ lump (map songs, title, intermission, idmus).
+
+    Every start lands in music_log (and stdout) so a glance proves
+    which song the game picked and why.
+    """
     if _music_player is None or _music_wad is None:
         return False
     try:
@@ -321,6 +326,8 @@ def music_play(lump_name: str) -> bool:
         return False
     _music_player.play_song(data, _music_main, _music_perc,
                             _music_vol * 127 // 15)
+    music_log.append((lump_name, trigger))
+    print(f"music: {lump_name} [{trigger}]")
     return True
 
 

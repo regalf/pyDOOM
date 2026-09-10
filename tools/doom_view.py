@@ -429,7 +429,7 @@ def main() -> int:
         cheat.reset()
         map_idx = maps.index(game_map.marker)
         pygame.display.set_caption(f"pydoom - {game_map.marker}")
-        audio.music_play(song_for_map(game_map.marker))
+        audio.music_play(song_for_map(game_map.marker), "load-game")
         gamestate = "level"
 
     def apply_menu_event(mev):
@@ -464,7 +464,7 @@ def main() -> int:
             noclip = False
             cheat.reset()
             pygame.display.set_caption("pydoom - E1M1")
-            audio.music_play(song_for_map("E1M1"))
+            audio.music_play(song_for_map("E1M1"), "new-game")
             if old is None:
                 gamestate = "level"
             else:
@@ -481,7 +481,8 @@ def main() -> int:
     try:
         audio.music_init(wad)  # song thread (silent without PyOPL)
         audio.music_play(TITLE_SONG if gamestate == "title"
-                         else song_for_map(game_map.marker))
+                         else song_for_map(game_map.marker),
+                         "boot-title" if gamestate == "title" else "boot-level")
     except Exception:
         pass
     try:
@@ -601,7 +602,7 @@ def main() -> int:
                 if gamestate == "finale":
                     # NOTE: E1TEXT read: any key returns to the title.
                     has_level = False
-                    audio.music_play(TITLE_SONG)
+                    audio.music_play(TITLE_SONG, "finale-title")
                     gamestate = "title"
                     continue
                 if gamestate != "level":
@@ -661,7 +662,7 @@ def main() -> int:
                         # NOTE: shareware jukebox is E1M1-E1M9.
                         if len(carg) == 2 and carg[0] == "1" \
                                 and carg[1] in "123456789":
-                            audio.music_play(f"D_E1M{carg[1]}")
+                            audio.music_play(f"D_E1M{carg[1]}", "idmus")
                         message = cheats.MUS
                         message_tics = 3 * TICRATE
                     elif cname == "idbehold":
@@ -708,7 +709,8 @@ def main() -> int:
                     message, message_tics = None, 0
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
-                    audio.music_play(song_for_map(game_map.marker))
+                    audio.music_play(song_for_map(game_map.marker),
+                                             "debug-warp")
                 elif ev.key == pygame.K_PAGEDOWN:
                     if not debug:
                         continue
@@ -719,7 +721,8 @@ def main() -> int:
                     message, message_tics = None, 0
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
-                    audio.music_play(song_for_map(game_map.marker))
+                    audio.music_play(song_for_map(game_map.marker),
+                                             "debug-warp")
                 elif ev.key == pygame.K_f:
                     if amap is not None:
                         amap.toggle_follow()  # vanilla TAB-mode F
@@ -798,7 +801,7 @@ def main() -> int:
             map_idx = maps.index(game_map.marker)
             message, message_tics = None, 0
             pygame.display.set_caption(f"pydoom - {next_map}")
-            audio.music_play(song_for_map(next_map))
+            audio.music_play(song_for_map(next_map), "inter-next")
             inter = None
             if old is None:
                 gamestate = "level"
@@ -1014,7 +1017,7 @@ def main() -> int:
                 if nxt is None:
                     # NOTE: E1M8 exit melts to the black finale screen.
                     melt.start(old, np.zeros((200, 320), dtype=np.uint8))
-                    audio.music_play(FINALE_SONG)
+                    audio.music_play(FINALE_SONG, "exit-finale")
                     wipe_after = "finale"
                     gamestate = "wipe"
                 else:
@@ -1027,7 +1030,7 @@ def main() -> int:
                     first = np.zeros((200, 320), dtype=np.uint8)
                     inter.draw(first, game_menu)
                     melt.start(old, first)
-                    audio.music_play(INTER_SONG)
+                    audio.music_play(INTER_SONG, "exit-inter")
                     wipe_after = "inter"
                     gamestate = "wipe"
             # Ease viewz toward standing height on the current floor.
