@@ -191,6 +191,19 @@ def main() -> int:
         )
         ctx.mobjs = mobjs
         ctx.skyflatnum = renderer.skyflatnum
+
+        def _crush_damage(sec) -> None:
+            """PIT_ChangeSector crush bit: 10 damage to every solid
+            thing the ceiling sits on (player included, armor counts)."""
+            for mo in list(ctx.mobjs):
+                if mo.dead or mo.sector is not sec:
+                    continue
+                if not (mo.flags & 6):  # solid or shootable
+                    continue
+                gap = sec.ceilingheight - max(sec.floorheight, mo.z)
+                if gap < mo.height:
+                    combat.damage_mobj(mo, None, None, 10, ctx)
+        world.crush_hook = _crush_damage
         # NOTE: level transitions carry guns/ammo/armor (keys/powers
         # stripped); player health rides on the fresh body below.
         ps = keep_ps if keep_ps is not None else PlayerState()

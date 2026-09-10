@@ -244,3 +244,184 @@ def test_flicker_stays_in_bounds(setup):
             seen.add((id(f.sector), f.sector.lightlevel))
     assert any(len({lv for sid, lv in seen if sid == id(f.sector)}) > 1
                for f in flickers)
+
+
+@requires_wad
+def test_ceiling_crusher_bounces_and_hurts(setup):
+    """T_MoveCeiling crushAndRaise: down to floor+8, bounce, hook fired."""
+    from types import SimpleNamespace
+    from pydoom.doors import Ceiling
+    _, texman, game_map = setup
+    phys = Physics(game_map)
+    world = World(game_map, texman)
+    sec = next(s for s in game_map.sectors if s.tag)
+    top0, tag0 = sec.ceilingheight, sec.tag
+    hurt = []
+    world.crush_hook = hurt.append
+    try:
+        assert world.do_ceiling(SimpleNamespace(tag=sec.tag),
+                                "crushAndRaise")
+        ceil = sec.specialdata
+        assert isinstance(ceil, Ceiling) and ceil.crush
+        assert ceil.bottomheight == sec.floorheight + 8 * FRACUNIT
+        for _ in range(3000):
+            world.tick()
+            if ceil.direction == 1:
+                break
+        assert ceil.direction == 1  # hit the floor, bounced back up
+        assert hurt  # PIT_ChangeSector damage ran on the way down
+    finally:
+        sec.ceilingheight = top0
+        sec.specialdata = None
+
+
+@requires_wad
+def test_ceiling_grind_slowdown_and_quiet_lowerer(setup):
+    """Grinding crushers slow to CEILSPEED/8; lowerAndCrush (44) never
+    hurts (crush stays false, like vanilla)."""
+    from types import SimpleNamespace
+    from pydoom.doors import CEILSPEED
+    _, texman, game_map = setup
+    phys = Physics(game_map)
+    world = World(game_map, texman)
+    sec = next(s for s in game_map.sectors if s.tag)
+    top0 = sec.ceilingheight
+    hurt = []
+    world.crush_hook = hurt.append
+    # NOTE: a tall blocker in the sector grinds the ceiling forever.
+    world.blocker = (sec, sec.floorheight, 200 * FRACUNIT)
+    try:
+        assert world.do_ceiling(SimpleNamespace(tag=sec.tag),
+                                "crushAndRaise")
+        for _ in range(1200):
+            world.tick()
+        assert sec.specialdata.speed == CEILSPEED // 8
+        sec.specialdata.dead = True
+        sec.specialdata = None
+        sec.ceilingheight = top0
+        hurt.clear()
+        assert world.do_ceiling(SimpleNamespace(tag=sec.tag),
+                                "lowerAndCrush")
+        assert not sec.specialdata.crush
+        for _ in range(400):
+            world.tick()
+        assert hurt == []  # NOTE: type-44 grinds without damage
+        assert sec.specialdata.direction == -1  # still grinding
+    finally:
+        sec.ceilingheight = top0
+        sec.specialdata = None
+
+
+@requires_wad
+def test_ceiling_raise_to_highest_parks(setup):
+    """raiseToHighest climbs to the tallest neighbor, then exits."""
+    from types import SimpleNamespace
+    _, texman, game_map = setup
+    phys = Physics(game_map)
+    world = World(game_map, texman)
+    sec = next(s for s in game_map.sectors
+               if world.find_highest_ceiling(s) > s.ceilingheight)
+    tag0 = sec.tag
+    sec.tag = 4242  # NOTE: borrow an untagged sector for the lift
+    want = world.find_highest_ceiling(sec)
+    top0 = sec.ceilingheight
+    try:
+        assert world.do_ceiling(SimpleNamespace(tag=4242),
+                                "raiseToHighest")
+        for _ in range(3000):
+            world.tick()
+            if sec.specialdata is None:
+                break
+        assert sec.specialdata is None
+        assert sec.ceilingheight == want
+    finally:
+        sec.ceilingheight = top0
+        sec.specialdata = None
+        sec.tag = tag0
+
+
+@requires_wad
+def test_walk_triggers_wire_ceilings(setup):
+    """W1 6/25/40/44 and WR 72/73/77 dispatch to do_ceiling; W1 clears."""
+    from types import SimpleNamespace
+    from pydoom.doors import CEILSPEED, _WALK_ONCE, _WALK_RETRIGGER, Ceiling
+    assert _WALK_ONCE[6] == ("ceiling", "fastCrushAndRaise")
+    assert _WALK_ONCE[25] == ("ceiling", "crushAndRaise")
+    assert _WALK_ONCE[40] == ("ceiling", "raiseToHighest")
+    assert _WALK_ONCE[44] == ("ceiling", "lowerAndCrush")
+    assert _WALK_RETRIGGER[72] == ("ceiling", "lowerAndCrush")
+    assert _WALK_RETRIGGER[73] == ("ceiling", "crushAndRaise")
+    assert _WALK_RETRIGGER[77] == ("ceiling", "fastCrushAndRaise")
+    _, texman, game_map = setup
+    phys = Physics(game_map)
+    world = World(game_map, texman)
+    sec = next(s for s in game_map.sectors if s.tag)
+    top0 = sec.ceilingheight
+    try:
+        line = SimpleNamespace(special=25, tag=sec.tag)
+        world.cross_special_line(line, True)
+        assert line.special == 0  # W1 fires once
+        assert isinstance(sec.specialdata, Ceiling)
+        assert sec.specialdata.speed == CEILSPEED
+    finally:
+        sec.ceilingheight = top0
+        sec.specialdata = None
+    try:
+        line = SimpleNamespace(special=77, tag=sec.tag)
+        world.cross_special_line(line, True)
+        assert sec.specialdata.speed == 2 * CEILSPEED  # fast x2
+    finally:
+        sec.ceilingheight = top0
+        sec.specialdata = None
+
+
+@requires_wad
+def test_teleport_refuses_blocked_landing(setup):
+    """P_TeleportMove: pad inside a wall refuses silently, no fog."""
+    from types import SimpleNamespace
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
+    _, texman, game_map = setup
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, texman)
+    # NOTE: a point 16 units behind a one-sided wall is solid rock.
+    wall = next(li for li in game_map.lines if li.backsector is None)
+    import pydoom.physics as _ph
+    mx = (wall.v1.x + wall.v2.x) // 2
+    my = (wall.v1.y + wall.v2.y) // 2
+    dx, dy = wall.v2.x - wall.v1.x, wall.v2.y - wall.v1.y
+    leng = max(1, (dx * dx + dy * dy) ** 0.5)
+    for sgn in (1, -1):
+        px = int(mx + sgn * dy / leng * 16 * FRACUNIT)
+        py = int(my - sgn * dx / leng * 16 * FRACUNIT)
+        if _ph.point_on_line_side(px, py, wall) == 1:
+            break
+    sec = game_map.sectors[0]
+    tag0 = sec.tag
+    sec.tag = 9999
+    mobjs: list = []
+    dest = mover = None
+    try:
+        dest = spawn_mobj(None, phys, index, px, py, 0,
+                          MT_INDEX["TELEPORTMAN"])
+        dest.sector = sec  # pad claims the line's tag from inside rock
+        mover = spawn_mobj(game_map, phys, index, 1056 << 16,
+                           -3616 << 16, 0, MT_INDEX["PLAYER"])
+        mover.sector = phys.subsector_at(mover.x, mover.y).sector
+        nfog0 = sum(1 for mo in mobjs if mo.type == MT_INDEX["TFOG"])
+        line = SimpleNamespace(tag=9999, special=39)
+        assert world.teleport(line, mover, phys, mobjs) is False
+        assert (mover.x, mover.y) == (1056 << 16, -3616 << 16)
+        assert sum(1 for mo in mobjs
+                   if mo.type == MT_INDEX["TFOG"]) == nfog0
+    finally:
+        sec.tag = tag0
+        for mo in (dest, mover):
+            if mo is None:
+                continue
+            try:
+                index.unlink(mo)
+            except Exception:
+                pass

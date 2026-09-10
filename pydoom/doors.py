@@ -16,15 +16,16 @@ Scope (documented, never silent):
 * Keys arrive as a bitmask (see pydoom.player): locked manual and S1
   switch doors open when the color is held, else the vanilla PD_*
   denial. Monsters stay keyless and never open locked doors.
-* No mobjs: crushing never triggers from things, except an optional
-  player blocker passed to move_plane (a closing door reopens on the
-  camera, like vanilla). Monsters never use doors.
-* Only door/floor/plat/light/stairs/teleport/exit specials are
-  executed (manual DR family, S1/SR door/floor/plat/light switches and
-  buttons, W1/WR walk-over triggers for the same families, S1/SR exit
-  and teleport lines). Donuts, crushers and ceilings report messages
-  instead; the remaining specials and monster triggers arrive with
-  the gamesim.
+* Crush damage reaches mobjs through world.crush_hook (the sim hurts
+  everything the ceiling sits on, PIT_ChangeSector-style); move_plane
+  itself only knows an optional player blocker tuple. Monsters never
+  use doors.
+* Only door/floor/plat/light/stairs/teleport/exit/ceiling specials
+  are executed (manual DR family, S1/SR door/floor/plat/light switches
+  and buttons, W1/WR walk-over triggers for the same families, S1/SR
+  exit and teleport lines, W1/WR/S1 ceiling crushers). Unimplemented
+  specials report messages instead; the remaining specials and
+  monster triggers arrive with the gamesim.
 * Switch textures use the episode-1 pairs; episode 2/3 pairs are
   included when their textures exist in the WAD.
 * Thinkers are a plain list owned by World (p_tick.c arrives later).
@@ -48,6 +49,7 @@ __all__ = [
     "MAXBUTTONS",
     "USERANGE",
     "FLOORSPEED",
+    "CEILSPEED",
     "PLATSPEED",
     "PLATWAIT",
     "MAXPLATS",
@@ -55,6 +57,7 @@ __all__ = [
     "PlaneResult",
     "VerticalDoor",
     "FloorMover",
+    "Ceiling",
     "Plat",
     "Button",
     "World",
@@ -67,6 +70,7 @@ BUTTONTIME = 35  # 1 second of button texture
 MAXBUTTONS = 16
 USERANGE = 64 * FRACUNIT  # p_local.h
 FLOORSPEED = FRACUNIT  # p_spec.h
+CEILSPEED = FRACUNIT  # p_spec.h: crushers move 1 unit/tic (fast x2)
 PLATSPEED = FRACUNIT
 PLATWAIT = 3  # seconds (*35 tics) a lift waits
 MAXPLATS = 30
@@ -192,6 +196,9 @@ _WALK_ONCE = {
     38: ("floor", "lowerFloorToLowest"), 36: ("floor", "turboLower"),
     58: ("floor", "raiseFloor24"), 119: ("floor", "raiseFloorToNearest"),
     130: ("floor", "raiseFloorTurbo"),
+    6: ("ceiling", "fastCrushAndRaise"),
+    25: ("ceiling", "crushAndRaise"), 40: ("ceiling", "raiseToHighest"),
+    44: ("ceiling", "lowerAndCrush"),
     12: ("light", 0), 13: ("light", 255), 35: ("light", 35),
     52: ("exit", None), 39: ("teleport", None),
 }
@@ -209,6 +216,8 @@ _WALK_RETRIGGER = {
     98: ("floor", "turboLower"), 128: ("floor", "raiseFloorToNearest"),
     129: ("floor", "raiseFloorTurbo"),
     79: ("light", 35), 80: ("light", 0), 81: ("light", 255),
+    72: ("ceiling", "lowerAndCrush"), 73: ("ceiling", "crushAndRaise"),
+    77: ("ceiling", "fastCrushAndRaise"),
     97: ("teleport", None),
 }
 _SWITCH_LOCKS = {133: PD_BLUEO, 135: PD_REDO, 137: PD_YELLOWO,
@@ -467,6 +476,69 @@ class FloorMover:
 
 
 @dataclass(eq=False)
+@dataclass(eq=False)
+class Ceiling:
+    """ceiling_t thinker (p_ceilng.c T_MoveCeiling), type as a string."""
+
+    sector: object = field(default=None, repr=False)
+    type: str = "crushAndRaise"
+    crush: bool = False
+    direction: int = -1
+    topheight: int = 0
+    bottomheight: int = 0
+    speed: int = CEILSPEED
+    tag: int = 0
+    dead: bool = False
+
+    def think(self, world: "World") -> None:
+        """T_MoveCeiling: raisers exit at top, crushers bounce, lowerers
+        park at the floor. Crush damage runs through world.crush_hook
+        every 4th tic (PIT_ChangeSector); grinding crushers slow down
+        (fast ones never do, like vanilla)."""
+        from pydoom import audio
+        sec = self.sector
+        if self.direction == 1:
+            res = move_plane(sec, self.speed, self.topheight,
+                             False, 1, 1, world.blocker)
+            if not world.time & 7 and self.type != "silentCrushAndRaise":
+                audio.play("stnmov", sec.soundorg[0], sec.soundorg[1],
+                           sec)
+            if res == PlaneResult.PASTDEST:
+                if self.type == "raiseToHighest":
+                    sec.specialdata = None
+                    self.dead = True
+                else:  # crushers bounce back down (silent pings pstop)
+                    if self.type == "silentCrushAndRaise":
+                        audio.play("pstop", sec.soundorg[0],
+                                   sec.soundorg[1], sec)
+                    self.direction = -1
+        elif self.direction == -1:
+            res = move_plane(sec, self.speed, self.bottomheight,
+                             self.crush, 1, -1, world.blocker)
+            if not world.time & 7 and self.type != "silentCrushAndRaise":
+                audio.play("stnmov", sec.soundorg[0], sec.soundorg[1],
+                           sec)
+            if self.crush and not world.time & 3 \
+                    and world.crush_hook is not None:
+                world.crush_hook(sec)
+            if res == PlaneResult.PASTDEST:
+                if self.type in ("crushAndRaise", "fastCrushAndRaise"):
+                    self.speed = CEILSPEED
+                    self.direction = 1
+                elif self.type == "silentCrushAndRaise":
+                    audio.play("pstop", sec.soundorg[0], sec.soundorg[1],
+                               sec)
+                    self.speed = CEILSPEED
+                    self.direction = 1
+                else:  # lowerAndCrush/lowerToFloor park at the floor
+                    sec.specialdata = None
+                    self.dead = True
+            elif res == PlaneResult.CRUSHED:
+                if self.type in ("silentCrushAndRaise", "crushAndRaise",
+                                 "lowerAndCrush"):
+                    self.speed = CEILSPEED // 8
+
+
 class Plat:
     """plat_t thinker (p_plats.c); status as a string name."""
 
@@ -534,6 +606,9 @@ class World:
         # Optional player blocker for crush checks: (sector, z,
         # height) in fixed-point, refreshed by the viewer each tic.
         self.blocker = None
+        # PIT_ChangeSector crush damage: the sim (viewer) sets a
+        # callable(sector) that hurts everything the ceiling sits on.
+        self.crush_hook = None
         self.message: str | None = None
         self.time = 0  # leveltime: sector damage ticks every 32
         self.exit_kind: str | None = None  # None | "normal" | "secret"
@@ -584,6 +659,20 @@ class World:
             if other is None:
                 continue
             if other.ceilingheight < height:
+                height = other.ceilingheight
+        return height
+
+    def find_highest_ceiling(self, sector) -> int:
+        """P_FindHighestCeilingSurrounding (raiseToHighest target)."""
+        height = -MAXINT
+        for line in sector.lines:
+            if not (line.flags & ML_TWOSIDED):
+                continue
+            other = (line.backsector if line.frontsector is sector
+                     else line.frontsector)
+            if other is None:
+                continue
+            if other.ceilingheight > height:
                 height = other.ceilingheight
         return height
 
@@ -847,6 +936,43 @@ class World:
         for sec in self.find_sectors_from_tag(line.tag):
             sec.lightlevel = bright
 
+    def do_ceiling(self, line, ctype: str) -> bool:
+        """EV_DoCeiling (p_ceilng.c): crushers bounce, lowerers park,
+        raisers exit at top. lowerAndCrush grinds without hurting
+        (crush stays false), exactly like vanilla. No in-stasis
+        reactivation (EV_CeilingCrushStop is not wired either)."""
+        rtn = False
+        for sec in self.find_sectors_from_tag(line.tag):
+            if sec.specialdata is not None:
+                continue  # already moving: keep going
+            ceil = Ceiling(sector=sec, type=ctype, tag=sec.tag)
+            if ctype == "fastCrushAndRaise":
+                ceil.crush = True
+                ceil.topheight = sec.ceilingheight
+                ceil.bottomheight = sec.floorheight + 8 * FRACUNIT
+                ceil.direction = -1
+                ceil.speed = CEILSPEED * 2
+            elif ctype in ("silentCrushAndRaise", "crushAndRaise",
+                           "lowerAndCrush", "lowerToFloor"):
+                if ctype in ("silentCrushAndRaise", "crushAndRaise"):
+                    ceil.crush = True
+                    ceil.topheight = sec.ceilingheight
+                ceil.bottomheight = sec.floorheight
+                if ctype != "lowerToFloor":
+                    ceil.bottomheight += 8 * FRACUNIT
+                ceil.direction = -1
+                ceil.speed = CEILSPEED
+            elif ctype == "raiseToHighest":
+                ceil.topheight = self.find_highest_ceiling(sec)
+                ceil.direction = 1
+                ceil.speed = CEILSPEED
+            else:
+                continue
+            self.thinkers.append(ceil)
+            sec.specialdata = ceil
+            rtn = True
+        return rtn
+
     # -- doors (p_doors.c; sounds removed) --
 
     def do_door(self, line, dtype: int) -> bool:
@@ -1040,6 +1166,11 @@ class World:
             if self.build_stairs(line, 16 * FRACUNIT, FLOORSPEED * 4):
                 self.change_switch_texture(line, True)
             return None
+        if special == 141:
+            # NOTE: S1 silent crusher (no stnmov/pstop chatter).
+            if self.do_ceiling(line, "silentCrushAndRaise"):
+                self.change_switch_texture(line, False)
+            return None
         if special in (41, 43, 49):
             return f"Switch {special}: not implemented yet"
         return None
@@ -1129,6 +1260,8 @@ class World:
             self.build_stairs(line, 8 * FRACUNIT, FLOORSPEED // 4)
         elif kind == "floor":
             self.do_floor(line, arg)
+        elif kind == "ceiling":
+            self.do_ceiling(line, arg)
         elif kind == "plat":
             ptype, amount = arg
             self.do_plat(line, ptype, amount)
@@ -1173,10 +1306,12 @@ class World:
     def teleport(self, line, mover, physics, mobjs, side: int = 0) -> bool:
         """P_TeleportMove + EV_Teleport: hop to the tagged teleportman.
 
-        Fog at both ends, telefrag at the landing, angle/height from the
-        destination (E1M8 exit chain). False when no destination pads
-        the line's tag. Missiles never ride, and the back side stays
-        shut so arrivals can step off.
+        Telefrags the landing first, then refuses a still-blocked pad
+        (P_CheckPosition) with no fog at all, like vanilla. On success:
+        fog at both ends, angle/height from the destination (E1M8 exit
+        chain). False when no destination pads the line's tag. Missiles
+        never ride, and the back side stays shut so arrivals can step
+        off.
         """
         from pydoom.info import MT_INDEX
         if getattr(mover, "flags", 0) & MF_FLAGS["MF_MISSILE"]:
@@ -1195,10 +1330,6 @@ class World:
         from pydoom import tables
         from pydoom.mobjs import refresh_sector, spawn_mobj
         from pydoom import audio
-        fog = spawn_mobj(None, physics, physics.things, mover.x, mover.y,
-                         mover.z, MT_INDEX["TFOG"])
-        fog.momz = 65536
-        audio.play("telept", mover.x, mover.y, fog)
         if physics.things is not None:
             from pydoom.physics import MAPBLOCKSHIFT, MAXRADIUS
             bm = physics.map.blockmap
@@ -1216,6 +1347,12 @@ class World:
                             continue
                         from pydoom.combat import damage_mobj
                         damage_mobj(th, mover, mover, 10000, None)
+        if not physics.check_position(mover, dest.x, dest.y).ok:
+            return False  # NOTE: landing still blocked, stay put
+        fog = spawn_mobj(None, physics, physics.things, mover.x, mover.y,
+                         mover.z, MT_INDEX["TFOG"])
+        fog.momz = 65536
+        audio.play("telept", mover.x, mover.y, fog)
         physics.things.move(mover, dest.x, dest.y)
         mover.momx = mover.momy = mover.momz = 0
         mover.angle = dest.angle  # Mobj field; camera Movers gain one
