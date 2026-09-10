@@ -215,7 +215,7 @@ class SoundEngine:
             heard = attenuate(lx, ly, la, x, y)
             if heard is None:
                 return False
-            vol, left, right = heard
+            vol, _pan_l, _pan_r = heard  # NOTE: mono mixer, pan unused
         vol *= self.master
         if vol <= 0:
             return False
@@ -242,7 +242,10 @@ class SoundEngine:
                 return False  # NOTE: nothing kickable, sorry Charlie
         ch = channels[pick]
         self.slots[pick] = (name, priority, ch, origin)
-        ch.set_volume(left * vol, right * vol)
+        # NOTE: single-arg volume: the mixer is mono, and pygame-ce
+        # ignores the two-arg (stereo) form on mono mixers entirely
+        # (channel stuck at 1.0: full blast until master hit 0).
+        ch.set_volume(vol)
         ch.play(snd)
         return True
 

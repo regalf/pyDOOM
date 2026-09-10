@@ -311,3 +311,34 @@ def test_music_pump_caps_backlog():
     assert _feed_action(fake) == "skip"  # NOTE: never two waiting
     fake.queued = None  # NOTE: mixer consumed it
     assert _feed_action(fake) == "queue"
+
+
+def test_sfx_volume_reaches_channel():
+    """Slider regression: master scales the channel (pygame-ce ignores
+    the two-arg set_volume on mono mixers, so single-arg it is)."""
+    import os
+    import pygame
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    was_init = pygame.mixer.get_init() is not None
+    if not was_init:
+        try:
+            pygame.mixer.pre_init(11025, 8, 1, 512)
+            pygame.mixer.init()
+        except Exception:
+            pytest.skip("no mixer available")
+    old_master, old_slots = audio.engine.master, audio.engine.slots
+    old_mixer, old_wad = audio.engine.mixer, audio.engine.wad
+    audio.engine.mixer = pygame.mixer
+    audio.engine.wad = WadFile(os.path.join(os.path.dirname(__file__),
+                                            "..", "DOOM1.WAD"))
+    try:
+        audio.engine.master = 0.2
+        audio.engine.slots = []
+        assert audio.play("pistol")
+        assert pygame.mixer.Channel(0).get_volume() == pytest.approx(
+            0.2, abs=0.02)
+    finally:
+        audio.engine.master, audio.engine.slots = old_master, old_slots
+        audio.engine.mixer, audio.engine.wad = old_mixer, old_wad
+        if not was_init:
+            pygame.mixer.quit()
