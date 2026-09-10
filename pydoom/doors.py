@@ -33,7 +33,6 @@ Scope (documented, never silent):
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 
 from pydoom import tables
@@ -610,6 +609,9 @@ class World:
         # PIT_ChangeSector crush damage: the sim (viewer) sets a
         # callable(sector) that hurts everything the ceiling sits on.
         self.crush_hook = None
+        # Intermission denominators (kills, items, secrets), set after
+        # spawn; (0, 0, 0) keeps headless Worlds tally-free.
+        self.totals = (0, 0, 0)
         self.message: str | None = None
         self.time = 0  # leveltime: sector damage ticks every 32
         self.exit_kind: str | None = None  # None | "normal" | "secret"
@@ -905,7 +907,8 @@ class World:
                 if plat.high < sec.floorheight:
                     plat.high = sec.floorheight
                 plat.wait = 35 * PLATWAIT
-                plat.status = "up" if random.getrandbits(1) else "down"
+                from pydoom.m_random import p_random
+                plat.status = "up" if p_random() & 1 else "down"
         return rtn
 
     def activate_in_stasis(self, tag: int) -> None:
@@ -1389,6 +1392,7 @@ class World:
         special = player_mo.sector.special
         if special == 9:
             player_mo.sector.special = 0
+            ps.secretcount += 1  # NOTE: intermission tally
             return "A SECRET IS REVEALED!"
         if special in (5, 7, 16, 4):
             from pydoom.combat import damage_mobj

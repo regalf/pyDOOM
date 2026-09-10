@@ -241,6 +241,8 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
     picked, msg = _apply_touch(item, picker_mo, ps, spec, dropped, skill)
     if picked:
         ps.bonuscount += 6  # NOTE: BONUSADD gold flash per item
+        if item.flags & MF_FLAGS["MF_COUNTITEM"]:
+            ps.itemcount += 1  # NOTE: intermission tally
         if sound is not None:
             audio.play(sound, picker_mo.x, picker_mo.y, picker_mo)
     return picked, msg

@@ -48,6 +48,7 @@ __all__ = [
     "set_mobj_state",
     "think_mobj",
     "refresh_sector",
+    "level_totals",
 ]
 
 # Skill option bits (P_SpawnMapThing): baby->1, nightmare->4, else medium.
@@ -73,6 +74,7 @@ _MF_FLOAT = MF_FLAGS["MF_FLOAT"]
 _MF_CORPSE = MF_FLAGS["MF_CORPSE"]
 _MF_DROPPED = MF_FLAGS["MF_DROPPED"]
 _MF_COUNTKILL = MF_FLAGS["MF_COUNTKILL"]
+_MF_COUNTITEM = MF_FLAGS["MF_COUNTITEM"]
 
 
 @dataclass(eq=False)
@@ -260,6 +262,16 @@ def set_mobj_state(mo: Mobj, state: int, ctx=None) -> bool:
         state = _next
         if mo.tics:
             return True
+
+
+def level_totals(mobjs, sectors) -> tuple[int, int, int]:
+    """Intermission denominators from what actually spawned (skill and
+    deathmatch filters already applied): COUNTKILL mobjs, COUNTITEM
+    mobjs, and special-9 sectors."""
+    kills = sum(1 for mo in mobjs if mo.flags & _MF_COUNTKILL)
+    items = sum(1 for mo in mobjs if mo.flags & _MF_COUNTITEM)
+    secrets = sum(1 for sec in sectors if sec.special == 9)
+    return kills, items, secrets
 
 
 def think_mobj(mo: Mobj, physics, ctx=None) -> list:

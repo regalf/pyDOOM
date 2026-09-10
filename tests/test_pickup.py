@@ -446,3 +446,24 @@ def test_double_ammo_on_baby_and_nightmare(setup):
     ps.ammo[AM_CLIP] = 0
     assert give_ammo(ps, AM_CLIP, 1, "nightmare")
     assert ps.ammo[AM_CLIP] == 20
+
+
+@requires_wad
+def test_pickup_tallies_countitem(setup):
+    from pydoom.pickup import touch_special_thing
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import spawn_mobj
+    game_map, phys, index, ctx = setup
+    _, ps, ctx, _ = make_player(setup)
+    # NOTE: vanilla COUNTITEM = bonuses/powers, not clips (MT_MISC2).
+    bonus = spawn_mobj(game_map, phys, index, 1056 << 16, -3616 << 16,
+                       0, MT_INDEX["MISC2"])
+    bonus.doomednum = 2014  # NOTE: spawn_map stamps this; type-spawn omits
+    player_mo = spawn_mobj(game_map, phys, index, 1056 << 16,
+                           -3616 << 16, 0, MT_INDEX["PLAYER"])
+    player_mo.is_player = True
+    player_mo.sector = phys.subsector_at(player_mo.x, player_mo.y).sector
+    bonus.sector = player_mo.sector
+    picked, _msg = touch_special_thing(bonus, player_mo, ps, ctx)
+    assert picked
+    assert ps.itemcount == 1

@@ -107,7 +107,11 @@ class Menu:
         self.menus["skill"].last_on = max(
             0, min(4, skill_index))  # NOTE: CLI --skill preselects
         self.current = "main"
-        self.mode = "menu"  # menu | confirm | message | readthis
+        self.mode = "menu"  # menu|confirm|message|readthis|slots|savename
+        self.slot_kind = "load"  # slots mode picks load/save behavior
+        self.slot_idx = 0
+        self.slot_names: list = []
+        self.name_buf = ""
         self.confirm_text = ""
         self.confirm_yes = None  # "quit" or ("new_game", ep, skill)
         self.message_text = ""
@@ -148,6 +152,11 @@ class Menu:
 
     # -- per-tic --
 
+    def open(self) -> None:
+        """M_StartControlPanel: always lands on Main (lastOn kept)."""
+        self.current = "main"
+        self.mode = "menu"
+
     def tick(self) -> None:
         """Skull animation (whichSkull flips every 8 tics)."""
         self.skull_tic += 1
@@ -160,6 +169,41 @@ class Menu:
     def key(self, k: str) -> list:
         """Feed one key: arrows/enter/esc, shortcuts, y/n, or any."""
         from pydoom import audio
+        if self.mode == "slots":
+            if k == "up":
+                self.slot_idx = (self.slot_idx - 1) % 6
+                audio.play("pstop")
+            elif k == "down":
+                self.slot_idx = (self.slot_idx + 1) % 6
+                audio.play("pstop")
+            elif k == "enter":
+                audio.play("swtchn")
+                if self.slot_kind == "load":
+                    if self.slot_names[self.slot_idx] == "EMPTY":
+                        audio.play("oof")
+                    else:
+                        self.mode = "menu"
+                        return [("load_game", self.slot_idx)]
+                else:
+                    self.mode = "savename"
+                    self.name_buf = ""
+            elif k == "esc":
+                self.mode = "menu"
+            return []
+        if self.mode == "savename":
+            if k == "enter":
+                audio.play("swtchn")
+                self.mode = "menu"
+                return [("save_game", self.slot_idx,
+                          self.name_buf.strip() or "UNTITLED")]
+            if k == "esc":
+                self.mode = "slots"
+            elif k == "backspace":
+                self.name_buf = self.name_buf[:-1]
+            elif len(k) == 1 and 33 <= ord(k) <= 126 and len(
+                    self.name_buf) < 24:
+                self.name_buf += k.upper()
+            return []
         if self.mode == "readthis":
             audio.play("swtchn")
             if self.readpage == 0:
@@ -232,7 +276,12 @@ class Menu:
         elif act == "options":
             self.current = "options"
         elif act in ("load", "save"):
-            self._say(NOTYET)
+            from pydoom import saveg
+            self.slot_kind = act
+            self.slot_idx = 0
+            self.slot_names = [saveg.slot_name(i)
+                               for i in range(saveg.SLOT_COUNT)]
+            self.mode = "slots"
         elif act == "readthis":
             self.mode = "readthis"
             self.readpage = 0
@@ -272,11 +321,32 @@ class Menu:
 
     # -- drawing onto the index frame --
 
+    def draw_title(self, fb) -> None:
+        """TITLESCREEN: fullscreen TITLEPIC art (music stays stubbed)."""
+        fb[:] = 0
+        self._blit("TITLEPIC", fb, 0, 0)
+
     def draw(self, fb) -> None:
         """Current menu state over the (frozen) game scene."""
         if self.mode == "readthis":
             self._blit("HELP1" if self.readpage == 0 else "HELP2", fb,
                        0, 0)
+            return
+        if self.mode == "slots":
+            self._blit("M_SGTTL" if self.slot_kind == "save"
+                       else "M_LGTTL", fb, 80, 20)
+            y = 60
+            for i, name in enumerate(self.slot_names):
+                self._text_block(fb, name, y, 80)
+                if i == self.slot_idx:
+                    skull = ("M_SKULL1" if self.which_skull == 0
+                             else "M_SKULL2")
+                    self._blit(skull, fb, 80 + SKULL_XOFF, y + SKULL_YOFF)
+                y += LINEHEIGHT
+            return
+        if self.mode == "savename":
+            self._blit("M_SGTTL", fb, 80, 20)
+            self._text_block(fb, self.name_buf + "_", 100, 80)
             return
         if self.mode in ("confirm", "message"):
             text = (self.confirm_text if self.mode == "confirm"
@@ -341,10 +411,10 @@ class Menu:
                              fb, cx, y)
         self._blit("M_THERMR", fb, cx, y)
 
-    def _text_block(self, fb, text: str, y: int) -> None:
+    def _text_block(self, fb, text: str, y: int, x: int | None = None) -> None:
         for line in text.split("\n"):
             w = sum(self._glyph_w(ch) for ch in line)
-            cx = (320 - w) // 2
+            cx = (320 - w) // 2 if x is None else x
             for ch in line:
                 cx += self._draw_glyph(fb, ch, cx, y)
             y += 12

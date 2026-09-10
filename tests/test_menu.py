@@ -150,7 +150,8 @@ def test_draw_readthis_covers_screen():
 
 def test_event_protocol_matches_viewer():
     """Every event key() can emit is one the viewer applies: close,
-    quit, or (new_game, episode, skill)."""
+    quit, (new_game, episode, skill), (load_game, slot) or
+    (save_game, slot, name)."""
     seen = set()
 
     def collect(evts):
@@ -172,4 +173,28 @@ def test_event_protocol_matches_viewer():
     m = fresh()
     m.key("q")  # quit asks
     collect(m.key("y"))  # quit
-    assert seen == {"close", "quit", "new_game"}
+    m = fresh()
+    m.key("l")  # load slots
+    assert m.mode == "slots"
+    m.key("down")
+    m.key("esc")
+    assert m.mode == "menu"
+    m.key("s")  # save slots
+    m.key("enter")  # name entry
+    assert m.mode == "savename"
+    for ch in "abc":
+        m.key(ch)
+    m.key("backspace")
+    collect(m.key("enter"))  # (save_game, 0, "AB")
+    assert seen == {"close", "quit", "new_game", "save_game"}
+
+
+def test_load_slot_emits_event(tmp_path, monkeypatch):
+    from pydoom import saveg
+    monkeypatch.chdir(tmp_path)
+    saveg.write_slot(1, {"version": 1, "name": "HANGAR"})
+    m = fresh()
+    m.key("l")
+    assert m.slot_names[1] == "HANGAR"
+    m.key("down")
+    assert m.key("enter") == [("load_game", 1)]

@@ -308,3 +308,15 @@ def test_baby_halves_player_damage(setup):
     ctx.skill = "baby"
     damage_mobj(player, None, None, 30, ctx)
     assert player.health == 100 - 15
+
+
+@requires_wad
+def test_kill_tallies_countkill(setup):
+    from pydoom.player import PlayerState
+    game_map, phys, index, ctx = setup
+    troop, player, ctx, _ = make_duel(setup)
+    ps = PlayerState()
+    ctx.player_state = ps
+    ctx.mobjs = [troop, player]
+    damage_mobj(troop, None, None, 1000, ctx)
+    assert ps.killcount == 1

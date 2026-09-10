@@ -26,3 +26,4 @@ def strip_for_next_level(ps) -> None:
     ps.powers = {}
     ps.pendingweapon = ps.readyweapon
     ps.switchtics = 0
+    ps.killcount = ps.itemcount = ps.secretcount = 0  # fresh tally

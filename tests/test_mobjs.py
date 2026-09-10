@@ -10,6 +10,7 @@ from pydoom.info import MF_FLAGS
 from pydoom.mapdata import Map
 from pydoom.mobjs import (
     ThingIndex,
+    level_totals,
     set_mobj_state,
     spawn_map,
     spawn_mobj,
@@ -236,3 +237,21 @@ def test_quiet_skills_leave_corpses_down():
     assert zombie.health <= 0  # NOTE: normal skill, stays dead
     assert not [mo for mo in ctx.mobjs
                 if mo.type == MT_INDEX["POSSESSED"] and mo.health > 0]
+
+
+@requires_wad
+def test_level_totals_match_spawned_counts():
+    from pydoom.info import MF_FLAGS
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    mobjs = spawn_map(game_map, phys, index, "normal")
+    kills, items, secrets = level_totals(mobjs, game_map.sectors)
+    assert kills == sum(1 for mo in mobjs
+                        if mo.flags & MF_FLAGS["MF_COUNTKILL"]) > 0
+    assert items == sum(1 for mo in mobjs
+                        if mo.flags & MF_FLAGS["MF_COUNTITEM"]) > 0
+    assert secrets == sum(1 for s in game_map.sectors
+                          if s.special == 9) > 0

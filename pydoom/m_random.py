@@ -8,7 +8,8 @@ for the automated cross-check).
 
 from __future__ import annotations
 
-__all__ = ["p_random", "m_random", "clear_random"]
+__all__ = ["p_random", "m_random", "clear_random", "get_state",
+           "set_state"]
 
 _RNDTABLE = (
     0, 8, 109, 220, 222, 241, 149, 107, 75, 248, 254, 140, 16, 66,
@@ -54,3 +55,14 @@ def clear_random() -> None:
     """M_ClearRandom: reset both streams (level start)."""
     global _rndindex, _prndindex
     _rndindex = _prndindex = 0
+
+
+def get_state() -> tuple[int, int]:
+    """Snapshot both stream indices (savegames)."""
+    return (_rndindex, _prndindex)
+
+
+def set_state(state: tuple[int, int]) -> None:
+    """Restore both stream indices (savegames)."""
+    global _rndindex, _prndindex
+    _rndindex, _prndindex = state[0] & 0xFF, state[1] & 0xFF

@@ -66,6 +66,9 @@ class PlayerState:
     damagecount: int = 0  # NOTE: red palette flash, decays per tic
     bonuscount: int = 0  # NOTE: gold pickup flash, decays per tic
     cheats: int = 0  # CF_GODMODE/CF_NOCLIP bits (iddqd/idclip)
+    killcount: int = 0  # NOTE: intermission tally, reset per level
+    itemcount: int = 0  # NOTE: intermission tally, reset per level
+    secretcount: int = 0  # NOTE: intermission tally, reset per level
 
     def tick(self, player_mo=None) -> None:
         """P_PlayerThink counters: powers, palette flash countdowns."""

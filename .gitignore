@@ -12,3 +12,6 @@ __pycache__/
 DOOM-master/
 DOOM_ENGINE_ANALYSIS.md
 *.png
+
+# local savegames (menu slots)
+savegames/

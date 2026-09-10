@@ -70,6 +70,7 @@ _MF_NOGRAVITY = MF_FLAGS["MF_NOGRAVITY"]
 _MF_FLOAT = MF_FLAGS["MF_FLOAT"]
 _MF_INFLOAT = MF_FLAGS["MF_INFLOAT"]
 _MF_CORPSE = MF_FLAGS["MF_CORPSE"]
+_MF_COUNTKILL = MF_FLAGS["MF_COUNTKILL"]
 _MF_DROPOFF = MF_FLAGS["MF_DROPOFF"]
 _MF_JUSTHIT = MF_FLAGS["MF_JUSTHIT"]
 _MF_SPAWNCEILING = MF_FLAGS["MF_SPAWNCEILING"]
@@ -161,8 +162,14 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
 
 
 def kill_mobj(source, target, ctx=None) -> None:
-    """P_KillMobj with clip/shotgun drops, sans counts/player-flow."""
+    """P_KillMobj with clip/shotgun drops and the intermission tally."""
     from pydoom.mobjs import set_mobj_state
+
+    if target.flags & _MF_COUNTKILL and ctx is not None:
+        # NOTE: every COUNTKILL death tallies, infights included.
+        ps = getattr(ctx, "player_state", None)
+        if ps is not None:
+            ps.killcount += 1
 
     target.flags &= ~(_MF_SHOOTABLE | _MF_FLOAT | _MF_SKULLFLY)
     if target.type != MT_INDEX["SKULL"]:

@@ -8,6 +8,8 @@ Cheats (typed, always on like vanilla): iddqd idkfa/idfa idclip
 idclev11 idmus11 iddt idbeholdv.
 Dev keys (only with --debug): N noclip, F freeze AI, X AI info,
 PgUp/PgDn switch map, G grabs/releases the mouse.
+Demos (fixed-step, checksum-verified): --record=FILE logs inputs,
+--play=FILE replays them (regression: matching checksums agree).
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -30,6 +32,7 @@ import pygame
 from pydoom import combat
 from pydoom import cheats
 from pydoom import flow
+from pydoom import interm
 from pydoom import menu
 from pydoom import weapons
 from pydoom import audio
@@ -39,7 +42,7 @@ from pydoom.doors import World
 from pydoom.info import MT_INDEX, MT_NAMES, STATE_INDEX
 from pydoom.mapdata import Map
 from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map, spawn_mobj
-from pydoom.mobjs import think_mobj
+from pydoom.mobjs import level_totals, think_mobj
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
@@ -101,6 +104,39 @@ class Camera:
         self.y += math.sin(self.angle) * forward - math.cos(self.angle) * strafe
 
 
+class _ReplayKeys:
+    """Virtual pressed-set for demo playback (get_pressed stand-in)."""
+
+    def __init__(self, pressed) -> None:
+        self._set = set(pressed)
+
+    def __getitem__(self, key: int) -> bool:
+        return key in self._set
+
+
+def _move_keys(mv) -> list:
+    """Movement-intent flags back to the canonical held keys."""
+    fwd, back, left, right, turnl, turnr, run, space = mv
+    keys = []
+    if fwd:
+        keys.append(pygame.K_w)
+    if back:
+        keys.append(pygame.K_s)
+    if left:
+        keys.append(pygame.K_a)
+    if right:
+        keys.append(pygame.K_d)
+    if turnl:
+        keys.append(pygame.K_LEFT)
+    if turnr:
+        keys.append(pygame.K_RIGHT)
+    if run:
+        keys.append(pygame.K_LSHIFT)
+    if space:
+        keys.append(pygame.K_SPACE)
+    return keys
+
+
 def set_noclip(on: bool, player_mo, cam, phys) -> None:
     """Shared N-key/idclip toggle: MF_NOCLIP flag plus a floor resync
     when clipping back in (so the body never hovers over the void)."""
@@ -124,9 +160,15 @@ def main() -> int:
     skill = "normal"
     fast = False
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
+    rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
+    play_path = None  # --play=FILE: replay them (regression demos)
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
+        elif a.startswith("--record="):
+            rec_path = a.split("=", 1)[1]
+        elif a.startswith("--play="):
+            play_path = a.split("=", 1)[1]
         elif a == "--debug":
             debug = True
         elif a.startswith("--skill="):
@@ -183,6 +225,7 @@ def main() -> int:
         phys.things = index
         phys.damage_hook = lambda tm, th: combat.things_hit(tm, th, ctx)
         mobjs = spawn_map(game_map, phys, index, skill)
+        world.totals = level_totals(mobjs, game_map.sectors)
         # Player body for monster AI and walls alike: the camera drives
         # this mobj directly (no separate physics body, so there is no
         # self-collision). Culled from its own view like vanilla.
@@ -241,7 +284,13 @@ def main() -> int:
     game_menu = menu.Menu(
         wad, msettings,
         menu.SKILLS.index(skill) if skill in menu.SKILLS else 2)
-    gamestate = "level"  # level | menu (sim paused) | wipe (melting)
+    gamestate = "level"  # level|menu|wipe|title|inter|finale
+    inter = None  # tally screen between maps (G_WorldDone lite)
+    wipe_after = "level"  # melt landing state
+    next_map, next_keep, next_hp = None, None, None  # inter exit
+    if frames_opt is None and not debug:
+        gamestate = "title"  # NOTE: vanilla boots to TITLESCREEN
+    has_level = gamestate == "level"  # menu-close target before new game
     melt = MeltWipe()
     last_fb = None
     # NOTE: M_QuitDOOM death jingle (shareware picks the first table).
@@ -307,19 +356,96 @@ def main() -> int:
                         state.get("facelump", "STFST00"))
         return fb
 
+    def build_snapshot(name: str) -> dict:
+        """Mid-level bundle: scalars plus one pickle of the live graph."""
+        from pydoom import saveg
+        from pydoom.m_random import get_state
+        return {
+            "version": saveg.SAVE_VERSION, "name": name,
+            "marker": game_map.marker, "skill": skill,
+            "fast": fast, "time": world.time, "rng": get_state(),
+            "cam": (cam.x, cam.y, cam.angle, cam.viewz),
+            "player": mobjs.index(player_mo),
+            "blob": saveg.build_blob(game_map.sectors, world.thinkers,
+                                      mobjs, state["ps"]),
+        }
+
+    def apply_snapshot(bundle) -> None:
+        """Load: fresh map, then graft the saved graph onto it."""
+        from pydoom import saveg
+        from pydoom.doors import Ceiling, FloorMover, Plat, VerticalDoor
+        from pydoom.m_random import set_state
+        nonlocal gamestate, game_map, cam, phys, player_mo, world, \
+            mobjs, ctx, state, map_idx, amap, message, message_tics, \
+            noclip, skill, fast, running, has_level
+        err = saveg.validate(bundle, maps)
+        if err is not None:
+            audio.play("oof")
+            return
+        skill, fast = bundle["skill"], bundle.get("fast", False)
+        (game_map, cam, phys, player_mo, world, mobjs, ctx,
+         state) = load_map(bundle["marker"])
+        sectors_old, thinkers, mobjs_new, ps_new = saveg.unpack_blob(
+            bundle["blob"], game_map.sectors)
+        saveg.sector_state(sectors_old, game_map.sectors)
+        index = phys.things
+        for mo in list(mobjs):  # fresh spawn out (sectors die with it)
+            try:
+                index.unlink(mo)
+            except Exception:
+                pass
+        for sec in game_map.sectors:
+            sec.thinglist.clear()
+            sec.specialdata = None
+        for mo in mobjs_new:  # saved mobjs in, relinked to the index
+            index.link(mo)
+            mo.sector.thinglist.append(mo)
+        for th in thinkers:  # movers re-claim their sectors
+            if isinstance(th, (VerticalDoor, FloorMover, Ceiling, Plat)):
+                th.sector.specialdata = th
+        world.thinkers = thinkers
+        world.time = bundle["time"]
+        mobjs = mobjs_new
+        ctx.mobjs = mobjs
+        player_mo = mobjs[bundle["player"]]
+        ctx.players = [player_mo]
+        state["ps"] = ps_new
+        ctx.player_state = ps_new
+        cam.x, cam.y, cam.angle, cam.viewz = bundle["cam"]
+        set_state(bundle["rng"])
+        amap = None
+        message, message_tics = None, 0
+        noclip = False
+        has_level = True
+        cheat.reset()
+        map_idx = maps.index(game_map.marker)
+        pygame.display.set_caption(f"pydoom - {game_map.marker}")
+        gamestate = "level"
+
     def apply_menu_event(mev):
         """Menu selections: quit, or a wiped fresh start on E1M1."""
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
             mobjs, ctx, state, map_idx, amap, message, message_tics, \
-            noclip, skill, running
+            noclip, skill, running, has_level
         if mev == "close":
-            gamestate = "level"
+            gamestate = "level" if has_level else "title"
         elif mev == "quit":
             audio.play(random.choice(QUITSOUNDS))
             running = False
+        elif isinstance(mev, tuple) and mev[0] == "load_game":
+            from pydoom import saveg
+            apply_snapshot(saveg.read_slot(mev[1]))
+        elif isinstance(mev, tuple) and mev[0] == "save_game":
+            if not has_level:
+                audio.play("oof")
+                return
+            from pydoom import saveg
+            saveg.write_slot(mev[1], build_snapshot(mev[2]))
+            gamestate = "level"  # NOTE: vanilla closes after saving
         elif isinstance(mev, tuple) and mev[0] == "new_game":
             old = last_fb.copy() if last_fb is not None else None
             skill = mev[2]
+            has_level = True
             map_idx = maps.index("E1M1")
             (game_map, cam, phys, player_mo, world, mobjs, ctx,
              state) = load_map("E1M1")
@@ -353,13 +479,76 @@ def main() -> int:
     fps_ema = 60.0
     frames = 0
     running = True
+    recording = rec_path is not None
+    replaying = play_path is not None
+    demo_log: list = []  # per-frame inputs while recording
+    demo_in: list = []  # replay script
+    if replaying:
+        import pickle
+        with open(play_path, "rb") as f:
+            demo_in = pickle.load(f)
+    demo_idx = 0
+    demo_frame = False  # a replayed frame drives input this tick
+    demo_keys = None  # virtual pressed-set while replaying
+    demo_sum = 0  # framebuffer checksum (record and replay agree)
+    rec_events: list = []
     while running:
-        dt = min(clock.tick(60) / 1000.0, 0.25)
+        if recording or replaying:
+            clock.tick(60)
+            dt = 1.0 / 60  # NOTE: demos run on fixed steps, tic-exact
+        else:
+            dt = min(clock.tick(60) / 1000.0, 0.25)
         fps_ema += (1.0 / max(dt, 1e-6) - fps_ema) * 0.05
+        demo_frame = False
+        demo_keys = None
+        if replaying:
+            if demo_idx < len(demo_in):
+                # NOTE: same-frame injection: posted events land in the
+                # get() below, polled keys come from the virtual set.
+                for entry in demo_in[demo_idx]["ev"]:
+                    kind = entry[0]
+                    if kind == "down":
+                        pygame.event.post(pygame.event.Event(
+                            pygame.KEYDOWN, key=entry[1], unicode=entry[2]))
+                    elif kind == "up":
+                        pygame.event.post(pygame.event.Event(
+                            pygame.KEYUP, key=entry[1]))
+                    elif kind == "motion":
+                        pygame.event.post(pygame.event.Event(
+                            pygame.MOUSEMOTION, rel=entry[1],
+                            buttons=(0, 0, 0)))
+                    elif kind == "btn":
+                        pygame.event.post(pygame.event.Event(
+                            pygame.MOUSEBUTTONDOWN if entry[2]
+                            else pygame.MOUSEBUTTONUP, button=entry[1]))
+                demo_keys = _ReplayKeys(_move_keys(
+                    demo_in[demo_idx].get("mv", [False] * 8)))
+                demo_idx += 1
+                demo_frame = True
+            else:
+                replaying = False
         for ev in pygame.event.get():
+            if recording:
+                if ev.type == pygame.KEYDOWN:
+                    rec_events.append(
+                        ("down", ev.key, getattr(ev, "unicode", "") or ""))
+                elif ev.type == pygame.KEYUP:
+                    rec_events.append(("up", ev.key))
+                elif ev.type == pygame.MOUSEMOTION:
+                    rec_events.append(("motion", tuple(ev.rel)))
+                elif ev.type == pygame.MOUSEBUTTONDOWN:
+                    rec_events.append(("btn", ev.button, True))
+                elif ev.type == pygame.MOUSEBUTTONUP:
+                    rec_events.append(("btn", ev.button, False))
             if ev.type == pygame.QUIT:
                 running = False
             elif ev.type == pygame.KEYDOWN:
+                if gamestate == "title":
+                    # NOTE: any key wakes the title into the menu.
+                    gamestate = "menu"
+                    game_menu.open()
+                    audio.play("swtchn")
+                    continue
                 if gamestate == "menu":
                     # NOTE: vanilla menus eat every key (no cheats here).
                     k = None
@@ -375,13 +564,27 @@ def main() -> int:
                         k = "enter"
                     elif ev.key == pygame.K_ESCAPE:
                         k = "esc"
+                    elif ev.key == pygame.K_BACKSPACE:
+                        k = "backspace"  # NOTE: savegame name entry
                     else:
-                        ch = (getattr(ev, "unicode", "") or "").lower()
-                        if len(ch) == 1 and ch.isalpha():
-                            k = ch
+                        ch = getattr(ev, "unicode", "") or ""
+                        if len(ch) == 1:
+                            if ch.isalpha():
+                                k = ch.lower()
+                            elif 33 <= ord(ch) <= 126:
+                                k = ch  # NOTE: savegame name entry
                     if k is not None:
                         for mev in game_menu.key(k):
                             apply_menu_event(mev)
+                    continue
+                if gamestate == "inter":
+                    if inter is not None:
+                        inter.keypress()  # NOTE: hurry the tally
+                    continue
+                if gamestate == "finale":
+                    # NOTE: E1TEXT read: any key returns to the title.
+                    has_level = False
+                    gamestate = "title"
                     continue
                 if gamestate != "level":
                     continue  # NOTE: wipe melts undisturbed
@@ -445,6 +648,7 @@ def main() -> int:
                         message_tics = 3 * TICRATE
                 if ev.key == pygame.K_ESCAPE:
                     gamestate = "menu"  # NOTE: sim freezes underneath
+                    game_menu.open()  # NOTE: vanilla lands on Main
                     amap = None  # menu takes over the screen
                     am_zoom_in = am_zoom_out = False
                     audio.play("swtchn")
@@ -526,7 +730,8 @@ def main() -> int:
                 elif pygame.K_1 <= ev.key <= pygame.K_7:
                     weapons.request_weapon(state["ps"], chr(ev.key))
             elif ev.type == pygame.MOUSEMOTION:
-                if gamestate == "level" and pygame.event.get_grab():
+                if gamestate == "level" and (pygame.event.get_grab()
+                                             or demo_frame):
                     sens = 0.0004 + msettings.mouse_sens * 0.0006
                     cam.turn(-ev.rel[0] * sens)
             elif ev.type == pygame.MOUSEBUTTONDOWN:
@@ -537,14 +742,51 @@ def main() -> int:
                     state["firing"] = False
 
         keys = pygame.key.get_pressed()
+        if demo_keys is not None:
+            keys = demo_keys  # NOTE: replayed held-keys, not hardware
+        if recording:
+            # NOTE: movement intent (ticcmd spirit), not raw keys: a
+            # typed cheat 'd' must never strafe the replay like K_d.
+            demo_log.append({
+                "ev": rec_events,
+                "mv": [bool(keys[pygame.K_w] or keys[pygame.K_UP]),
+                       bool(keys[pygame.K_s] or keys[pygame.K_DOWN]),
+                       bool(keys[pygame.K_a]), bool(keys[pygame.K_d]),
+                       bool(keys[pygame.K_LEFT]),
+                       bool(keys[pygame.K_RIGHT]),
+                       bool(keys[pygame.K_LSHIFT]
+                            or keys[pygame.K_RSHIFT]),
+                       bool(keys[pygame.K_SPACE])],
+            })
+            rec_events = []
         run = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         speed = RUN_SPEED if run else WALK_SPEED
         audio.engine.master = msettings.sfx_vol / 15  # options slider
+        if gamestate == "inter" and inter is not None \
+                and inter.finished_tally():
+            # NOTE: tally over: wipe into the carried next level.
+            old = last_fb.copy() if last_fb is not None else None
+            (game_map, cam, phys, player_mo, world, mobjs, ctx,
+             state) = load_map(next_map, next_keep, next_hp)
+            amap = None  # new map, new automap
+            map_idx = maps.index(game_map.marker)
+            message, message_tics = None, 0
+            pygame.display.set_caption(f"pydoom - {next_map}")
+            inter = None
+            if old is None:
+                gamestate = "level"
+            else:
+                melt.start(old, render_scene())
+                wipe_after = "level"
+                gamestate = "wipe"
         tic_acc += dt
         if gamestate != "level":
             tic_acc = 0  # NOTE: no catch-up burst when unpausing
-            if gamestate == "menu" and frames % 2 == 0:
-                game_menu.tick()  # skull animates at ~half display rate
+            if frames % 2 == 0:
+                if gamestate == "menu":
+                    game_menu.tick()  # skull animates at ~half rate
+                elif gamestate == "inter" and inter is not None:
+                    inter.tick()  # tally count-up sweep
         while tic_acc >= 1.0 / TICRATE and not state["won"] \
                 and gamestate == "level":
             tic_acc -= 1.0 / TICRATE
@@ -735,16 +977,30 @@ def main() -> int:
             if world.exit_kind:
                 cur = game_map.marker
                 nxt = flow.next_map(cur, world.exit_kind == "secret")
+                ps_exit, hp_exit = state["ps"], player_mo.health
+                try:
+                    par = interm.E1_PARS[int(cur[3:])] * 35
+                except (ValueError, IndexError):
+                    par = 0
+                old = (last_fb.copy() if last_fb is not None
+                       else render_scene())
                 if nxt is None:
-                    state["won"] = True  # E1M8 exit: episode complete
+                    # NOTE: E1M8 exit melts to the black finale screen.
+                    melt.start(old, np.zeros((200, 320), dtype=np.uint8))
+                    wipe_after = "finale"
+                    gamestate = "wipe"
                 else:
-                    keep, hp = state["ps"], player_mo.health
-                    (game_map, cam, phys, player_mo, world, mobjs,
-                     ctx, state) = load_map(nxt, keep, hp)
-                    amap = None  # new map, new automap
-                    map_idx = maps.index(game_map.marker)
-                    message, message_tics = None, 0
-                    pygame.display.set_caption(f"pydoom - {nxt}")
+                    tk, ti, ts = world.totals
+                    inter = interm.Intermission(
+                        cur, nxt, ps_exit.killcount, tk,
+                        ps_exit.itemcount, ti, ps_exit.secretcount, ts,
+                        world.time, par)
+                    next_map, next_keep, next_hp = nxt, ps_exit, hp_exit
+                    first = np.zeros((200, 320), dtype=np.uint8)
+                    inter.draw(first, game_menu)
+                    melt.start(old, first)
+                    wipe_after = "inter"
+                    gamestate = "wipe"
             # Ease viewz toward standing height on the current floor.
             if noclip:
                 sub = renderer.sector_at(
@@ -775,22 +1031,32 @@ def main() -> int:
                 print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
                 running = False
             continue
-        fb = render_scene()
+        if has_level:
+            fb = render_scene()
+        else:
+            fb = np.zeros((200, 320), dtype=np.uint8)
+            game_menu.draw_title(fb)  # NOTE: TITLESCREEN backdrop
         if gamestate == "menu":
             game_menu.draw(fb)  # NOTE: menu floats over the frozen sim
+        elif gamestate == "inter" and inter is not None:
+            fb = np.zeros((200, 320), dtype=np.uint8)
+            inter.draw(fb, game_menu)
         elif gamestate == "wipe":
             stepped = melt.tick()
             if stepped is None:
-                gamestate = "level"
+                gamestate = wipe_after
             else:
                 fb = stepped
         last_fb = fb.copy()
+        if recording or replaying:
+            demo_sum = (demo_sum + int(fb.sum())) % 1000000007
         frame = pygame.image.frombuffer(
             palette_luts[palette_index(state["ps"])][fb].tobytes(),
             (SCREENWIDTH, SCREENHEIGHT), "RGB"
         )
         screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)), (0, 0))
-        if font is not None:
+        if font is not None and gamestate in ("level", "menu", "wipe") \
+                and has_level:
             hud = (f"{game_map.marker} x={cam.x:.0f} y={cam.y:.0f} "
                    f"a={math.degrees(cam.angle) % 360:.0f} "
                    f"{fps_ema:.0f}fps "
@@ -831,25 +1097,32 @@ def main() -> int:
                 help_line += " [N noclip F freeze X AI PgUp/PgDn G mouse]"
             screen.blit(font.render(help_line, True, (180, 180, 180)),
                         (8, WIN_H - 120))
-            if state["won"]:
-                big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
-                screen.blit(big, (WIN_W // 2 - big.get_width() // 2,
-                                   WIN_H // 2 - 130))
-                # NOTE: E1TEXT (d_englsh.h), the episode payoff.
-                for i, text_line in enumerate(_E1TEXT_LINES):
-                    small = font.render(text_line, True, (200, 200, 200))
-                    screen.blit(small, (WIN_W // 2 - small.get_width() // 2,
-                                        WIN_H // 2 - 90 + i * 20))
-                sub = font.render("PgUp/PgDn: replay maps   Esc: menu",
-                                  True, (255, 255, 255))
-                screen.blit(sub, (WIN_W // 2 - sub.get_width() // 2,
-                                   WIN_H // 2 + 130))
+        if font is not None and gamestate == "finale":
+            big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
+            screen.blit(big, (WIN_W // 2 - big.get_width() // 2,
+                               WIN_H // 2 - 130))
+            # NOTE: E1TEXT (d_englsh.h), the episode payoff.
+            for i, text_line in enumerate(_E1TEXT_LINES):
+                small = font.render(text_line, True, (200, 200, 200))
+                screen.blit(small, (WIN_W // 2 - small.get_width() // 2,
+                                    WIN_H // 2 - 90 + i * 20))
+            sub = font.render("ANY KEY: TITLE",
+                              True, (255, 255, 255))
+            screen.blit(sub, (WIN_W // 2 - sub.get_width() // 2,
+                               WIN_H // 2 + 130))
         pygame.display.flip()
         frames += 1
         if frames_opt is not None and frames >= frames_opt:
             print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
             running = False
 
+    if recording:
+        import pickle
+        with open(rec_path, "wb") as f:
+            pickle.dump(demo_log, f)
+        print(f"demo: recorded {len(demo_log)} frames, checksum {demo_sum}")
+    if play_path is not None:
+        print(f"demo: replayed {demo_idx} frames, checksum {demo_sum}")
     pygame.quit()
     return 0
 
