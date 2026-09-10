@@ -106,10 +106,12 @@ than it gives. This file lists every known one, by area. Rules:
 
 ## Intermission and finale
 
-- One static tally screen (kills/items/secret %, time, E1 par
-  table) with count-up tick and key-skip, melting in and out;
-  counts and the `WIENTER` line share the screen (vanilla uses
-  two), no splatter animation, no frags (no deathmatch).
+- Two vanilla screens over the `WIMAP0` world map: staged tally
+  (kills/items/secret climb +2/tic with pistol ticks and explosion
+  thumps, 1 s pauses, time/par +3, any key hurries) then the
+  entering map (taken-map splats, blinking YOU ARE HERE arrow,
+  4 s hold). Kill-less maps read 100% instead of faulting like
+  vanilla would, and any key (not just attack/use) hurries.
 - E1M8 melts to black with the `E1TEXT` payoff as an overlay;
   any key returns to the title (vanilla types the text over a
   flat, same words).

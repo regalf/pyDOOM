@@ -39,6 +39,7 @@ SFX = {
     "doropn": (100, False), "dorcls": (100, False),
     "stnmov": (119, False), "pstop": (100, False),
     "swtchn": (78, False), "swtchx": (78, False),
+    "sgcock": (64, False),  # NOTE: intermission advance (no DS lump)
     "plpain": (96, False), "dmpain": (96, False), "popain": (96, False),
     "oof": (96, False),  # NOTE: menu error buzz (DSOOF is in the IWAD)
     "itemup": (78, True), "getpow": (60, False),
