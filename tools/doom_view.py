@@ -371,8 +371,9 @@ def main() -> int:
             if (ps.readyweapon == WP_CHAINSAW
                     and ps.pendingweapon == WP_CHAINSAW
                     and not state["cooldown"]
-                    and state.get("tics", 0) % 4 == 0):
-                # NOTE: A_WeaponReady revs the idle loop on ready states.
+                    and state.get("tics", 0) % 8 == 0):
+                # NOTE: A_WeaponReady revs only on S_SAW entries (the
+                # S_SAW/S_SAWB pair ticks 4+4), so every 8 tics, not 4.
                 audio.play("sawidl", player_mo.x, player_mo.y, player_mo)
             if player_mo.health <= 0:
                 # Respawn at the map start, monsters lose interest.
