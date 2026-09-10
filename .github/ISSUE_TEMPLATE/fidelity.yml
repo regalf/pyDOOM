@@ -1,0 +1,30 @@
+name: Vanilla divergence
+description: pyDOOM behaves differently from real DOOM where it shouldn't
+labels: [fidelity]
+body:
+  - type: textarea
+    id: vanilla
+    attributes:
+      label: What does vanilla DOOM do?
+      description: Reference behavior, ideally with source (linuxdoom-1.10 file/function) or a Chocolate Doom demo to compare against.
+      placeholder: In p_map.c PIT_ChangeSector, corpses under a crusher become gibs…
+    validations:
+      required: true
+  - type: textarea
+    id: ours
+    attributes:
+      label: What does pyDOOM do instead?
+      placeholder: Corpses just take damage and stay whole…
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Where does it show?
+      description: Map(s), skill, cheat-free or not — anything that narrows it down.
+      placeholder: Any crusher, e.g. E2 (needs full IWAD) or synthetic test…
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Fix or document?
+      description: Should this be fixed, or recorded in docs/DIVERGENCES.md as a deliberate simplification?

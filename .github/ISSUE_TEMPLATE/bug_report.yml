@@ -1,0 +1,44 @@
+name: Bug report
+description: Something broken in the game or the engine
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+      placeholder: The imp on E1M2 walked through the blue door…
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it?
+      description: Map, skill, exact steps or keys. Demos welcome.
+      placeholder: |
+        1. python tools/doom_view.py --skill=normal E1M2
+        2. noclip past the start room…
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit (git rev-parse --short HEAD)
+      placeholder: 8b3cfb0
+    validations:
+      required: true
+  - type: dropdown
+    id: iwad
+    attributes:
+      label: IWAD
+      options:
+        - Bundled DOOM1.WAD (shareware)
+        - Other (say which below)
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, demo files (--record), terminal output, other IWAD details.

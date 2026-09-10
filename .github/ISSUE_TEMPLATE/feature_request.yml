@@ -1,0 +1,25 @@
+name: Feature request
+description: An idea for the engine or the game shell
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should it do?
+      placeholder: Pause key (P) with the M_PAUSE graphic…
+    validations:
+      required: true
+  - type: textarea
+    id: vanilla
+    attributes:
+      label: What does vanilla do here (if anything)?
+      description: Helps decide between faithful port and deliberate divergence.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope guess
+      options:
+        - Small (a day or less)
+        - Medium (a few days)
+        - Big (architecture or content)
+        - No idea
