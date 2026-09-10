@@ -144,3 +144,95 @@ def test_corpse_rides_lift_down(setup):
         world.tick()
         think_mobj(corpse, phys, ctx)
     assert corpse.z == sec.floorheight  # ...and the body landed on it
+
+
+@requires_wad
+def test_nightmare_spawns_alert_and_hard_cast():
+    from pydoom.info import MT_INDEX
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    for skill, want_rifle in (("normal", 8), ("nightmare", 0)):
+        phys = Physics(game_map)
+        index = ThingIndex(game_map)
+        phys.things = index
+        mobjs = spawn_map(game_map, phys, index, skill)
+        zombies = [mo for mo in mobjs if mo.type == MT_INDEX["POSSESSED"]]
+        assert zombies
+        assert all(z.reactiontime == want_rifle for z in zombies)
+        rifles = [mo for mo in mobjs if mo.doomednum == 9]
+        assert (len(rifles) > 0) == (skill == "nightmare")
+
+
+@requires_wad
+def test_nightmare_corpse_returns(monkeypatch):
+    import pydoom.mobjs as mobjs_mod
+    from pydoom.ai import AIContext
+    from pydoom.combat import damage_mobj, register_combat_actions
+    from pydoom.doors import World
+    from pydoom.info import MT_INDEX
+    from pydoom.textures import TextureManager
+    register_combat_actions()
+    monkeypatch.setattr(mobjs_mod, "p_random", lambda: 0)
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, TextureManager(wad))
+    ctx = AIContext(physics=phys, world=world, players=[])
+    ctx.mobjs = []
+    ctx.skill = "nightmare"
+    start = next(t for t in game_map.things if t.type == 1)
+    dummy = spawn_mobj(game_map, phys, index, start.x << 16,
+                       start.y << 16, 0, MT_INDEX["PLAYER"])
+    dummy.is_player = True
+    ctx.players = [dummy]
+    ctx.mobjs.append(dummy)
+    zombie = spawn_mobj(game_map, phys, index, 2272 << 16, -2352 << 16, -1,
+                        MT_INDEX["POSSESSED"])
+    zombie.sector = phys.subsector_at(zombie.x, zombie.y).sector
+    from types import SimpleNamespace
+    zombie.spawnpoint = SimpleNamespace(x=2272, y=-2352, angle=180,
+                                        options=15)
+    ctx.mobjs = [zombie]
+    damage_mobj(zombie, None, None, 1000, ctx)
+    assert zombie.health <= 0
+    for _ in range(600):
+        world.tick()
+        for mo in list(ctx.mobjs):
+            think_mobj(mo, phys, ctx)
+    risen = [mo for mo in ctx.mobjs
+             if mo.type == MT_INDEX["POSSESSED"] and mo.health > 0]
+    assert len(risen) == 1  # NOTE: back at its spawnpoint, fogged
+    assert (risen[0].x, risen[0].y) == (2272 << 16, -2352 << 16)
+    assert risen[0].reactiontime == 18
+    assert zombie.dead  # NOTE: the old body is gone
+
+
+@requires_wad
+def test_quiet_skills_leave_corpses_down():
+    from pydoom.ai import AIContext
+    from pydoom.combat import damage_mobj, register_combat_actions
+    from pydoom.doors import World
+    from pydoom.info import MT_INDEX
+    from pydoom.textures import TextureManager
+    register_combat_actions()
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, TextureManager(wad))
+    ctx = AIContext(physics=phys, world=world, players=[])
+    ctx.mobjs = []
+    zombie = spawn_mobj(game_map, phys, index, 2272 << 16, -2352 << 16, -1,
+                        MT_INDEX["POSSESSED"])
+    zombie.sector = phys.subsector_at(zombie.x, zombie.y).sector
+    ctx.mobjs = [zombie]
+    damage_mobj(zombie, None, None, 1000, ctx)
+    for _ in range(2000):
+        world.tick()
+        think_mobj(zombie, phys, ctx)
+    assert zombie.health <= 0  # NOTE: normal skill, stays dead
+    assert not [mo for mo in ctx.mobjs
+                if mo.type == MT_INDEX["POSSESSED"] and mo.health > 0]

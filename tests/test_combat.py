@@ -298,3 +298,13 @@ def test_hitscan_needs_fresh_blocklink(setup):
         from pydoom.combat import a_posattack
         a_posattack(zombie, ctx)
     assert player.health < before
+
+
+@requires_wad
+def test_baby_halves_player_damage(setup):
+    game_map, phys, index, ctx = setup
+    _, player, ctx, _ = make_duel(setup)
+    player.is_player = True
+    ctx.skill = "baby"
+    damage_mobj(player, None, None, 30, ctx)
+    assert player.health == 100 - 15

@@ -98,7 +98,7 @@ _BY_DOOMED = {
 }
 
 
-def give_ammo(ps, ammo: int, num: int) -> bool:
+def give_ammo(ps, ammo: int, num: int, skill: str = "normal") -> bool:
     """P_GiveAmmo: num clips (0 = dropped monster clip, half size)."""
     if ammo < 0 or ammo >= len(ps.ammo):
         return False
@@ -109,6 +109,9 @@ def give_ammo(ps, ammo: int, num: int) -> bool:
     else:
         # NOTE: dropped rockets round down to +0 yet still count as taken.
         num = CLIP_AMMO[ammo] // 2
+    if skill in ("baby", "nightmare"):
+        # NOTE: trainer mode doubles it; you'll need it on nightmare.
+        num <<= 1
     oldammo = ps.ammo[ammo]
     ps.ammo[ammo] += num
     if ps.ammo[ammo] > ps.maxammo[ammo]:
@@ -156,16 +159,16 @@ def give_armor(ps, armortype: int) -> bool:
     return True
 
 
-def give_weapon(ps, weapon: int, dropped: bool) -> bool:
+def give_weapon(ps, weapon: int, dropped: bool, skill: str = "normal") -> bool:
     """P_GiveWeapon: new guns arm pending; owned guns convert to ammo."""
     from pydoom.player import WEAPON_AMMO
     ammo = WEAPON_AMMO[weapon]
     if ammo < 0:
         gaveammo = False
     elif dropped:
-        gaveammo = give_ammo(ps, ammo, 1)
+        gaveammo = give_ammo(ps, ammo, 1, skill)
     else:
-        gaveammo = give_ammo(ps, ammo, 2)
+        gaveammo = give_ammo(ps, ammo, 2, skill)
     if ps.weapons & (1 << weapon):
         gaveweapon = False
     else:
@@ -175,14 +178,14 @@ def give_weapon(ps, weapon: int, dropped: bool) -> bool:
     return gaveweapon or gaveammo
 
 
-def give_backpack(ps) -> bool:
+def give_backpack(ps, skill: str = "normal") -> bool:
     """Backpack: double max ammo once, plus one clip of everything."""
     if not ps.backpack:
         for i in range(len(ps.maxammo)):
             ps.maxammo[i] *= 2
         ps.backpack = True
     for i in range(len(ps.ammo)):
-        give_ammo(ps, i, 1)
+        give_ammo(ps, i, 1, skill)
     return True
 
 
@@ -234,7 +237,8 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
     elif kind in ("ammo", "body", "hbonus", "abonus", "armor", "backpack",
                   "key"):
         sound = "itemup"
-    picked, msg = _apply_touch(item, picker_mo, ps, spec, dropped)
+    skill = getattr(ctx, "skill", "normal") if ctx is not None else "normal"
+    picked, msg = _apply_touch(item, picker_mo, ps, spec, dropped, skill)
     if picked:
         ps.bonuscount += 6  # NOTE: BONUSADD gold flash per item
         if sound is not None:
@@ -242,12 +246,12 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
     return picked, msg
 
 
-def _apply_touch(item, picker_mo, ps, spec, dropped):
+def _apply_touch(item, picker_mo, ps, spec, dropped, skill="normal"):
     """The per-kind give table; returns (picked, message)."""
     kind = spec[0]
     if kind == "ammo":
         _, ammo, clips, msg = spec
-        if not give_ammo(ps, ammo, 0 if dropped else clips):
+        if not give_ammo(ps, ammo, 0 if dropped else clips, skill):
             return False, None
         return True, msg
     if kind == "body":
@@ -292,11 +296,11 @@ def _apply_touch(item, picker_mo, ps, spec, dropped):
             return False, None
         return True, spec[2]
     if kind == "weapon":
-        if not give_weapon(ps, spec[1], dropped):
+        if not give_weapon(ps, spec[1], dropped, skill):
             return False, None
         return True, spec[2]
     if kind == "backpack":
-        give_backpack(ps)
+        give_backpack(ps, skill)
         return True, spec[1]
     if kind == "key":
         fresh = not (ps.keys & spec[1])

@@ -72,6 +72,7 @@ _MF_SKULLFLY = MF_FLAGS["MF_SKULLFLY"]
 _MF_FLOAT = MF_FLAGS["MF_FLOAT"]
 _MF_CORPSE = MF_FLAGS["MF_CORPSE"]
 _MF_DROPPED = MF_FLAGS["MF_DROPPED"]
+_MF_COUNTKILL = MF_FLAGS["MF_COUNTKILL"]
 
 
 @dataclass(eq=False)
@@ -107,6 +108,7 @@ class Mobj:
     missilestate: int = 0
     target: "Mobj | None" = field(default=None, repr=False)
     attacker: "Mobj | None" = field(default=None, repr=False)  # face-turn
+    spawnpoint: object = field(default=None, repr=False)  # map thing
     floorz: int = 0
     ceilingz: int = 0
     sector: object = field(default=None, repr=False)
@@ -227,6 +229,9 @@ def spawn_map(game_map: Map, physics, index: ThingIndex,
                         rec["mt"])
         mo.doomednum = thing.type
         mo.angle = 0x20000000 * (thing.angle // 45)  # ANG45 * steps
+        mo.spawnpoint = thing
+        if skill == "nightmare":
+            mo.reactiontime = 0  # NOTE: nightmare spawns pre-alerted
         if thing.options & 8:
             mo.flags |= _MF_AMBUSH
         if mo.tics > 0:
@@ -288,7 +293,64 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
         if not mo.tics:
             _sprite, _frame, _tics, nextstate, _action = STATES[mo.state]
             set_mobj_state(mo, nextstate, ctx)
+    elif (ctx is not None and getattr(ctx, "skill", "normal") == "nightmare"
+            and mo.spawnpoint is not None
+            and (mo.flags & _MF_COUNTKILL) and not mo.dead):
+        _maybe_respawn(mo, physics, ctx)
     return crossed
+
+
+def _maybe_respawn(mo: Mobj, physics, ctx) -> None:
+    """Nightmare corpse respawn (P_MobjThinker else-branch): after ~12s
+    of death, on a 32-tic boundary and a ~2% roll, the monster returns
+    at its spawnpoint in teleport fog (blocked spots wait)."""
+    mo.movecount += 1  # NOTE: doubles as the corpse-age counter
+    if mo.movecount < 12 * 35:
+        return
+    world = getattr(ctx, "world", None)
+    if world is None or (world.time & 31):
+        return
+    if p_random() > 4:
+        return
+    from pydoom import audio
+    from pydoom.info import MT_INDEX
+    sp = mo.spawnpoint
+    x, y = sp.x << 16, sp.y << 16
+    res = physics.check_position(mo, x, y)
+    if not res.ok:
+        return  # NOTE: something camps the spot; retry later
+    index = physics.things
+    fog = spawn_mobj(None, physics, index, mo.x, mo.y,
+                     mo.sector.floorheight if mo.sector is not None
+                     else mo.floorz, MT_INDEX["TFOG"])
+    fog.momz = 65536
+    audio.play("telept", mo.x, mo.y, fog)
+    if index is not None:
+        index.unlink(mo)
+    if mo.sector is not None:
+        try:
+            mo.sector.thinglist.remove(mo)
+        except ValueError:
+            pass
+    mobjs = getattr(ctx, "mobjs", None)
+    if mobjs is not None:
+        if mo in mobjs:
+            mobjs.remove(mo)
+        dest = spawn_mobj(None, physics, index, x, y, -1, mo.type)
+        dest.spawnpoint = sp
+        dest.angle = 0x20000000 * (sp.angle // 45)
+        if sp.options & 8:
+            dest.flags |= _MF_AMBUSH
+        dest.reactiontime = 18
+        dest.movecount = 0
+        mobjs.append(dest)
+        fog2 = spawn_mobj(None, physics, index, x, y, dest.floorz,
+                          MT_INDEX["TFOG"])
+        fog2.momz = 65536
+        audio.play("telept", x, y, fog2)
+        mobjs.append(fog)
+        mobjs.append(fog2)
+    mo.dead = True
 
 
 def refresh_sector(mo: Mobj, physics) -> None:

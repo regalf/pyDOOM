@@ -91,9 +91,19 @@ class Camera:
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     frames_opt = None
+    skill = "normal"
+    fast = False
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
+        elif a.startswith("--skill="):
+            skill = a.split("=", 1)[1].lower()
+            from pydoom.mobjs import SKILL_BITS
+            if skill not in SKILL_BITS:
+                raise SystemExit(f"unknown skill {skill} "
+                                 f"(baby/easy/normal/hard/nightmare)")
+        elif a == "--fast":
+            fast = True
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
     default_wad = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
     wad_path = args[1] if len(args) > 1 else default_wad
@@ -139,7 +149,7 @@ def main() -> int:
         index = ThingIndex(game_map)
         phys.things = index
         phys.damage_hook = lambda tm, th: combat.things_hit(tm, th, ctx)
-        mobjs = spawn_map(game_map, phys, index)
+        mobjs = spawn_map(game_map, phys, index, skill)
         # Player body for monster AI and walls alike: the camera drives
         # this mobj directly (no separate physics body, so there is no
         # self-collision). Culled from its own view like vanilla.
@@ -153,6 +163,7 @@ def main() -> int:
         ctx = AIContext(
             physics=phys, world=world, players=[player_mo],
             sector_index={id(s): i for i, s in enumerate(game_map.sectors)},
+            skill=skill, fast=fast,
         )
         ctx.mobjs = mobjs
         ctx.skyflatnum = renderer.skyflatnum
@@ -598,6 +609,7 @@ def main() -> int:
                    f"{fps_ema:.0f}fps "
                    f"{'noclip' if noclip else 'clip'} "
                    f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
+                   f"{skill.upper()}{'+FAST' if fast else ''} "
                    f"v{ver}")
             screen.blit(font.render(hud, True, (255, 255, 255)), (8, 8))
             if message is not None:

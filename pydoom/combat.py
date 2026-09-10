@@ -101,6 +101,9 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
         return
     if target.flags & _MF_SKULLFLY:
         target.momx = target.momy = target.momz = 0
+    if getattr(target, "is_player", False) and ctx is not None \
+            and getattr(ctx, "skill", "normal") == "baby":
+        damage >>= 1  # NOTE: trainer mode halves what you take
     ps = (getattr(ctx, "player_state", None) if ctx is not None else None)
     if getattr(target, "is_player", False) and ps is not None:
         if target.sector is not None and target.sector.special == 11 \

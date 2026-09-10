@@ -434,3 +434,15 @@ def test_pickup_reach_matches_vanilla(setup):
     ctx.mobjs.append(far)
     assert collect_touched(phys, player, ps, ctx) is None
     assert not far.dead and ps.ammo[AM_CLIP] == 60
+
+
+@requires_wad
+def test_double_ammo_on_baby_and_nightmare(setup):
+    from pydoom.pickup import give_ammo
+    game_map, phys, index, ctx = setup
+    _, ps, ctx, _ = make_player(setup)
+    assert give_ammo(ps, AM_CLIP, 1, "baby")
+    assert ps.ammo[AM_CLIP] == 50 + 20
+    ps.ammo[AM_CLIP] = 0
+    assert give_ammo(ps, AM_CLIP, 1, "nightmare")
+    assert ps.ammo[AM_CLIP] == 20
