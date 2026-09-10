@@ -1164,6 +1164,15 @@ def main() -> int:
                    f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
                    f"{skill.upper()}{'+FAST' if fast else ''} "
                    f"v{ver}")
+            if debug:
+                # NOTE: song-thread health for low-fps music reports.
+                ms = audio.music_status()
+                hud += (f" MUS:{ms.get('backend', '?')} "
+                        f"q{ms.get('queue', '?')} "
+                        f"p{ms.get('pumped', '?')}/"
+                        f"s{ms.get('starved', '?')}")
+                if not ms.get("alive", True) or ms.get("error"):
+                    hud += f" DEAD:{ms.get('error')}"
             screen.blit(font.render(hud, True, (255, 255, 255)), (8, 8))
             if message is not None and msettings.messages:
                 screen.blit(font.render(message, True, (255, 200, 100)),

@@ -581,6 +581,9 @@ class MusicPlayer:
         self._live = True
         self._dc_x = 0.0  # NOTE: one-pole DC blocker state (below)
         self._dc_y = 0.0
+        self.pumped = 0  # NOTE: chunks handed out (starvation readout)
+        self.starved = 0  # NOTE: dry pumps (worker behind or dead)
+        self.error = None  # NOTE: worker crash, surfaced, never silent
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -601,9 +604,12 @@ class MusicPlayer:
     def pump(self):
         """One uint8 mono chunk, or None when the queue is dry."""
         try:
-            return self._out.get_nowait()
+            chunk = self._out.get_nowait()
         except queue.Empty:
+            self.starved += 1
             return None
+        self.pumped += 1
+        return chunk
 
     def close(self) -> None:
         self._live = False
@@ -621,6 +627,13 @@ class MusicPlayer:
 
     def _run(self) -> None:
         from pydoom.mus import parse_mus
+        try:
+            self._serve(parse_mus)
+        except Exception as exc:  # NOTE: a dead song thread used to
+            self.error = exc  # look exactly like "music never starts"
+            print(f"music: worker died: {exc!r}")
+
+    def _serve(self, parse_mus) -> None:
         sched = None
         while self._live:
             try:

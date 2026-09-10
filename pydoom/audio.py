@@ -397,6 +397,24 @@ def music_sync_mute() -> None:
         _music_player.set_muted(engine.muted)
 
 
+def music_status() -> dict:
+    """Song-thread readout for the debug HUD (backend, queue depth,
+    pumped/starved counters, worker health)."""
+    player = _music_player
+    if player is None:
+        return {"backend": "none"}
+    try:
+        depth = player._out.qsize()
+    except Exception:
+        depth = -1
+    return {"backend": type(player.backend).__name__,
+            "queue": depth,
+            "pumped": player.pumped,
+            "starved": player.starved,
+            "alive": player._thread.is_alive(),
+            "error": repr(player.error) if player.error else None}
+
+
 def music_shutdown() -> None:
     global _music_player, _music_channel
     if _music_player is not None:
