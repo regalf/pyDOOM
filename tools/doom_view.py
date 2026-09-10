@@ -38,7 +38,7 @@ from pydoom.mobjs import think_mobj
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
-from pydoom.player import PlayerState, palette_index
+from pydoom.player import PlayerState, WP_CHAINSAW, palette_index
 from pydoom.statusbar import draw_status_bar
 from pydoom.renderer import SCREENHEIGHT, SCREENWIDTH, Renderer
 from pydoom.textures import TextureManager
@@ -368,6 +368,12 @@ def main() -> int:
                 # NOTE: cd < 0 means still switching or just auto-switched
                 # off a dry gun (vanilla never clicks empty).
             state["refire"] = want_fire
+            if (ps.readyweapon == WP_CHAINSAW
+                    and ps.pendingweapon == WP_CHAINSAW
+                    and not state["cooldown"]
+                    and state.get("tics", 0) % 4 == 0):
+                # NOTE: A_WeaponReady revs the idle loop on ready states.
+                audio.play("sawidl", player_mo.x, player_mo.y, player_mo)
             if player_mo.health <= 0:
                 # Respawn at the map start, monsters lose interest.
                 message, message_tics = "YOU DIED", 3 * TICRATE
