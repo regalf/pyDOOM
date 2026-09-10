@@ -72,6 +72,11 @@ class CheatEngine:
         self.buf: deque = deque(maxlen=16)
         self._collect: list | None = None  # [name, need, got]
 
+    def reset(self) -> None:
+        """Clear a half-typed code (fresh level, menu round-trip)."""
+        self.buf.clear()
+        self._collect = None
+
     def feed(self, ch: str) -> list[tuple[str, str]]:
         """Offer one typed char; returns fired events (usually none)."""
         ch = ch.lower()

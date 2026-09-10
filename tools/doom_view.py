@@ -3,10 +3,11 @@
 Usage: python tools/doom_view.py [MAP] [WAD]
 
 Keys: W/A/S/D or arrows move/turn, mouse looks, Shift runs,
-E uses doors/switches, N toggles noclip (collision is ON by default),
-F freezes/thaws monster AI (frozen by nothing at first: they chase),
-PgUp/PgDn switch map, G grabs/releases the mouse, Esc quits.
-Cheats (typed): iddqd idkfa/idfa idclip idclev11 idmus11 iddt idbeholdv.
+E uses doors/switches, 1-7 weapons, TAB automap, M sound, Esc menu.
+Cheats (typed, always on like vanilla): iddqd idkfa/idfa idclip
+idclev11 idmus11 iddt idbeholdv.
+Dev keys (only with --debug): N noclip, F freeze AI, X AI info,
+PgUp/PgDn switch map, G grabs/releases the mouse.
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -16,6 +17,7 @@ weapons or thing collision yet.
 
 import math
 import os
+import random
 import subprocess
 import sys
 import time
@@ -28,6 +30,7 @@ import pygame
 from pydoom import combat
 from pydoom import cheats
 from pydoom import flow
+from pydoom import menu
 from pydoom import weapons
 from pydoom import audio
 from pydoom.automap import Automap
@@ -50,6 +53,7 @@ from pydoom.statusbar import FaceState, draw_status_bar, update_face
 from pydoom.renderer import SCREENHEIGHT, SCREENWIDTH, Renderer
 from pydoom.textures import TextureManager
 from pydoom.wad import WadFile
+from pydoom.wipe import MeltWipe
 
 WIN_W, WIN_H = 960, 600
 
@@ -69,7 +73,9 @@ TICRATE = 35
 WALK_SPEED = 7.0  # map units per tic
 RUN_SPEED = 13.0
 TURN_SPEED = 0.075  # radians per tic
-MOUSE_SENS = 0.0028  # radians per pixel
+# NOTE: mouse radians/px rides the options slider (0.0004 + idx*6e-4,
+# so idx 4 lands on the old 0.0028); the const below is history.
+MOUSE_SENS = 0.0028  # radians per pixel (default slider position)
 VIEWHEIGHT_ABOVE_FLOOR = 41.0
 
 
@@ -117,9 +123,12 @@ def main() -> int:
     frames_opt = None
     skill = "normal"
     fast = False
+    debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
+        elif a == "--debug":
+            debug = True
         elif a.startswith("--skill="):
             skill = a.split("=", 1)[1].lower()
             from pydoom.mobjs import SKILL_BITS
@@ -228,6 +237,102 @@ def main() -> int:
     message: str | None = None
     message_tics = 0
     map_idx = maps.index(game_map.marker) if game_map.marker in maps else 0
+    msettings = menu.Settings()
+    game_menu = menu.Menu(
+        wad, msettings,
+        menu.SKILLS.index(skill) if skill in menu.SKILLS else 2)
+    gamestate = "level"  # level | menu (sim paused) | wipe (melting)
+    melt = MeltWipe()
+    last_fb = None
+    # NOTE: M_QuitDOOM death jingle (shareware picks the first table).
+    QUITSOUNDS = ("pldeth", "dmpain", "popain", "slop", "telept",
+                  "posit1", "posit3", "sgtatk")
+
+    def render_scene():
+        """One frozen-sim scene frame (psprites + status bar included)."""
+        # NOTE: muzzle-flash room light (A_Light1/2 levels, with the
+        # shotgun/BFG step-up mid-flash), like the psprite flash.
+        ps = state["ps"]
+        extra = 0
+        left = state.get("flash_until", 0) - state.get("tics", 0)
+        if left > 0:
+            extra = weapons.FLASH_LIGHT[ps.readyweapon]
+            split = weapons.FLASH_LIGHT_STEP.get(ps.readyweapon)
+            if split is not None and \
+                    weapons.FLASH_TICS[ps.readyweapon] - left >= split[0]:
+                extra = split[1]
+        fb = renderer.render_view(
+            game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
+            int(cam.viewz * 65536), mobjs, extra_light=extra,
+        )
+        # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob,
+        # lower/raise travel while switching, kick frame while firing.
+        ps = state["ps"]
+        body, flash = weapons.PSPRITES[ps.readyweapon]
+        bob, amp = state.get("tics", 0), state.get("bobamp", 0)
+        # NOTE: vanilla sway cycle is 64 tics (angle = 128*leveltime);
+        # height bounces on the positive lobe only (angle & 4095).
+        phase = bob * math.pi / 32
+        bobx = int(amp * math.cos(phase))
+        boby = int(amp * abs(math.sin(phase)))
+        firing = state.get("tics", 0) < state["flash_until"]
+        attacking = state.get("tics", 0) < state.get("atk_until", 0)
+        if ps.pendingweapon != ps.readyweapon:
+            # NOTE: A_Lower/A_Raise dip: old gun sinks, new gun rises.
+            travel = 1 - ps.switchtics / weapons.SWITCH_TICS
+            if travel < 0.5:
+                yoff = int(96 * travel * 2)
+            else:
+                body, flash = weapons.PSPRITES[ps.pendingweapon]
+                yoff = int(96 * (1 - (travel - 0.5) * 2))
+            firing = attacking = False
+        else:
+            yoff = 0
+        if attacking:
+            # NOTE: body frames ride the full attack cycle (p_pspr.c),
+            # so kicks read instead of blinking past.
+            span = max(1, state.get("atk_span", 1))
+            elapsed = span - (state["atk_until"] - state.get("tics", 0))
+            timeline = weapons.ATTACK_BODY[ps.readyweapon]
+            pick = timeline[min(len(timeline) - 1, max(0, elapsed))]
+            if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
+                                         pick):
+                renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+        else:
+            renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+        if firing and flash is not None:
+            renderer.draw_psprite(fb, flash, bobx, boby + yoff)
+        # NOTE: classic bottom strip (covers the gun base, like vanilla).
+        draw_status_bar(renderer, fb, ps, player_mo.health,
+                        state.get("facelump", "STFST00"))
+        return fb
+
+    def apply_menu_event(mev):
+        """Menu selections: quit, or a wiped fresh start on E1M1."""
+        nonlocal gamestate, game_map, cam, phys, player_mo, world, \
+            mobjs, ctx, state, map_idx, amap, message, message_tics, \
+            noclip, skill, running
+        if mev == "close":
+            gamestate = "level"
+        elif mev == "quit":
+            audio.play(random.choice(QUITSOUNDS))
+            running = False
+        elif isinstance(mev, tuple) and mev[0] == "new_game":
+            old = last_fb.copy() if last_fb is not None else None
+            skill = mev[2]
+            map_idx = maps.index("E1M1")
+            (game_map, cam, phys, player_mo, world, mobjs, ctx,
+             state) = load_map("E1M1")
+            amap = None
+            message, message_tics = None, 0
+            noclip = False
+            cheat.reset()
+            pygame.display.set_caption("pydoom - E1M1")
+            if old is None:
+                gamestate = "level"
+            else:
+                melt.start(old, render_scene())  # menu melts away
+                gamestate = "wipe"
 
     pygame.init()
     screen = pygame.display.set_mode((WIN_W, WIN_H))
@@ -255,8 +360,34 @@ def main() -> int:
             if ev.type == pygame.QUIT:
                 running = False
             elif ev.type == pygame.KEYDOWN:
+                if gamestate == "menu":
+                    # NOTE: vanilla menus eat every key (no cheats here).
+                    k = None
+                    if ev.key == pygame.K_UP:
+                        k = "up"
+                    elif ev.key == pygame.K_DOWN:
+                        k = "down"
+                    elif ev.key == pygame.K_LEFT:
+                        k = "left"
+                    elif ev.key == pygame.K_RIGHT:
+                        k = "right"
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        k = "enter"
+                    elif ev.key == pygame.K_ESCAPE:
+                        k = "esc"
+                    else:
+                        ch = (getattr(ev, "unicode", "") or "").lower()
+                        if len(ch) == 1 and ch.isalpha():
+                            k = ch
+                    if k is not None:
+                        for mev in game_menu.key(k):
+                            apply_menu_event(mev)
+                    continue
+                if gamestate != "level":
+                    continue  # NOTE: wipe melts undisturbed
                 # NOTE: every typed char feeds the cheat matcher first
-                # (m_cheat); quit is ESC-only so iddqd's Q stays free.
+                # (m_cheat, always on like vanilla); dev keys below
+                # need --debug, and quit moved into the menu.
                 for cname, carg in cheat.feed(
                         getattr(ev, "unicode", "") or ""):
                     _ps = state["ps"]
@@ -313,8 +444,13 @@ def main() -> int:
                                                       carg)
                         message_tics = 3 * TICRATE
                 if ev.key == pygame.K_ESCAPE:
-                    running = False
+                    gamestate = "menu"  # NOTE: sim freezes underneath
+                    amap = None  # menu takes over the screen
+                    am_zoom_in = am_zoom_out = False
+                    audio.play("swtchn")
                 elif ev.key == pygame.K_g:
+                    if not debug:
+                        continue  # NOTE: vanilla G does nothing in game
                     if amap is not None:
                         amap.toggle_grid()  # vanilla TAB-mode G
                     else:
@@ -322,8 +458,9 @@ def main() -> int:
                         pygame.mouse.set_visible(
                             not pygame.mouse.get_visible())
                 elif ev.key == pygame.K_n:
-                    noclip = not noclip
-                    set_noclip(noclip, player_mo, cam, phys)
+                    if debug:
+                        noclip = not noclip
+                        set_noclip(noclip, player_mo, cam, phys)
                 elif ev.key == pygame.K_e:
                     message = world.use_lines(
                         player_mo.x, player_mo.y, cam.bam, phys,
@@ -336,6 +473,8 @@ def main() -> int:
                         cam.y = player_mo.y / 65536.0
                         world.teleport_angle = None
                 elif ev.key == pygame.K_PAGEUP:
+                    if not debug:
+                        continue
                     map_idx = (map_idx - 1) % len(maps)
                     (game_map, cam, phys, player_mo, world, mobjs, ctx,
                      state) = load_map(maps[map_idx])
@@ -344,6 +483,8 @@ def main() -> int:
                     pygame.display.set_caption(
                         f"pydoom - {game_map.marker}")
                 elif ev.key == pygame.K_PAGEDOWN:
+                    if not debug:
+                        continue
                     map_idx = (map_idx + 1) % len(maps)
                     (game_map, cam, phys, player_mo, world, mobjs, ctx,
                      state) = load_map(maps[map_idx])
@@ -354,7 +495,7 @@ def main() -> int:
                 elif ev.key == pygame.K_f:
                     if amap is not None:
                         amap.toggle_follow()  # vanilla TAB-mode F
-                    else:
+                    elif debug:
                         ctx.ai_frozen = not ctx.ai_frozen
                 elif ev.key == pygame.K_TAB:
                     if amap is None:
@@ -368,14 +509,15 @@ def main() -> int:
                     am_zoom_in = True
                 elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     am_zoom_out = True
-            elif ev.type == pygame.KEYUP:
+            elif ev.type == pygame.KEYUP and gamestate == "level":
                 if ev.key in (pygame.K_EQUALS, pygame.K_PLUS,
                               pygame.K_KP_PLUS):
                     am_zoom_in = False
                 elif ev.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     am_zoom_out = False
                 elif ev.key == pygame.K_x:
-                    show_ai = not show_ai
+                    if debug:
+                        show_ai = not show_ai
                 elif ev.key == pygame.K_m:
                     if audio.toggle_mute():
                         message, message_tics = "SOUND OFF", TICRATE
@@ -384,10 +526,11 @@ def main() -> int:
                 elif pygame.K_1 <= ev.key <= pygame.K_7:
                     weapons.request_weapon(state["ps"], chr(ev.key))
             elif ev.type == pygame.MOUSEMOTION:
-                if pygame.event.get_grab():
-                    cam.turn(-ev.rel[0] * MOUSE_SENS)
+                if gamestate == "level" and pygame.event.get_grab():
+                    sens = 0.0004 + msettings.mouse_sens * 0.0006
+                    cam.turn(-ev.rel[0] * sens)
             elif ev.type == pygame.MOUSEBUTTONDOWN:
-                if ev.button == 1:
+                if gamestate == "level" and ev.button == 1:
                     state["firing"] = True
             elif ev.type == pygame.MOUSEBUTTONUP:
                 if ev.button == 1:
@@ -396,8 +539,14 @@ def main() -> int:
         keys = pygame.key.get_pressed()
         run = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         speed = RUN_SPEED if run else WALK_SPEED
+        audio.engine.master = msettings.sfx_vol / 15  # options slider
         tic_acc += dt
-        while tic_acc >= 1.0 / TICRATE and not state["won"]:
+        if gamestate != "level":
+            tic_acc = 0  # NOTE: no catch-up burst when unpausing
+            if gamestate == "menu" and frames % 2 == 0:
+                game_menu.tick()  # skull animates at ~half display rate
+        while tic_acc >= 1.0 / TICRATE and not state["won"] \
+                and gamestate == "level":
             tic_acc -= 1.0 / TICRATE
             state["tics"] = state.get("tics", 0) + 1
             if message_tics:
@@ -626,63 +775,18 @@ def main() -> int:
                 print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
                 running = False
             continue
-        # NOTE: muzzle-flash room light (A_Light1/2 levels, with the
-        # shotgun/BFG step-up mid-flash), like the psprite flash.
-        ps = state["ps"]
-        extra = 0
-        left = state.get("flash_until", 0) - state.get("tics", 0)
-        if left > 0:
-            extra = weapons.FLASH_LIGHT[ps.readyweapon]
-            split = weapons.FLASH_LIGHT_STEP.get(ps.readyweapon)
-            if split is not None and \
-                    weapons.FLASH_TICS[ps.readyweapon] - left >= split[0]:
-                extra = split[1]
-        fb = renderer.render_view(
-            game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
-            int(cam.viewz * 65536), mobjs, extra_light=extra,
-        )
-        # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob,
-        # lower/raise travel while switching, kick frame while firing.
-        ps = state["ps"]
-        body, flash = weapons.PSPRITES[ps.readyweapon]
-        bob, amp = state.get("tics", 0), state.get("bobamp", 0)
-        # NOTE: vanilla sway cycle is 64 tics (angle = 128*leveltime);
-        # height bounces on the positive lobe only (angle & 4095).
-        phase = bob * math.pi / 32
-        bobx = int(amp * math.cos(phase))
-        boby = int(amp * abs(math.sin(phase)))
-        firing = state.get("tics", 0) < state["flash_until"]
-        attacking = state.get("tics", 0) < state.get("atk_until", 0)
-        if ps.pendingweapon != ps.readyweapon:
-            # NOTE: A_Lower/A_Raise dip: old gun sinks, new gun rises.
-            travel = 1 - ps.switchtics / weapons.SWITCH_TICS
-            if travel < 0.5:
-                yoff = int(96 * travel * 2)
+        fb = render_scene()
+        if gamestate == "menu":
+            game_menu.draw(fb)  # NOTE: menu floats over the frozen sim
+        elif gamestate == "wipe":
+            stepped = melt.tick()
+            if stepped is None:
+                gamestate = "level"
             else:
-                body, flash = weapons.PSPRITES[ps.pendingweapon]
-                yoff = int(96 * (1 - (travel - 0.5) * 2))
-            firing = attacking = False
-        else:
-            yoff = 0
-        if attacking:
-            # NOTE: body frames ride the full attack cycle (p_pspr.c),
-            # so kicks read instead of blinking past.
-            span = max(1, state.get("atk_span", 1))
-            elapsed = span - (state["atk_until"] - state.get("tics", 0))
-            timeline = weapons.ATTACK_BODY[ps.readyweapon]
-            pick = timeline[min(len(timeline) - 1, max(0, elapsed))]
-            if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
-                                         pick):
-                renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
-        else:
-            renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
-        if firing and flash is not None:
-            renderer.draw_psprite(fb, flash, bobx, boby + yoff)
-        # NOTE: classic bottom strip (covers the gun base, like vanilla).
-        draw_status_bar(renderer, fb, ps, player_mo.health,
-                        state.get("facelump", "STFST00"))
+                fb = stepped
+        last_fb = fb.copy()
         frame = pygame.image.frombuffer(
-            palette_luts[palette_index(ps)][fb].tobytes(),
+            palette_luts[palette_index(state["ps"])][fb].tobytes(),
             (SCREENWIDTH, SCREENHEIGHT), "RGB"
         )
         screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)), (0, 0))
@@ -695,7 +799,7 @@ def main() -> int:
                    f"{skill.upper()}{'+FAST' if fast else ''} "
                    f"v{ver}")
             screen.blit(font.render(hud, True, (255, 255, 255)), (8, 8))
-            if message is not None:
+            if message is not None and msettings.messages:
                 screen.blit(font.render(message, True, (255, 200, 100)),
                             (8, 28))
             if show_ai:
@@ -719,11 +823,14 @@ def main() -> int:
                         f"r={best.reactiontime} m={best.movecount}")
                     screen.blit(font.render(ai_line, True, (100, 255, 100)),
                                 (8, 64))
-            screen.blit(font.render(
+            help_line = (
                 "WASD/arrows move+turn, mouse look, Shift run, E use, "
-                "1-7 weapons, TAB map, M sound, N noclip, F freeze AI, "
-                "X AI info, PgUp/PgDn map, G mouse, Esc quit",
-                True, (180, 180, 180)), (8, WIN_H - 120))
+                "1-7 weapons, TAB map, M sound, Esc menu"
+            )
+            if debug:
+                help_line += " [N noclip F freeze X AI PgUp/PgDn G mouse]"
+            screen.blit(font.render(help_line, True, (180, 180, 180)),
+                        (8, WIN_H - 120))
             if state["won"]:
                 big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
                 screen.blit(big, (WIN_W // 2 - big.get_width() // 2,
@@ -733,7 +840,7 @@ def main() -> int:
                     small = font.render(text_line, True, (200, 200, 200))
                     screen.blit(small, (WIN_W // 2 - small.get_width() // 2,
                                         WIN_H // 2 - 90 + i * 20))
-                sub = font.render("PgUp/PgDn: replay maps   Esc: quit",
+                sub = font.render("PgUp/PgDn: replay maps   Esc: menu",
                                   True, (255, 255, 255))
                 screen.blit(sub, (WIN_W // 2 - sub.get_width() // 2,
                                    WIN_H // 2 + 130))

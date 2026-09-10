@@ -40,6 +40,7 @@ SFX = {
     "stnmov": (119, False), "pstop": (100, False),
     "swtchn": (78, False), "swtchx": (78, False),
     "plpain": (96, False), "dmpain": (96, False), "popain": (96, False),
+    "oof": (96, False),  # NOTE: menu error buzz (DSOOF is in the IWAD)
     "itemup": (78, True), "getpow": (60, False),
     "telept": (32, False),
     "posit1": (98, True), "posit2": (98, True), "posit3": (98, True),
