@@ -33,6 +33,9 @@ KEY_COLORS = {"blue": KEY_BLUE | KEY_BSKULL,
               "yellow": KEY_YELLOW | KEY_YSKULL,
               "red": KEY_RED | KEY_RSKULL}
 
+# Cheat flags (doomdef.h CF_): god and noclip live on PlayerState.cheats.
+CF_NOCLIP, CF_GODMODE = 1, 2
+
 # Powers (powertype_t names); tics remaining, strength is level-long.
 PW_INVULN, PW_STRENGTH, PW_INVIS = "invuln", "strength", "invis"
 PW_IRONFEET, PW_ALLMAP, PW_INFRARED = "ironfeet", "allmap", "infrared"
@@ -62,6 +65,7 @@ class PlayerState:
     powers: dict = field(default_factory=dict)
     damagecount: int = 0  # NOTE: red palette flash, decays per tic
     bonuscount: int = 0  # NOTE: gold pickup flash, decays per tic
+    cheats: int = 0  # CF_GODMODE/CF_NOCLIP bits (iddqd/idclip)
 
     def tick(self, player_mo=None) -> None:
         """P_PlayerThink counters: powers, palette flash countdowns."""

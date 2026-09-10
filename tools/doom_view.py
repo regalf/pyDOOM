@@ -5,7 +5,8 @@ Usage: python tools/doom_view.py [MAP] [WAD]
 Keys: W/A/S/D or arrows move/turn, mouse looks, Shift runs,
 E uses doors/switches, N toggles noclip (collision is ON by default),
 F freezes/thaws monster AI (frozen by nothing at first: they chase),
-PgUp/PgDn switch map, G grabs/releases the mouse, Esc/Q quits.
+PgUp/PgDn switch map, G grabs/releases the mouse, Esc quits.
+Cheats (typed): iddqd idkfa/idfa idclip idclev11 idmus11 iddt idbeholdv.
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -25,6 +26,7 @@ import numpy as np
 import pygame
 
 from pydoom import combat
+from pydoom import cheats
 from pydoom import flow
 from pydoom import weapons
 from pydoom import audio
@@ -38,7 +40,12 @@ from pydoom.mobjs import think_mobj
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
-from pydoom.player import PlayerState, WP_CHAINSAW, palette_index
+from pydoom.player import (
+    CF_NOCLIP,
+    PlayerState,
+    WP_CHAINSAW,
+    palette_index,
+)
 from pydoom.statusbar import FaceState, draw_status_bar, update_face
 from pydoom.renderer import SCREENHEIGHT, SCREENWIDTH, Renderer
 from pydoom.textures import TextureManager
@@ -86,6 +93,23 @@ class Camera:
         # Strafe thrusts at angle-90deg, like P_MovePlayer.
         self.x += math.cos(self.angle) * forward + math.sin(self.angle) * strafe
         self.y += math.sin(self.angle) * forward - math.cos(self.angle) * strafe
+
+
+def set_noclip(on: bool, player_mo, cam, phys) -> None:
+    """Shared N-key/idclip toggle: MF_NOCLIP flag plus a floor resync
+    when clipping back in (so the body never hovers over the void)."""
+    if on:
+        player_mo.flags |= MF_NOCLIP
+    else:
+        player_mo.flags &= ~MF_NOCLIP
+        player_mo.x, player_mo.y = (int(cam.x * 65536),
+                                    int(cam.y * 65536))
+        res = phys.check_position(player_mo, player_mo.x, player_mo.y)
+        if res.ok:
+            player_mo.floorz, player_mo.ceilingz = (res.floorz,
+                                                    res.ceilingz)
+            player_mo.z = res.floorz
+        refresh_sector(player_mo, phys)
 
 
 def main() -> int:
@@ -182,6 +206,7 @@ def main() -> int:
     game_map, cam, phys, player_mo, world, mobjs, ctx, state = load_map(
         map_name)
     combat.register_combat_actions()
+    cheat = cheats.CheatEngine()  # iddqd/idkfa/idclip/... on typed chars
     noclip = False
     show_ai = False  # X toggles a nearest-monster AI readout
     amap = None  # TAB automap overlay (vanilla keeps the game running)
@@ -217,7 +242,64 @@ def main() -> int:
             if ev.type == pygame.QUIT:
                 running = False
             elif ev.type == pygame.KEYDOWN:
-                if ev.key in (pygame.K_ESCAPE, pygame.K_q):
+                # NOTE: every typed char feeds the cheat matcher first
+                # (m_cheat); quit is ESC-only so iddqd's Q stays free.
+                for cname, carg in cheat.feed(
+                        getattr(ev, "unicode", "") or ""):
+                    _ps = state["ps"]
+                    if cname == "iddqd":
+                        message = cheats.apply_god(_ps, player_mo)
+                        message_tics = 3 * TICRATE
+                    elif cname == "idkfa":
+                        message = cheats.apply_kfa(_ps)
+                        message_tics = 3 * TICRATE
+                    elif cname == "idfa":
+                        message = cheats.apply_fa(_ps)
+                        message_tics = 3 * TICRATE
+                    elif cname in ("idclip", "idspispopd"):
+                        noclip = not noclip
+                        _ps.cheats ^= CF_NOCLIP
+                        set_noclip(noclip, player_mo, cam, phys)
+                        message = (cheats.NOCLIP_ON if noclip
+                                   else cheats.NOCLIP_OFF)
+                        message_tics = 3 * TICRATE
+                    elif cname == "idchoppers":
+                        message = cheats.apply_choppers(_ps)
+                        message_tics = 3 * TICRATE
+                    elif cname == "iddt":
+                        if amap is None:
+                            amap = Automap(game_map, WIN_W, WIN_H,
+                                           palette_lut.tolist())
+                            am_zoom_in = am_zoom_out = False
+                        amap.cycle_cheat()
+                    elif cname == "idmypos":
+                        message = cheats.MYPOS_FMT.format(
+                            a=int(math.degrees(cam.angle) % 360),
+                            x=player_mo.x >> 16, y=player_mo.y >> 16)
+                        message_tics = 3 * TICRATE
+                    elif cname == "idclev":
+                        # NOTE: shareware warp is E1M1-E1M9, fresh start
+                        # (PST_REBORN); bad digits fail silently.
+                        if carg[0] == "1" and carg[1] in "123456789":
+                            dest = f"E1M{carg[1]}"
+                            if dest in maps:
+                                map_idx = maps.index(dest)
+                                (game_map, cam, phys, player_mo, world,
+                                 mobjs, ctx, state) = load_map(
+                                    maps[map_idx])
+                                amap = None
+                                message, message_tics = (cheats.CLEV,
+                                                         3 * TICRATE)
+                                pygame.display.set_caption(
+                                    f"pydoom - {game_map.marker}")
+                    elif cname == "idmus":
+                        message = cheats.MUS  # music stub, message only
+                        message_tics = 3 * TICRATE
+                    elif cname == "idbehold":
+                        message = cheats.apply_behold(_ps, player_mo,
+                                                      carg)
+                        message_tics = 3 * TICRATE
+                if ev.key == pygame.K_ESCAPE:
                     running = False
                 elif ev.key == pygame.K_g:
                     if amap is not None:
@@ -228,19 +310,7 @@ def main() -> int:
                             not pygame.mouse.get_visible())
                 elif ev.key == pygame.K_n:
                     noclip = not noclip
-                    if noclip:
-                        player_mo.flags |= MF_NOCLIP
-                    else:
-                        player_mo.flags &= ~MF_NOCLIP
-                        player_mo.x, player_mo.y = (
-                            int(cam.x * 65536), int(cam.y * 65536))
-                        res = phys.check_position(
-                            player_mo, player_mo.x, player_mo.y)
-                        if res.ok:
-                            player_mo.floorz, player_mo.ceilingz = (
-                                res.floorz, res.ceilingz)
-                            player_mo.z = res.floorz
-                        refresh_sector(player_mo, phys)
+                    set_noclip(noclip, player_mo, cam, phys)
                 elif ev.key == pygame.K_e:
                     message = world.use_lines(
                         player_mo.x, player_mo.y, cam.bam, phys,

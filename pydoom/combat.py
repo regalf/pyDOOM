@@ -24,7 +24,7 @@ Scope (documented, never silent):
 from __future__ import annotations
 
 from pydoom import tables
-from pydoom.player import PW_INVULN, WP_CHAINSAW
+from pydoom.player import PW_INVULN, CF_GODMODE, WP_CHAINSAW
 from pydoom.angles import point_to_angle2
 from pydoom.fixed import FRACBITS, FRACUNIT, fixed_div, fixed_mul
 from pydoom.info import MF_FLAGS, MOBJ_TYPES, MT_INDEX, MT_NAMES, STATE_INDEX
@@ -92,7 +92,7 @@ def _info(mo):
 
 
 def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
-    """P_DamageMobj with player armor/invulnerability, sans cheats."""
+    """P_DamageMobj with player armor/invulnerability/godmode."""
     from pydoom.mobjs import set_mobj_state
 
     if not (target.flags & _MF_SHOOTABLE):
@@ -110,7 +110,8 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
                 and damage >= target.health:
             damage = target.health - 1  # end-of-game hell hack
         # NOTE: below 1000, god/invuln ignore damage (telefrag goes thru).
-        if damage < 1000 and ps.powers.get(PW_INVULN):
+        if damage < 1000 and (ps.powers.get(PW_INVULN)
+                              or ps.cheats & CF_GODMODE):
             return
         if ps.armortype:
             # NOTE: green saves 1/3, blue 1/2 (even on fumes: type clears).
