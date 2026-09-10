@@ -345,6 +345,12 @@ def collect_touched(physics, picker_mo, ps, ctx=None):
                     continue
                 if not (th.flags & _MF_SPECIAL):
                     continue
+                # NOTE: PIT_CheckThing reach: radii must overlap, else
+                # the sweep margin would vacuum the room (~68u vs 36u).
+                blockdist = th.radius + picker_mo.radius
+                if abs(th.x - picker_mo.x) >= blockdist \
+                        or abs(th.y - picker_mo.y) >= blockdist:
+                    continue
                 picked, msg = touch_special_thing(th, picker_mo, ps, ctx)
                 if picked:
                     index.unlink(th)

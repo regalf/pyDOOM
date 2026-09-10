@@ -411,3 +411,18 @@ def test_pickup_feeds_gold_flash(setup):
     player, ps, ctx, _ = make_player(setup)
     picked, _ = touch_special_thing(make_item(setup, 2007), player, ps, ctx)
     assert picked and ps.bonuscount == 6  # NOTE: BONUSADD per item
+
+
+@requires_wad
+def test_pickup_reach_matches_vanilla(setup):
+    """Touch needs overlapping radii (16 + 20 = 36u for a clip)."""
+    game_map, phys, index, ctx = setup
+    player, ps, ctx, _ = make_player(setup, x=1056, y=-3616)
+    near = make_item(setup, 2007, x=1056 + 30, y=-3616)
+    ctx.mobjs = [player, near]
+    assert collect_touched(phys, player, ps, ctx) is not None
+    assert ps.ammo[AM_CLIP] == 60
+    far = make_item(setup, 2007, x=1056 + 40, y=-3616)
+    ctx.mobjs.append(far)
+    assert collect_touched(phys, player, ps, ctx) is None
+    assert not far.dead and ps.ammo[AM_CLIP] == 60
