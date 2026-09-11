@@ -121,6 +121,11 @@ class TiccmdBuilder:
         self.weap_latched: set[int] = set()
 
     def add_mouse(self, dx: int, dy: int) -> None:
+        """Accumulate one motion event (vanilla mousex/mousey units).
+
+        Sign convention is vanilla's: positive dy means pushed forward
+        (mouse up). Callers using y-down APIs (pygame rel) negate first.
+        """
         self.mousex += int(dx)
         self.mousey += int(dy)
 

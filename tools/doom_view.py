@@ -833,8 +833,10 @@ def main() -> int:
                 if gamestate == "level" and (pygame.event.get_grab()
                                              or demo_frame):
                     # NOTE: motion accumulates; each tic quantizes its
-                    # share to int16 angleturn (milestone A).
-                    tbuilder.add_mouse(ev.rel[0], ev.rel[1])
+                    # share to int16 angleturn (milestone A). Y is negated:
+                    # pygame rel-y grows downward, vanilla mousey grows
+                    # forward (up), so push-away walks forward.
+                    tbuilder.add_mouse(ev.rel[0], -ev.rel[1])
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if gamestate == "level" and ev.button == 1:
                     state["firing"] = True
