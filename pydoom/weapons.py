@@ -240,6 +240,15 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
     from pydoom.player import WEAPON_NAMES
     if getattr(shooter, "is_player", False):
         demolog.emit(f"player fires {WEAPON_NAMES[weapon]}")
+        if ctx is not None:
+            # NOTE: P_FireWeapon alerts the map (wakes non-ambush
+            # monsters through open lines); silent shots desync AI.
+            from pydoom.ai import noise_alert
+            noise_alert(shooter, shooter, ctx)
+    from pydoom import demolog
+    from pydoom.player import WEAPON_NAMES
+    if getattr(shooter, "is_player", False):
+        demolog.emit(f"player fires {WEAPON_NAMES[weapon]}")
     from pydoom import audio
     if weapon == WP_FIST:
         # NOTE: vanilla fists swing silent.
