@@ -1443,13 +1443,32 @@ class World:
             return False
         if side == 1:
             return False
+        # NOTE: vanilla scans sectors by index, then thinkers in order:
+        # with same-tag pads in several sectors the lowest sector wins,
+        # not the earliest-spawned pad (desync otherwise).
         dest = None
-        for mo in mobjs:
-            if mo.dead or mo.type != MT_INDEX["TELEPORTMAN"]:
-                continue
-            if mo.sector is not None and mo.sector.tag == line.tag:
-                dest = mo
-                break
+        sectors = getattr(getattr(self, "map", None), "sectors", None)
+        if mobjs is None:
+            return False
+        if sectors is not None:
+            for sec in sectors:
+                if sec.tag != line.tag:
+                    continue
+                for mo in mobjs:
+                    if mo.dead or mo.type != MT_INDEX["TELEPORTMAN"]:
+                        continue
+                    if mo.sector is sec:
+                        dest = mo
+                        break
+                if dest is not None:
+                    break
+        else:
+            for mo in mobjs:
+                if mo.dead or mo.type != MT_INDEX["TELEPORTMAN"]:
+                    continue
+                if mo.sector is not None and mo.sector.tag == line.tag:
+                    dest = mo
+                    break
         if dest is None:
             return False
         from pydoom import tables

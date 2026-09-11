@@ -80,7 +80,9 @@ fidelity project with a file format on top. Work happens on the branch;
       skipped, E1 has none (shareware scope, see DIVERGENCES).
 - [x] Full monster line-trigger set (vanilla `P_CrossSpecialLine`):
       gate was already exact; added 125/126 monsters-only teleports
-      and unconditional W1 clearing.
+      and unconditional W1 clearing. Teleport destinations scan
+      sectors by index (not spawn order) like vanilla, so same-tag
+      pads resolve identically.
 - [x] Nightmare/fast Parm behavior exactly per skill table
       (incl. `-respawn` semantics outside nightmare): `--respawn`
       flag wired to think + savegames (skill bits, baby halve,

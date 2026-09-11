@@ -187,6 +187,8 @@ def main() -> int:
     play_demo_path = None  # --playdemo=FILE: play a vanilla .lmp
     timedemo = False  # --timedemo=FILE: play fast, no draw, report
     checksum_path = None  # --dump-checksums=FILE: per-tic sim trace
+    shots_dir = None  # --shots-dir=DIR: save screenshots every N frames
+    shots_every = 60
     nomonsters = False  # demo header / vanilla -nomonsters spawn filter
     respawn = False  # --respawn: monsters return (any skill, like vanilla)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
@@ -206,6 +208,10 @@ def main() -> int:
             timedemo = True
         elif a.startswith("--dump-checksums="):
             checksum_path = a.split("=", 1)[1]
+        elif a.startswith("--shots-dir="):
+            shots_dir = a.split("=", 1)[1]
+        elif a.startswith("--shots-every="):
+            shots_every = int(a.split("=", 1)[1])
         elif a == "--debug":
             debug = True
         elif a == "--kinematic":
@@ -1634,6 +1640,12 @@ def main() -> int:
                                WIN_H // 2 + 130))
         pygame.display.flip()
         frames += 1
+        if shots_dir is not None and frames % shots_every == 0:
+            try:
+                pygame.image.save(
+                    screen, f"{shots_dir}/shot_{frames:06d}.png")
+            except OSError:
+                shots_dir = None  # NOTE: bad dir: shoot once, stop
         if frames_opt is not None and frames >= frames_opt:
             print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
             running = False
