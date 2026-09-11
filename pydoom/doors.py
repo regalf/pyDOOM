@@ -1087,6 +1087,9 @@ class World:
                 thinker.olddirection = thinker.direction
                 thinker.direction = 0  # in-stasis: thinker idles
                 rtn = True
+        if rtn:
+            from pydoom import demolog
+            demolog.emit(f"crusher stopped (tag {line.tag})")
         return rtn
 
     # -- doors (p_doors.c; sounds removed) --
@@ -1230,6 +1233,9 @@ class World:
         ):
             return None
         special = line.special
+        from pydoom import demolog
+        demolog.emit(f"{'player' if is_player else 'monster'} uses"
+                     f" special={special} tag={line.tag}")
         if special in _MANUAL_DOORS:
             return self.vertical_door(line, is_player, keys)
         if special in _SWITCH_LOCKS:
@@ -1352,14 +1358,18 @@ class World:
             return None  # NOTE: vanilla monster gate (teleports, W1
             # door/plat only); everything else ignores monsters.
         special = line.special
+        from pydoom import demolog
+        who = "player" if is_player else "monster"
         if special in _WALK_ONCE:
             kind, arg = _WALK_ONCE[special]
+            demolog.emit(f"{who} crosses W1-{special} ({kind})")
             done = self._fire_walk(kind, arg, line)
             if special not in (52,):  # exits don't clear
                 line.special = 0
             return done
         if special in _WALK_RETRIGGER:
             kind, arg = _WALK_RETRIGGER[special]
+            demolog.emit(f"{who} crosses WR-{special} ({kind})")
             return self._fire_walk(kind, arg, line)
         if special in (39, 97, 125, 126):
             if special in (125, 126) and is_player:
@@ -1517,6 +1527,9 @@ class World:
         audio.play("telept", fog2.x, fog2.y, fog2)
         mobjs.append(fog)
         mobjs.append(fog2)
+        from pydoom import demolog
+        demolog.emit(f"{'player' if getattr(mover, 'is_player', False) else 'monster'}"
+                     f" teleports (tag {line.tag})")
         return True
 
     def player_in_special_sector(self, player_mo, ps, ctx=None):
@@ -1533,6 +1546,8 @@ class World:
         if special == 9:
             player_mo.sector.special = 0
             ps.secretcount += 1  # NOTE: intermission tally
+            from pydoom import demolog
+            demolog.emit("secret sector revealed")
             return "A SECRET IS REVEALED!"
         if special in (5, 7, 16, 4):
             from pydoom.combat import damage_mobj

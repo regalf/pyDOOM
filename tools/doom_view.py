@@ -14,6 +14,8 @@ Vanilla demos: --record-demo=FILE writes a version-109 .lmp,
 --playdemo=FILE plays one back (level transitions included),
 --timedemo=FILE plays it fast with no drawing and reports stats.
 Idle title falls into the IWAD demo loop (any key stops it).
+--demo-log narrates demo events point by point (shots, kills, damage,
+pickups, doors, teleports, secrets).
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -36,6 +38,7 @@ import pygame
 from pydoom import combat
 from pydoom import cheats
 from pydoom import demo
+from pydoom import demolog
 from pydoom import flow
 from pydoom import interm
 from pydoom import menu
@@ -187,6 +190,7 @@ def main() -> int:
     play_demo_path = None  # --playdemo=FILE: play a vanilla .lmp
     timedemo = False  # --timedemo=FILE: play fast, no draw, report
     checksum_path = None  # --dump-checksums=FILE: per-tic sim trace
+    narrate = False  # --demo-log: narrate demo events point by point
     shots_dir = None  # --shots-dir=DIR: save screenshots every N frames
     shots_every = 60
     nomonsters = False  # demo header / vanilla -nomonsters spawn filter
@@ -208,6 +212,8 @@ def main() -> int:
             timedemo = True
         elif a.startswith("--dump-checksums="):
             checksum_path = a.split("=", 1)[1]
+        elif a == "--demo-log":
+            narrate = True
         elif a.startswith("--shots-dir="):
             shots_dir = a.split("=", 1)[1]
         elif a.startswith("--shots-every="):
@@ -228,6 +234,7 @@ def main() -> int:
             respawn = True
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
+    demolog.enabled = narrate  # NOTE: point-by-point demo narrator
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
     default_wad = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
     wad_path = args[1] if len(args) > 1 else default_wad
@@ -1134,6 +1141,9 @@ def main() -> int:
                 and gamestate == "level" and not paused:
             tic_acc -= 1.0 / TICRATE
             state["tics"] = state.get("tics", 0) + 1
+            demolog.leveltime = state["tics"]
+            demolog.streamtic = (demo_play.tics if demo_play is not None
+                                 else -1)
             if message_tics:
                 message_tics -= 1
                 if not message_tics:
@@ -1261,6 +1271,8 @@ def main() -> int:
                     player_mo.x, player_mo.y, aim, phys,
                     state["ps"].keys, player_mo, mobjs)
                 message_tics = 3 * TICRATE if message else 0
+                if message is not None:
+                    demolog.emit(f"use: {message}")
                 if world.teleport_angle is not None:
                     cam.angle = (world.teleport_angle
                                  * 2 * math.pi / 0x100000000)
@@ -1274,9 +1286,14 @@ def main() -> int:
                     and ps.playerstate == p_user.PST_LIVE):
                 # NOTE: bit i is digit i+1 through the KEYMAP toggle
                 # (request_weapon is idempotent, holds don't stall it).
+                before = ps.pendingweapon
                 weapons.request_weapon(
                     ps, str(((cmd.buttons & ticcmd.BT_WEAPONMASK)
                              >> ticcmd.BT_WEAPONSHIFT) + 1))
+                if ps.pendingweapon != before:
+                    from pydoom.player import WEAPON_NAMES
+                    demolog.emit("player readies "
+                                 f"{WEAPON_NAMES[ps.pendingweapon]}")
             # NOTE: Doomguy face ticks with the gamesim (ST_updateFaceWidget).
             state["facelump"] = update_face(state["face"], ps, player_mo,
                                             bool(want_fire))
@@ -1337,6 +1354,7 @@ def main() -> int:
                     state["ps"].usedown = True
                     ctx.player_state = state["ps"]
                     ps = state["ps"]
+                    demolog.emit("player reborn at map start")
                 else:
                     if checksum_path is not None and demo_play is not None:
                         trace_sim_tic()
@@ -1447,6 +1465,7 @@ def main() -> int:
                 got = collect_touched(phys, player_mo, ps, ctx)
                 if got is not None:
                     message, message_tics = got, 3 * TICRATE
+                    demolog.emit(f"pickup: {got}")
             if world.teleport_angle is not None:
                 # NOTE: W1 teleports land mid-stride (E1M8 exit chain).
                 cam.angle = (world.teleport_angle
@@ -1464,6 +1483,7 @@ def main() -> int:
                 cur = game_map.marker
                 nxt = flow.next_map(cur, world.exit_kind == "secret")
                 ps_exit, hp_exit = state["ps"], player_mo.health
+                demolog.emit(f"exit {cur} -> {nxt}")
                 if demo_play is not None:
                     # NOTE: desync-detector checkpoint (statdump-style).
                     tk, ti, ts = world.totals

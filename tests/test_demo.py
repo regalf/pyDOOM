@@ -147,3 +147,19 @@ def test_nomonsters_spawn_skips_kill_types():
     phys.things = index2
     bare = spawn_map(game_map, phys, index2, "normal", True)
     assert not any(mo.flags & MF_FLAGS["MF_COUNTKILL"] for mo in bare)
+
+
+def test_demolog_format_and_gate(capsys):
+    from pydoom import demolog
+    demolog.enabled = False
+    demolog.emit("silent")
+    assert capsys.readouterr().out == ""
+    demolog.enabled = True
+    try:
+        demolog.leveltime = 2149
+        demolog.streamtic = 2148
+        demolog.emit("PLAYER DIES (by TROOP)")
+        out = capsys.readouterr().out
+        assert out == "[1:01 t2148] PLAYER DIES (by TROOP)\n"
+    finally:
+        demolog.enabled = False

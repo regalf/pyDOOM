@@ -236,6 +236,10 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
     ammo, cost = COST[weapon]
     if ammo >= 0:
         ps.ammo[ammo] -= cost
+    from pydoom import demolog
+    from pydoom.player import WEAPON_NAMES
+    if getattr(shooter, "is_player", False):
+        demolog.emit(f"player fires {WEAPON_NAMES[weapon]}")
     from pydoom import audio
     if weapon == WP_FIST:
         # NOTE: vanilla fists swing silent.

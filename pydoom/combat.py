@@ -92,6 +92,16 @@ def _info(mo):
     return MOBJ_TYPES[mo.type]
 
 
+def _who(mo) -> str:
+    """Narrator name for a damage party (demolog)."""
+    if mo is None:
+        return "world"
+    if getattr(mo, "is_player", False):
+        return "player"
+    name = MT_NAMES[mo.type] if 0 <= mo.type < len(MT_NAMES) else "?"
+    return name
+
+
 def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
     """P_DamageMobj with player armor/invulnerability/godmode."""
     from pydoom.mobjs import set_mobj_state
@@ -124,6 +134,11 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
             damage -= saved
         # NOTE: red flash tracks post-armor damage, capped at 100.
         ps.damagecount = min(100, ps.damagecount + damage)
+        if damage > 0:
+            from pydoom import demolog
+            demolog.emit(f"player takes {damage}hp"
+                         f" ({_who(source)}/{_who(inflictor)}"
+                         f" hp {target.health - damage})")
     chainsawing = (ps is not None and ps.readyweapon == WP_CHAINSAW)
     if (inflictor is not None and not (target.flags & MF_FLAGS["MF_NOCLIP"])
             and (source is None or not getattr(source, "is_player", False)
@@ -163,7 +178,13 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
 
 def kill_mobj(source, target, ctx=None) -> None:
     """P_KillMobj with clip/shotgun drops and the intermission tally."""
+    from pydoom import demolog
     from pydoom.mobjs import set_mobj_state
+
+    if getattr(target, "is_player", False):
+        demolog.emit(f"PLAYER DIES (by {_who(source)})")
+    elif target.flags & _MF_COUNTKILL:
+        demolog.emit(f"{_who(target)} dies (by {_who(source)})")
 
     if target.flags & _MF_COUNTKILL and ctx is not None:
         # NOTE: every COUNTKILL death tallies, infights included.
