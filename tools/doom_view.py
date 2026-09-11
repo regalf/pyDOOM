@@ -13,6 +13,7 @@ Demos (fixed-step, checksum-verified): --record=FILE logs inputs,
 Vanilla demos: --record-demo=FILE writes a version-109 .lmp,
 --playdemo=FILE plays one back (level transitions included),
 --timedemo=FILE plays it fast with no drawing and reports stats.
+Idle title falls into the IWAD demo loop (any key stops it).
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -608,6 +609,12 @@ def main() -> int:
     demo_play = None  # DemoReader driving ticcmds (G_DoPlayDemo)
     if play_demo_path is not None and demo_header is not None:
         demo_play = demo.DemoReader(demo_blob)
+    attract_idx = 0  # next IWAD demo (D_AdvanceDemo rotation DEMO1-3)
+    attract_idle = 0.0  # title seconds before the demo loop kicks in
+    attract_active = False  # a live demo started by the title loop
+    # NOTE: vanilla pagetime approx (sync-exempt); env override is for
+    # headless smoke tests only.
+    ATTRACT_DELAY = float(os.environ.get("PYDOOM_ATTRACT_DELAY", 10.0))
     demo_rec = None  # DemoWriter for --record-demo (vanilla .lmp)
 
     def arm_demo_rec() -> None:
@@ -635,8 +642,11 @@ def main() -> int:
         """Stream over (DEMOMARKER, finale): back to title like vanilla
         G_CheckDemoStatus; -timedemo prints stats and quits instead."""
         nonlocal demo_play, running, gamestate, has_level
+        nonlocal attract_active, attract_idle
         tics = demo_play.tics if demo_play is not None else 0
         demo_play = None
+        attract_active = False
+        attract_idle = 0.0  # NOTE: title pause between loop demos
         if timedemo:
             print(f"timedemo: {tics} tics {note} {game_map.marker} "
                   f"t={world.time} "
@@ -646,6 +656,54 @@ def main() -> int:
         gamestate = "title"
         has_level = False
         audio.music_play(TITLE_SONG, "demo-title")
+
+    def stop_demo_playback() -> None:
+        """Any key stops a running demo (vanilla demo loop exit)."""
+        nonlocal demo_play, attract_active, attract_idle
+        nonlocal gamestate, has_level
+        demo_play = None
+        attract_active = False
+        attract_idle = 0.0
+        gamestate = "title"
+        has_level = False
+        audio.music_play(TITLE_SONG, "demo-stop")
+
+    def start_attract_demo() -> bool:
+        """D_AdvanceDemo: title timeout plays DEMO1/2/3 in rotation."""
+        nonlocal demo_play, attract_active, attract_idx
+        nonlocal gamestate, has_level, game_map, cam, phys, player_mo
+        nonlocal world, mobjs, ctx, state, map_idx, amap
+        nonlocal skill, fast, respawn, nomonsters, message, message_tics
+        for _ in range(3):
+            name = ("DEMO1", "DEMO2", "DEMO3")[attract_idx]
+            attract_idx = (attract_idx + 1) % 3
+            try:
+                blob = wad.read_lump(name)
+                header = demo.DemoHeader.from_bytes(blob)
+            except Exception:
+                continue  # NOTE: missing/bad lump: try the next demo
+            if not header.single_player() or header.marker() not in maps:
+                continue
+            skill = header.skill_name()
+            fast = bool(header.fast)
+            respawn = bool(header.respawn)
+            nomonsters = bool(header.nomonsters)
+            flow.init_new(skill, fast)
+            map_idx = maps.index(header.marker())
+            (game_map, cam, phys, player_mo, world, mobjs, ctx,
+             state) = load_map(header.marker())
+            amap = None
+            message, message_tics = None, 0
+            pygame.display.set_caption(f"pydoom - {game_map.marker}")
+            audio.music_play(song_for_map(game_map.marker),
+                             "attract-demo")
+            demo_play = demo.DemoReader(blob)
+            attract_active = True
+            gamestate = "level"
+            has_level = True
+            print(f"demo: attract {name} ({header.marker()})")
+            return True
+        return False
 
     checksum_lines: list = []  # per-tic sim trace (desync detector)
 
@@ -684,6 +742,16 @@ def main() -> int:
         else:
             dt = min(clock.tick(60) / 1000.0, 0.25)
         fps_ema += (1.0 / max(dt, 1e-6) - fps_ema) * 0.05
+        if gamestate == "title" and demo_play is None \
+                and play_demo_path is None and not timedemo \
+                and rec_demo_path is None and rec_path is None \
+                and play_path is None and frames_opt is None:
+            # NOTE: D_AdvanceDemo lite: an idle title falls into the
+            # IWAD demo loop (any key wakes it instead, below).
+            attract_idle += dt
+            if attract_idle >= ATTRACT_DELAY:
+                attract_idle = 0.0
+                start_attract_demo()
         demo_frame = False
         demo_keys = None
         if replaying:
@@ -713,6 +781,8 @@ def main() -> int:
             else:
                 replaying = False
         for ev in pygame.event.get():
+            if ev.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                attract_idle = 0.0  # NOTE: activity resets the demo loop
             if ev.type == pygame.KEYUP and pygame.K_1 <= ev.key <= pygame.K_7:
                 # NOTE: ungated release: a digit let go in the menu must
                 # not stick as a held weapon (vanilla re-sends BT_CHANGE
@@ -734,6 +804,11 @@ def main() -> int:
                 menu.settings_save(menu.CONFIG_PATH, msettings)
                 running = False
             elif ev.type == pygame.KEYDOWN:
+                if demo_play is not None:
+                    # NOTE: any key stops demo playback (attract or
+                    # -playdemo); the key itself is consumed.
+                    stop_demo_playback()
+                    continue
                 if gamestate == "title":
                     # NOTE: any key wakes the title into the menu.
                     gamestate = "menu"
