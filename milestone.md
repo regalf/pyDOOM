@@ -131,7 +131,9 @@ fidelity project with a file format on top. Work happens on the branch;
       leveltime, pos/angle/hp/mom, RNG indices, alive, kills, ammo,
       weapon, keys; byte-identical across runs for all IWAD demos.
       `--demo-log` narrates every shot/kill/damage/pickup/door/
-      teleport/secret with timestamps for point-by-point audits.)
+      teleport/secret with timestamps for point-by-point audits,
+      including wakes, missile/melee entries and puff-vs-blood
+      hitscan outcomes.)
 - [x] Recorded demos load in Chocolate Doom / DSDA-Doom (and vice
       versa for short clips). (Our `.lmp` plays clean in Chocolate
       (`timed 52 gametics`, no version error); vanilla clips play in

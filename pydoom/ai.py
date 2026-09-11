@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from pydoom.angles import point_to_angle2
 from pydoom.fixed import ANG90, ANG180, ANG270, fixed_div
-from pydoom.info import MF_FLAGS, MT_INDEX
+from pydoom.info import MF_FLAGS, MT_INDEX, MT_NAMES
 from pydoom.mapdata import ML_SOUNDBLOCK, ML_TWOSIDED
 from pydoom.m_random import p_random
 from pydoom.physics import aprox_distance, intercept_vector
@@ -441,6 +441,12 @@ def _wake_sound(actor) -> None:
     audio.play(see, actor.x, actor.y, actor)
 
 
+def _ai_note(actor, why: str) -> None:
+    """Narrator hook for seestate entries (demolog)."""
+    from pydoom import demolog
+    demolog.emit(f"{MT_NAMES[actor.type]} wakes ({why})")
+
+
 def a_look(actor, ctx: AIContext) -> None:
     """A_Look: stay idle until a player is sighted (then growl)."""
     from pydoom.mobjs import set_mobj_state
@@ -451,15 +457,18 @@ def a_look(actor, ctx: AIContext) -> None:
         if actor.flags & _MF_AMBUSH:
             if check_sight(actor, actor.target, ctx):
                 _wake_sound(actor)
+                _ai_note(actor, "sight")
                 set_mobj_state(actor, actor.seestate, ctx)
                 return
         else:
             _wake_sound(actor)
+            _ai_note(actor, "noise")
             set_mobj_state(actor, actor.seestate, ctx)
             return
     if not look_for_players(actor, ctx, False):
         return
     _wake_sound(actor)
+    _ai_note(actor, "sight")
     set_mobj_state(actor, actor.seestate, ctx)
 
 
@@ -492,12 +501,14 @@ def a_chase(actor, ctx: AIContext) -> None:
             new_chase_dir(actor, ctx)
         return
     if actor.meleestate and check_melee_range(actor, ctx):
+        _ai_note(actor, "melee")
         set_mobj_state(actor, actor.meleestate, ctx)
         return
     if actor.missilestate:
         if not (ctx.skill != "nightmare" and not ctx.fast
                 and actor.movecount):
             if check_missile_range(actor, ctx):
+                _ai_note(actor, "missile")
                 set_mobj_state(actor, actor.missilestate, ctx)
                 actor.flags |= _MF_JUSTATTACKED
                 return

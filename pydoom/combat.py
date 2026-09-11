@@ -322,6 +322,8 @@ def spawn_puff(x: int, y: int, z: int, physics, index, mobjs,
     from pydoom.mobjs import set_mobj_state, spawn_mobj
     z += ((p_random() - p_random()) << 10)
     th = spawn_mobj(None, physics, index, x, y, z, MT_INDEX["PUFF"])
+    from pydoom import demolog
+    demolog.emit(f"puff at ({x >> 16},{y >> 16})")
     th.momz = FRACUNIT
     th.tics -= p_random() & 3
     if th.tics < 1:
@@ -339,6 +341,8 @@ def spawn_blood(x: int, y: int, z: int, damage: int, physics, index,
     from pydoom.mobjs import set_mobj_state, spawn_mobj
     z += ((p_random() - p_random()) << 10)
     th = spawn_mobj(None, physics, index, x, y, z, MT_INDEX["BLOOD"])
+    from pydoom import demolog
+    demolog.emit(f"blood dmg {damage} at ({x >> 16},{y >> 16})")
     th.momz = FRACUNIT * 2
     th.tics -= p_random() & 3
     if th.tics < 1:
