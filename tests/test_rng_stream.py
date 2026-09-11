@@ -113,17 +113,20 @@ def test_face_target_sprays_spectres(monkeypatch):
 
 
 @requires_wad
-def test_headless_run_ignores_hash_seed():
-    """Same 24 frames under two PYTHONHASHSEEDs: identical checksums."""
+def test_headless_run_ignores_hash_seed(tmp_path):
+    """Same 24 frames under two PYTHONHASHSEEDs: identical demo checksums
+    (the fps ema rides wall-clock timing and is excluded)."""
     root = os.path.join(os.path.dirname(__file__), "..")
-    cmd = [sys.executable, "tools/doom_view.py", "E1M1", "--frames=24"]
     env = dict(os.environ, SDL_VIDEODRIVER="dummy",
                SDL_AUDIODRIVER="dummy")
     sums = []
-    for seed in ("1", "2"):
+    for i, seed in enumerate(("1", "2")):
         env["PYTHONHASHSEED"] = seed
+        rec = str(tmp_path / f"hash{i}.pkl")
+        cmd = [sys.executable, "tools/doom_view.py", "E1M1", "--frames=24",
+               f"--record={rec}"]
         out = subprocess.run(cmd, capture_output=True, text=True, cwd=root,
                              env=env, timeout=300).stdout
-        line = next(l for l in out.splitlines() if "frames," in l)
-        sums.append(line)
+        line = next(l for l in out.splitlines() if "checksum" in l)
+        sums.append(line.split("checksum")[1])
     assert sums[0] == sums[1]

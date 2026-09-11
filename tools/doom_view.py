@@ -178,6 +178,8 @@ def main() -> int:
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
+    respawn = False  # --respawn: monsters return (any skill, like vanilla)
+    kinematic = False  # --kinematic: legacy camera mover (milestone B)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
@@ -198,6 +200,8 @@ def main() -> int:
                                  f"(baby/easy/normal/hard/nightmare)")
         elif a == "--fast":
             fast = True
+        elif a == "--respawn":
+            respawn = True
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
@@ -264,23 +268,17 @@ def main() -> int:
         ctx = AIContext(
             physics=phys, world=world, players=[player_mo],
             sector_index={id(s): i for i, s in enumerate(game_map.sectors)},
-            skill=skill, fast=fast,
+            skill=skill, fast=fast, respawn=respawn,
         )
         ctx.mobjs = mobjs
         ctx.skyflatnum = renderer.skyflatnum
 
-        def _crush_damage(sec) -> None:
-            """PIT_ChangeSector crush bit: 10 damage to every solid
-            thing the ceiling sits on (player included, armor counts)."""
-            for mo in list(ctx.mobjs):
-                if mo.dead or mo.sector is not sec:
-                    continue
-                if not (mo.flags & 6):  # solid or shootable
-                    continue
-                gap = sec.ceilingheight - max(sec.floorheight, mo.z)
-                if gap < mo.height:
-                    combat.damage_mobj(mo, None, None, 10, ctx)
-        world.crush_hook = _crush_damage
+        from pydoom.doors import grind_sector
+
+        def _grind_sector(sec, crush) -> bool:
+            """PIT_ChangeSector over live mobjs (gibs, drops, damage)."""
+            return grind_sector(world, sec, crush, mobjs, phys, ctx)
+        world.grind = _grind_sector
         # NOTE: level transitions carry guns/ammo/armor (keys/powers
         # stripped); player health rides on the fresh body below.
         ps = keep_ps if keep_ps is not None else PlayerState()
@@ -392,7 +390,8 @@ def main() -> int:
         return {
             "version": saveg.SAVE_VERSION, "name": name,
             "marker": game_map.marker, "skill": skill,
-            "fast": fast, "time": world.time, "rng": get_state(),
+            "fast": fast, "respawn": respawn,
+            "time": world.time, "rng": get_state(),
             "cam": (cam.x, cam.y, cam.angle, cam.viewz),
             "player": mobjs.index(player_mo),
             "blob": saveg.build_blob(game_map.sectors, world.thinkers,
@@ -406,12 +405,14 @@ def main() -> int:
         from pydoom.m_random import set_state
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
             mobjs, ctx, state, map_idx, amap, message, message_tics, \
-            noclip, skill, fast, running, has_level
+            noclip, skill, fast, respawn, running, has_level
         err = saveg.validate(bundle, maps)
         if err is not None:
             audio.play("oof")
             return
-        skill, fast = bundle["skill"], bundle.get("fast", False)
+        skill = bundle["skill"]
+        fast = bundle.get("fast", False)
+        respawn = bundle.get("respawn", False)
         (game_map, cam, phys, player_mo, world, mobjs, ctx,
          state) = load_map(bundle["marker"])
         sectors_old, thinkers, mobjs_new, ps_new = saveg.unpack_blob(

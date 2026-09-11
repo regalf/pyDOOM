@@ -268,16 +268,29 @@ def test_flicker_stays_in_bounds(setup):
 
 @requires_wad
 def test_ceiling_crusher_bounces_and_hurts(setup):
-    """T_MoveCeiling crushAndRaise: down to floor+8, bounce, hook fired."""
+    """T_MoveCeiling crushAndRaise: down to floor+8, bounce, grind hurts."""
     from types import SimpleNamespace
-    from pydoom.doors import Ceiling
+    from pydoom.doors import Ceiling, grind_sector
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
     _, texman, game_map = setup
     phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
     world = World(game_map, texman)
     sec = next(s for s in game_map.sectors if s.tag)
     top0, tag0 = sec.ceilingheight, sec.tag
-    hurt = []
-    world.crush_hook = hurt.append
+    mobjs: list = []
+    world.grind = lambda s, c: grind_sector(world, s, c, mobjs, phys, None)
+    # NOTE: a live victim inside the crusher sector (bbox center).
+    xs = [v.x for l in game_map.lines
+          for v in (l.v1, l.v2) if l.frontsector is sec]
+    ys = [v.y for l in game_map.lines
+          for v in (l.v1, l.v2) if l.frontsector is sec]
+    troop = spawn_mobj(None, phys, index, (min(xs) + max(xs)) // 2,
+                       (min(ys) + max(ys)) // 2, -1, MT_INDEX["TROOP"])
+    assert troop.sector is sec
+    mobjs.append(troop)
     try:
         assert world.do_ceiling(SimpleNamespace(tag=sec.tag),
                                 "crushAndRaise")
@@ -289,7 +302,7 @@ def test_ceiling_crusher_bounces_and_hurts(setup):
             if ceil.direction == 1:
                 break
         assert ceil.direction == 1  # hit the floor, bounced back up
-        assert hurt  # PIT_ChangeSector damage ran on the way down
+        assert troop.health < 60  # PIT_ChangeSector damage ran grinding down
     finally:
         sec.ceilingheight = top0
         sec.specialdata = None
@@ -300,14 +313,18 @@ def test_ceiling_grind_slowdown_and_quiet_lowerer(setup):
     """Grinding crushers slow to CEILSPEED/8; lowerAndCrush (44) never
     hurts (crush stays false, like vanilla)."""
     from types import SimpleNamespace
-    from pydoom.doors import CEILSPEED
+    from pydoom.doors import CEILSPEED, grind_sector
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
     _, texman, game_map = setup
     phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
     world = World(game_map, texman)
     sec = next(s for s in game_map.sectors if s.tag)
     top0 = sec.ceilingheight
-    hurt = []
-    world.crush_hook = hurt.append
+    mobjs: list = []
+    world.grind = lambda s, c: grind_sector(world, s, c, mobjs, phys, None)
     # NOTE: a tall blocker in the sector grinds the ceiling forever.
     world.blocker = ((sec,), sec.floorheight, 200 * FRACUNIT)
     try:
@@ -319,13 +336,21 @@ def test_ceiling_grind_slowdown_and_quiet_lowerer(setup):
         sec.specialdata.dead = True
         sec.specialdata = None
         sec.ceilingheight = top0
-        hurt.clear()
+        xs = [v.x for l in game_map.lines
+              for v in (l.v1, l.v2) if l.frontsector is sec]
+        ys = [v.y for l in game_map.lines
+              for v in (l.v1, l.v2) if l.frontsector is sec]
+        troop = spawn_mobj(None, phys, index, (min(xs) + max(xs)) // 2,
+                           (min(ys) + max(ys)) // 2, -1,
+                           MT_INDEX["TROOP"])
+        assert troop.sector is sec
+        mobjs.append(troop)
         assert world.do_ceiling(SimpleNamespace(tag=sec.tag),
                                 "lowerAndCrush")
         assert not sec.specialdata.crush
         for _ in range(400):
             world.tick()
-        assert hurt == []  # NOTE: type-44 grinds without damage
+        assert troop.health == 60  # NOTE: type-44 grinds without damage
         assert sec.specialdata.direction == -1  # still grinding
     finally:
         sec.ceilingheight = top0
@@ -445,3 +470,33 @@ def test_teleport_refuses_blocked_landing(setup):
                 index.unlink(mo)
             except Exception:
                 pass
+
+
+@requires_wad
+def test_ceiling_crush_stop_and_reactivation(setup):
+    """EV_CeilingCrushStop parks tagged crushers (W1-57/WR-74); the next
+    crusher trigger resumes the old course (P_ActivateInStasis)."""
+    from types import SimpleNamespace
+    _, texman, game_map = setup
+    world = World(game_map, texman)
+    sec = next(s for s in game_map.sectors if s.tag)
+    top0 = sec.ceilingheight
+    line = SimpleNamespace(tag=sec.tag)
+    try:
+        assert world.do_ceiling(line, "crushAndRaise")
+        ceil = sec.specialdata
+        assert ceil.direction == -1
+        assert world.ceiling_crush_stop(line)
+        assert ceil.direction == 0
+        assert ceil.olddirection == -1
+        frozen = sec.ceilingheight
+        for _ in range(35):
+            world.tick()
+        assert sec.ceilingheight == frozen  # parked, thinker idles
+        assert world.do_ceiling(line, "crushAndRaise")  # retrigger resumes
+        assert ceil.direction == -1
+        world.tick()
+        assert sec.ceilingheight != frozen
+    finally:
+        sec.ceilingheight = top0
+        sec.specialdata = None

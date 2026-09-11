@@ -16,9 +16,9 @@ Scope (documented, never silent):
 * Keys arrive as a bitmask (see pydoom.player): locked manual and S1
   switch doors open when the color is held, else the vanilla PD_*
   denial. Monsters stay keyless and never open locked doors.
-* Crush damage reaches mobjs through world.crush_hook (the sim hurts
-  everything the ceiling sits on, PIT_ChangeSector-style); move_plane
-  itself only knows an optional player blocker tuple. Monsters never
+* Crushers grind through world.grind (PIT_ChangeSector over live mobjs:
+  gibbed corpses, removed drops, crush damage); move_plane itself only
+  knows an optional player blocker tuple. Monsters never
   use doors.
 * Only door/floor/plat/light/stairs/teleport/exit/ceiling specials
   are executed (manual DR family, S1/SR door/floor/plat/light switches
@@ -197,7 +197,7 @@ _WALK_ONCE = {
     130: ("floor", "raiseFloorTurbo"),
     6: ("ceiling", "fastCrushAndRaise"),
     25: ("ceiling", "crushAndRaise"), 40: ("ceiling", "raiseToHighest"),
-    44: ("ceiling", "lowerAndCrush"),
+    44: ("ceiling", "lowerAndCrush"), 57: ("ceilingStop", None),
     12: ("light", 0), 13: ("light", 255), 35: ("light", 35),
     52: ("exit", None), 39: ("teleport", None),
 }
@@ -216,6 +216,7 @@ _WALK_RETRIGGER = {
     129: ("floor", "raiseFloorTurbo"),
     79: ("light", 35), 80: ("light", 0), 81: ("light", 255),
     72: ("ceiling", "lowerAndCrush"), 73: ("ceiling", "crushAndRaise"),
+    74: ("ceilingStop", None),
     77: ("ceiling", "fastCrushAndRaise"),
     97: ("teleport", None),
 }
@@ -228,46 +229,130 @@ _SWITCH_LOCK_COLOR = {133: "blue", 135: "red", 137: "yellow",
 TOP, MIDDLE, BOTTOM = 0, 1, 2
 
 
+def grind_sector(world, sector, crush, mobjs, phys, ctx) -> bool:
+    """PIT_ChangeSector over a sector thinglist: gib corpses, remove
+    dropped items, damage the living that no longer fit (blood spray
+    included). Returns nofit (vanilla P_ChangeSector flag)."""
+    from pydoom.combat import damage_mobj
+    from pydoom.info import MF_FLAGS, MT_INDEX, STATE_INDEX
+    from pydoom.m_random import p_random
+    from pydoom.mobjs import set_mobj_state, spawn_mobj
+    nofit = False
+    for thing in list(sector.thinglist):
+        res = phys.check_position(thing, thing.x, thing.y)
+        if res.ok and (res.ceilingz - max(res.floorz, thing.z)
+                       >= thing.height):
+            continue  # fits: keep checking
+        if thing.health <= 0:
+            # NOTE: crunch bodies to giblets (stays as decor).
+            set_mobj_state(thing, STATE_INDEX["S_GIBS"], None)
+            thing.flags &= ~MF_FLAGS["MF_SOLID"]
+            thing.height = 0
+            thing.radius = 0
+            continue
+        if thing.flags & MF_FLAGS["MF_DROPPED"]:
+            # NOTE: crunch dropped items (clips/shotguns vanish).
+            if phys.things is not None:
+                try:
+                    phys.things.unlink(thing)
+                except ValueError:
+                    pass
+            try:
+                thing.sector.thinglist.remove(thing)
+            except ValueError:
+                pass
+            try:
+                mobjs.remove(thing)
+            except ValueError:
+                pass
+            continue
+        if not (thing.flags & MF_FLAGS["MF_SHOOTABLE"]):
+            continue  # bloody gibs or something
+        nofit = True
+        if crush and not world.time & 3:
+            damage_mobj(thing, None, None, 10, ctx)
+            blood = spawn_mobj(None, phys, phys.things, thing.x, thing.y,
+                               thing.z + (thing.height >> 1),
+                               MT_INDEX["BLOOD"])
+            blood.momx = (p_random() - p_random()) << 12
+            blood.momy = (p_random() - p_random()) << 12
+            mobjs.append(blood)
+    return nofit
+
+
 def move_plane(sector, speed: int, dest: int, crush: bool,
                floor_or_ceiling: int, direction: int,
-               blocker=None) -> int:
-    """T_MovePlane (p_floor.c) with an optional player blocker.
+               blocker=None, grind=None) -> int:
+    """T_MovePlane (p_floor.c): step, P_ChangeSector, maybe revert.
 
     blocker is (sectors, z, height): every sector the player body
     overlaps (vanilla P_ChangeSector walks the blockmap, so threshold
-    bodies count too). When the moving plane would leave the blocker
-    unfit inside the *moving* sector, the move reverts and reports
-    CRUSHED, like P_ChangeSector does for mobjs standing there.
-    crush=True (crushers) is accepted but behaves the same: without
-    mobjs there is nothing to damage.
+    bodies count too). grind(sector, crush) -> nofit runs the full
+    PIT_ChangeSector (gibs, drops, crush damage); crushers keep
+    grinding down through victims instead of reverting, like vanilla.
     """
+    def changed() -> bool:
+        blocked = blocker is not None and _blocks(blocker, sector)
+        ground = grind is not None and grind(sector, crush)
+        return blocked or ground
+
     if floor_or_ceiling == 0:
         if direction == -1:
             if sector.floorheight - speed < dest:
+                lastpos = sector.floorheight
                 sector.floorheight = dest
+                if changed():
+                    sector.floorheight = lastpos
+                    changed()
                 return PlaneResult.PASTDEST
+            lastpos = sector.floorheight
             sector.floorheight -= speed
+            if changed():
+                sector.floorheight = lastpos
+                changed()
+                return PlaneResult.CRUSHED
         else:
             if sector.floorheight + speed > dest:
+                lastpos = sector.floorheight
                 sector.floorheight = dest
+                if changed():
+                    sector.floorheight = lastpos
+                    changed()
                 return PlaneResult.PASTDEST
+            lastpos = sector.floorheight
             sector.floorheight += speed
-            if blocker is not None and _blocks(blocker, sector):
-                sector.floorheight -= speed
+            if changed():
+                if crush:
+                    return PlaneResult.CRUSHED
+                sector.floorheight = lastpos
+                changed()
                 return PlaneResult.CRUSHED
     else:
         if direction == -1:
             if sector.ceilingheight - speed < dest:
+                lastpos = sector.ceilingheight
                 sector.ceilingheight = dest
+                if changed():
+                    sector.ceilingheight = lastpos
+                    changed()
                 return PlaneResult.PASTDEST
+            lastpos = sector.ceilingheight
             sector.ceilingheight -= speed
-            if blocker is not None and _blocks(blocker, sector):
+            if changed():
+                if crush:
+                    return PlaneResult.CRUSHED
                 sector.ceilingheight += speed
+                changed()
                 return PlaneResult.CRUSHED
         else:
             if sector.ceilingheight + speed > dest:
+                lastpos = sector.ceilingheight
                 sector.ceilingheight = dest
+                if changed():
+                    sector.ceilingheight = lastpos
+                    changed()
                 return PlaneResult.PASTDEST
+            lastpos = sector.ceilingheight
             sector.ceilingheight += speed
     return PlaneResult.OK
 
@@ -315,7 +400,7 @@ class VerticalDoor:
         elif door.direction == -1:
             res = move_plane(door.sector, door.speed,
                              door.sector.floorheight, False, 1, -1,
-                             world.blocker)
+                             world.blocker, world.grind)
             if res == PlaneResult.PASTDEST:
                 if door.type in (DoorType.BLAZERAISE, DoorType.BLAZECLOSE,
                                  DoorType.NORMAL, DoorType.CLOSE):
@@ -329,7 +414,7 @@ class VerticalDoor:
                     door.direction = 1  # crushed: go back up
         elif door.direction == 1:
             res = move_plane(door.sector, door.speed, door.topheight,
-                             False, 1, 1, world.blocker)
+                             False, 1, 1, world.blocker, world.grind)
             if res == PlaneResult.PASTDEST:
                 if door.type in (DoorType.BLAZERAISE, DoorType.NORMAL):
                     door.direction = 0
@@ -464,7 +549,8 @@ class FloorMover:
     def think(self, world: "World") -> None:
         """T_MoveFloor (sounds removed)."""
         res = move_plane(self.sector, self.speed, self.floordestheight,
-                         self.crush, 0, self.direction, world.blocker)
+                         self.crush, 0, self.direction, world.blocker,
+                         world.grind)
         if res == PlaneResult.PASTDEST:
             if self.direction == -1 and self.type == "lowerAndChange":
                 self.sector.special = self.newspecial
@@ -485,6 +571,7 @@ class Ceiling:
     type: str = "crushAndRaise"
     crush: bool = False
     direction: int = -1
+    olddirection: int = -1  # pre-stasis course (EV_CeilingCrushStop)
     topheight: int = 0
     bottomheight: int = 0
     speed: int = CEILSPEED
@@ -493,14 +580,14 @@ class Ceiling:
 
     def think(self, world: "World") -> None:
         """T_MoveCeiling: raisers exit at top, crushers bounce, lowerers
-        park at the floor. Crush damage runs through world.crush_hook
-        every 4th tic (PIT_ChangeSector); grinding crushers slow down
+        park at the floor. Gibs/drops/crush damage run inside move_plane
+        via world.grind (PIT_ChangeSector); grinding crushers slow down
         (fast ones never do, like vanilla)."""
         from pydoom import audio
         sec = self.sector
         if self.direction == 1:
             res = move_plane(sec, self.speed, self.topheight,
-                             False, 1, 1, world.blocker)
+                             False, 1, 1, world.blocker, world.grind)
             if not world.time & 7 and self.type != "silentCrushAndRaise":
                 audio.play("stnmov", sec.soundorg[0], sec.soundorg[1],
                            sec)
@@ -515,13 +602,10 @@ class Ceiling:
                     self.direction = -1
         elif self.direction == -1:
             res = move_plane(sec, self.speed, self.bottomheight,
-                             self.crush, 1, -1, world.blocker)
+                             self.crush, 1, -1, world.blocker, world.grind)
             if not world.time & 7 and self.type != "silentCrushAndRaise":
                 audio.play("stnmov", sec.soundorg[0], sec.soundorg[1],
                            sec)
-            if self.crush and not world.time & 3 \
-                    and world.crush_hook is not None:
-                world.crush_hook(sec)
             if res == PlaneResult.PASTDEST:
                 if self.type in ("crushAndRaise", "fastCrushAndRaise"):
                     self.speed = CEILSPEED
@@ -561,7 +645,7 @@ class Plat:
         """T_PlatRaise (sounds removed)."""
         if self.status == "up":
             res = move_plane(self.sector, self.speed, self.high,
-                             self.crush, 0, 1, world.blocker)
+                             self.crush, 0, 1, world.blocker, world.grind)
             if res == PlaneResult.CRUSHED and not self.crush:
                 self.count = self.wait
                 self.status = "down"
@@ -574,7 +658,7 @@ class Plat:
                     world.remove_plat(self)
         elif self.status == "down":
             res = move_plane(self.sector, self.speed, self.low,
-                             False, 0, -1, world.blocker)
+                             False, 0, -1, world.blocker, world.grind)
             if res == PlaneResult.PASTDEST:
                 self.count = self.wait
                 self.status = "waiting"
@@ -605,12 +689,14 @@ class World:
             if t1 > 0 and t2 > 0:
                 self.switchlist += [t1, t2]
         self.numswitches = len(self.switchlist) // 2
-        # Optional player blocker for crush checks: (sector, z,
+        # Optional player blocker for crush checks: (sectors, z,
         # height) in fixed-point, refreshed by the viewer each tic.
         self.blocker = None
-        # PIT_ChangeSector crush damage: the sim (viewer) sets a
-        # callable(sector) that hurts everything the ceiling sits on.
-        self.crush_hook = None
+        # PIT_ChangeSector over live mobjs: the sim (viewer) sets a
+        # callable(sector, crush) -> nofit that gibs corpses, removes
+        # dropped items and hurts what no longer fits (thinkers pass it
+        # into move_plane, like T_MovePlane calling P_ChangeSector).
+        self.grind = None
         # Intermission denominators (kills, items, secrets), set after
         # spawn; (0, 0, 0) keeps headless Worlds tally-free.
         self.totals = (0, 0, 0)
@@ -945,9 +1031,12 @@ class World:
     def do_ceiling(self, line, ctype: str) -> bool:
         """EV_DoCeiling (p_ceilng.c): crushers bounce, lowerers park,
         raisers exit at top. lowerAndCrush grinds without hurting
-        (crush stays false), exactly like vanilla. No in-stasis
-        reactivation (EV_CeilingCrushStop is not wired either)."""
+        (crush stays false), exactly like vanilla. Crusher types
+        reactivate in-stasis ceilings first (P_ActivateInStasis)."""
         rtn = False
+        if ctype in ("fastCrushAndRaise", "silentCrushAndRaise",
+                     "crushAndRaise"):
+            rtn = self.activate_in_stasis_ceiling(line.tag)
         for sec in self.find_sectors_from_tag(line.tag):
             if sec.specialdata is not None:
                 continue  # already moving: keep going
@@ -977,6 +1066,27 @@ class World:
             self.thinkers.append(ceil)
             sec.specialdata = ceil
             rtn = True
+        return rtn
+
+    def activate_in_stasis_ceiling(self, tag: int) -> bool:
+        """P_ActivateInStasisCeiling: parked ceilings resume course."""
+        rtn = False
+        for thinker in self.thinkers:
+            if isinstance(thinker, Ceiling) and thinker.tag == tag \
+                    and thinker.direction == 0:
+                thinker.direction = thinker.olddirection
+                rtn = True
+        return rtn
+
+    def ceiling_crush_stop(self, line) -> bool:
+        """EV_CeilingCrushStop (W1-57/WR-74): park tagged crushers."""
+        rtn = False
+        for thinker in self.thinkers:
+            if isinstance(thinker, Ceiling) and thinker.tag == line.tag \
+                    and thinker.direction != 0:
+                thinker.olddirection = thinker.direction
+                thinker.direction = 0  # in-stasis: thinker idles
+                rtn = True
         return rtn
 
     # -- doors (p_doors.c; sounds removed) --
@@ -1239,7 +1349,8 @@ class World:
         """P_CrossSpecialLine: W1 (once) and WR (retrigger) walk-overs."""
         if not is_player and line.special not in (
                 39, 97, 125, 126, 4, 10, 88):
-            return None  # monsters trigger almost nothing
+            return None  # NOTE: vanilla monster gate (teleports, W1
+            # door/plat only); everything else ignores monsters.
         special = line.special
         if special in _WALK_ONCE:
             kind, arg = _WALK_ONCE[special]
@@ -1250,11 +1361,15 @@ class World:
         if special in _WALK_RETRIGGER:
             kind, arg = _WALK_RETRIGGER[special]
             return self._fire_walk(kind, arg, line)
-        if special in (39, 97):
-            if special == 39 and mover is not None and physics is not None \
+        if special in (39, 97, 125, 126):
+            if special in (125, 126) and is_player:
+                return None  # NOTE: monsters-only teleports skip players
+            if mover is not None and physics is not None \
                     and mobjs is not None:
-                if self.teleport(line, mover, physics, mobjs):
-                    line.special = 0  # W1 fires once
+                self.teleport(line, mover, physics, mobjs)
+                if special in (39, 125):
+                    # NOTE: W1 clears even on a failed hop (vanilla).
+                    line.special = 0
                 return None
             return "Teleporter (not implemented yet)"
         return None
@@ -1268,6 +1383,10 @@ class World:
             self.do_floor(line, arg)
         elif kind == "ceiling":
             self.do_ceiling(line, arg)
+        elif kind == "ceilingStop":
+            # NOTE: W1-57/WR-74 park tagged crushers (milestone D3; the
+            # milestone's "(145)" matches no vanilla special).
+            self.ceiling_crush_stop(line)
         elif kind == "plat":
             ptype, amount = arg
             self.do_plat(line, ptype, amount)

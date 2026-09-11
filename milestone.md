@@ -64,14 +64,27 @@ fidelity project with a file format on top. Work happens on the branch;
 
 ## D. Close sim-affecting divergences (see docs/DIVERGENCES.md)
 
-- [ ] Floaters track target height (`MF_FLOAT` in `P_Move`/chase).
-- [ ] Crusher gibs corpses and removes dropped items
-      (`PIT_ChangeSector`), not just damage.
-- [ ] In-stasis ceiling reactivation + crush-stop (145).
-- [ ] Sector specials 14/15 and any other E2-relevant specials.
-- [ ] Full monster line-trigger set (vanilla `P_CrossSpecialLine`).
-- [ ] Nightmare/fast Parm behavior exactly per skill table
-      (incl. `-respawn` semantics outside nightmare).
+- [x] Floaters track target height (`MF_FLOAT` in `P_Move`/chase):
+      `move_actor` climbs toward the blocked floor on floatok,
+      `_z_movement` eases toward target mid-height in the approach
+      cone, `INFLOAT` set/cleared like vanilla.
+- [x] Crusher gibs corpses and removes dropped items
+      (`PIT_ChangeSector`), not just damage: `move_plane` runs
+      `world.grind` after every step (gibs, drops, 4th-tic damage with
+      the vanilla blood-spray draws); crushers grind through instead
+      of reverting, doors still reopen.
+- [x] In-stasis ceiling reactivation + crush-stop (W1-57/WR-74, not
+      145 which matches no vanilla special): `olddirection` parking,
+      crusher triggers resume parked ceilings first.
+- [ ] Sector specials 14/15 and any other E2-relevant specials:
+      skipped, E1 has none (shareware scope, see DIVERGENCES).
+- [x] Full monster line-trigger set (vanilla `P_CrossSpecialLine`):
+      gate was already exact; added 125/126 monsters-only teleports
+      and unconditional W1 clearing.
+- [x] Nightmare/fast Parm behavior exactly per skill table
+      (incl. `-respawn` semantics outside nightmare): `--respawn`
+      flag wired to think + savegames (skill bits, baby halve,
+      pre-alerted spawns and JUSTATTACKED pacing already matched).
 - [ ] Cosmetic-only gaps (finale typing, splat anims, automap marks)
       stay as-is unless they block validation.
 

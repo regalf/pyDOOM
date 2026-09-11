@@ -264,3 +264,67 @@ def test_sight_heals_after_stale_sector(setup):
     ok, _ = phys.try_move(player, player.x - (8 << 16), player.y)
     assert ok
     assert check_sight(zombie, player, ctx)
+
+
+def _floater_mo(**kw):
+    from types import SimpleNamespace  # noqa: F401 (used below)
+    from pydoom.fixed import FRACUNIT
+    from pydoom.info import MF_FLAGS
+    from pydoom.mobjs import Mobj
+    fields = dict(x=0, y=0, z=0, momx=0, momy=0, momz=0, angle=0,
+                  flags=(MF_FLAGS["MF_SOLID"] | MF_FLAGS["MF_SHOOTABLE"]
+                         | MF_FLAGS["MF_FLOAT"] | MF_FLAGS["MF_NOGRAVITY"]),
+                  height=56 * FRACUNIT, radius=16 * FRACUNIT,
+                  floorz=0, ceilingz=200 * FRACUNIT, movedir=2, speed=8,
+                  target=None)
+    fields.update(kw)
+    return Mobj(**fields)
+
+
+def test_floater_climbs_toward_blocked_floor():
+    """P_Move floatok: a blocked floater steps z toward the target cell
+    floor instead of turning (cacos rise over steps)."""
+    from types import SimpleNamespace
+    from pydoom.ai import DI_NODIR, move_actor
+    from pydoom.fixed import FRACUNIT
+    from pydoom.info import MF_FLAGS
+    from pydoom.mobjs import FLOATSPEED
+    res = SimpleNamespace(ok=True, floorz=48 * FRACUNIT,
+                          ceilingz=200 * FRACUNIT, spechit=[])
+    phys = SimpleNamespace(try_move=lambda mo, x, y: (False, []),
+                           check_position=lambda mo, x, y: res)
+    world = SimpleNamespace(use_special_line=lambda *a: False)
+    ctx = SimpleNamespace(physics=phys, world=world)
+    mo = _floater_mo()
+    assert move_actor(mo, ctx) is True
+    assert mo.z == FLOATSPEED
+    assert mo.flags & MF_FLAGS["MF_INFLOAT"]
+    # NOTE: ground bodies still give up and open doors instead.
+    from pydoom.mobjs import Mobj
+    grunt = Mobj(x=0, y=0, z=0, flags=MF_FLAGS["MF_SOLID"],
+                 height=56 * FRACUNIT, movedir=2, speed=8)
+    assert move_actor(grunt, ctx) is False
+    assert grunt.movedir == DI_NODIR
+
+
+def test_floater_eases_toward_target_height():
+    """P_ZMovement floaters: z chases the target mid-height when close,
+    holds while skull-charging, ignores distant targets."""
+    from types import SimpleNamespace
+    from pydoom.fixed import FRACUNIT
+    from pydoom.info import MF_FLAGS
+    from pydoom.mobjs import FLOATSPEED, _z_movement
+    target = SimpleNamespace(x=100 << 16, y=0, z=50 * FRACUNIT,
+                             height=56 * FRACUNIT)
+    mo = _floater_mo(target=target)
+    _z_movement(mo)
+    assert mo.z == FLOATSPEED  # 100 mu away < 3x the 78 mu gap
+    far = SimpleNamespace(x=500 << 16, y=0, z=50 * FRACUNIT,
+                          height=56 * FRACUNIT)
+    mo2 = _floater_mo(target=far)
+    _z_movement(mo2)
+    assert mo2.z == 0  # 500 mu away: out of the approach cone
+    mo3 = _floater_mo(target=target)
+    mo3.flags |= MF_FLAGS["MF_SKULLFLY"]
+    _z_movement(mo3)
+    assert mo3.z == 0  # charging skulls never ease

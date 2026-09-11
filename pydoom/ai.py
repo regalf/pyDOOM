@@ -10,8 +10,8 @@ Scope (documented, never silent):
   loaded. Without that, A_Chase faces its target and holds at attack
   range instead of entering melee/missile states. JUSTATTACKED still
   paces re-aiming.
-* No floaters: MF_FLOAT height adjustment in P_Move is skipped, so
-  flying monsters keep their spawn height until AI flight lands.
+* Floaters adjust height like vanilla (P_Move floatok step toward the
+  target floor, P_ZMovement ease toward target mid-height).
 * Sounds play through pydoom.audio (seesound on wake, activesound
   growls); without a mixer everything stays silent.
 * Single-level validcount stamp is shared with physics (one counter,
@@ -64,6 +64,8 @@ _MF_JUSTHIT = MF_FLAGS["MF_JUSTHIT"]
 _MF_JUSTATTACKED = MF_FLAGS["MF_JUSTATTACKED"]
 _MF_SHOOTABLE = MF_FLAGS["MF_SHOOTABLE"]
 _MF_SHADOW = MF_FLAGS["MF_SHADOW"]
+_MF_FLOAT = MF_FLAGS["MF_FLOAT"]
+_MF_INFLOAT = MF_FLAGS["MF_INFLOAT"]
 
 
 @dataclass(eq=False)
@@ -77,6 +79,7 @@ class AIContext:
     ai_frozen: bool = False
     fast: bool = False
     skill: str = "normal"
+    respawn: bool = False  # NOTE: -respawn parm (respawn outside nightmare)
     sector_index: dict = field(default_factory=dict)  # id(sector) -> number
     noise_target: object = None  # P_NoiseAlert flood target
     mobjs: list = field(default_factory=list)  # spawned missiles/puffs go here
@@ -295,17 +298,30 @@ def move_actor(actor, ctx: AIContext) -> bool:
     tryy = actor.y + actor.speed * YSPEED[actor.movedir]
     ok, _crossed = ctx.physics.try_move(actor, tryx, tryy)
     if not ok:
-        # NOTE: floaters never adjust height here (see docstring).
         # Open any specials among ALL contacted lines (vanilla reads
         # the failed attempt's spechit, not just crossed ones).
         res = ctx.physics.check_position(actor, tryx, tryy)
+        if (actor.flags & _MF_FLOAT) and res.ok and (
+                res.ceilingz - res.floorz >= actor.height):
+            # NOTE: floatok (vanilla P_TryMove floatok): the cell is free
+            # and fits, only the step/headroom fails, so the floater
+            # adjusts height toward the target floor instead of turning.
+            from pydoom.mobjs import FLOATSPEED
+            if actor.z < res.floorz:
+                actor.z += FLOATSPEED
+            else:
+                actor.z -= FLOATSPEED
+            actor.flags |= _MF_INFLOAT
+            return True
         actor.movedir = DI_NODIR
         good = False
         for ld in reversed(res.spechit):
             if ctx.world.use_special_line(ld, 0, False):
                 good = True
         return good
-    actor.z = actor.floorz  # not FLOAT here
+    actor.flags &= ~_MF_INFLOAT
+    if not (actor.flags & _MF_FLOAT):
+        actor.z = actor.floorz  # ground bodies glue to the floor
     return True
 
 

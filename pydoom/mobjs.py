@@ -4,7 +4,8 @@ Covers P_SpawnMobj/P_SpawnMapThing (skill filter, ambush, ceiling
 placement), P_SetMobjState (no action functions yet), P_MobjThinker
 (momentum/friction/gravity/state countdown only), P_XYMovement (with the
 player slide/stop branches, driven by ctx.player_state) and
-P_ZMovement (no missiles, skulls, floaters or crush damage), plus
+P_ZMovement (with floater target-tracking; no skull slams, missiles
+or crush damage), plus
 sector thinglists and blockmap links (P_SetThingPosition /
 P_UnsetThingPosition).
 
@@ -61,7 +62,7 @@ STOPSPEED = 0x1000  # p_mobj.c
 FRICTION = 0xE800
 GRAVITY = FRACUNIT  # p_local.h
 MAXMOVE = 30 * FRACUNIT  # p_local.h
-FLOATSPEED = 4 * FRACUNIT  # p_local.h (floaters arrive with AI)
+FLOATSPEED = 4 * FRACUNIT  # p_local.h
 
 _MF_SOLID = MF_FLAGS["MF_SOLID"]
 _MF_SHOOTABLE = MF_FLAGS["MF_SHOOTABLE"]
@@ -74,6 +75,7 @@ _MF_MISSILE = MF_FLAGS["MF_MISSILE"]
 _MF_NOCLIP = MF_FLAGS["MF_NOCLIP"]
 _MF_SKULLFLY = MF_FLAGS["MF_SKULLFLY"]
 _MF_FLOAT = MF_FLAGS["MF_FLOAT"]
+_MF_INFLOAT = MF_FLAGS["MF_INFLOAT"]
 _MF_CORPSE = MF_FLAGS["MF_CORPSE"]
 _MF_DROPPED = MF_FLAGS["MF_DROPPED"]
 _MF_COUNTKILL = MF_FLAGS["MF_COUNTKILL"]
@@ -308,7 +310,8 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
         if not mo.tics:
             _sprite, _frame, _tics, nextstate, _action = STATES[mo.state]
             set_mobj_state(mo, nextstate, ctx)
-    elif (ctx is not None and getattr(ctx, "skill", "normal") == "nightmare"
+    elif (ctx is not None and (getattr(ctx, "skill", "normal") == "nightmare"
+                                or getattr(ctx, "respawn", False))
             and mo.spawnpoint is not None
             and (mo.flags & _MF_COUNTKILL) and not mo.dead):
         _maybe_respawn(mo, physics, ctx)
@@ -457,8 +460,20 @@ def xy_movement(mo: Mobj, physics, ctx=None) -> list:
 
 
 def _z_movement(mo: Mobj, ctx=None) -> None:
-    """P_ZMovement without floaters, skulls or missiles (see docstring)."""
+    """P_ZMovement without skull slams or missiles (see docstring)."""
     mo.z += mo.momz
+    if (mo.flags & _MF_FLOAT) and mo.target is not None:
+        # NOTE: floaters ease toward the target's mid-height when close
+        # (vanilla dist-gated approach, skipped while skull-charging or
+        # mid float-adjust); NOGRAVITY keeps them aloft otherwise.
+        if not (mo.flags & (_MF_SKULLFLY | _MF_INFLOAT)):
+            from pydoom.physics import aprox_distance
+            dist = aprox_distance(mo.x - mo.target.x, mo.y - mo.target.y)
+            delta = (mo.target.z + (mo.target.height >> 1)) - mo.z
+            if delta < 0 and dist < -(delta * 3):
+                mo.z -= FLOATSPEED
+            elif delta > 0 and dist < (delta * 3):
+                mo.z += FLOATSPEED
     if mo.z <= mo.floorz:
         if mo.momz < 0:
             mo.momz = 0
