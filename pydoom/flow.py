@@ -27,3 +27,41 @@ def strip_for_next_level(ps) -> None:
     ps.pendingweapon = ps.readyweapon
     ps.switchtics = 0
     ps.killcount = ps.itemcount = ps.secretcount = 0  # fresh tally
+
+
+# NOTE: G_InitNew fast/nightmare tables (sergeant run/pain tics halved,
+# bruiser/head/troop shots at 20). Pristine copies make the switch
+# idempotent (vanilla shifts live values, which double-halves on
+# repeated fast starts; every demo does a single InitNew from boot).
+_PRISTINE: tuple | None = None
+
+
+def init_new(skill: str, fast: bool) -> None:
+    """G_InitNew sim part: M_ClearRandom + fast/nightmare adjustments.
+
+    Runs on fresh runs only (boot, menu new game, demo start), never on
+    level transitions: the demo RNG stream spans levels unbroken.
+    """
+    from pydoom.fixed import FRACUNIT
+    from pydoom.info import MOBJ_TYPES, MT_INDEX, STATES, STATE_INDEX
+    from pydoom.m_random import clear_random
+    global _PRISTINE
+    first = STATE_INDEX["S_SARG_RUN1"]
+    last = STATE_INDEX["S_SARG_PAIN2"]
+    shots = ("BRUISERSHOT", "HEADSHOT", "TROOPSHOT")
+    if _PRISTINE is None:
+        _PRISTINE = (
+            {i: STATES[i][2] for i in range(first, last + 1)},
+            {name: MOBJ_TYPES[MT_INDEX[name]][10] for name in shots},
+        )
+    clear_random()
+    enable = bool(fast) or skill == "nightmare"
+    tics, speeds = _PRISTINE
+    for i, pristine in tics.items():
+        sprite, frame, _t, nxt, action = STATES[i]
+        STATES[i] = (sprite, frame, pristine >> 1 if enable else pristine,
+                     nxt, action)
+    for name, pristine in speeds.items():
+        rec = list(MOBJ_TYPES[MT_INDEX[name]])
+        rec[10] = 20 * FRACUNIT if enable else pristine
+        MOBJ_TYPES[MT_INDEX[name]] = tuple(rec)

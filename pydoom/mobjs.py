@@ -210,7 +210,7 @@ def spawn_mobj(game_map, physics, index: ThingIndex, x: int, y: int, z: int,
 
 
 def spawn_map(game_map: Map, physics, index: ThingIndex,
-              skill: str = "normal") -> list[Mobj]:
+              skill: str = "normal", nomonsters: bool = False) -> list[Mobj]:
     """P_SpawnMapThing over all map things (players skipped, see docstring)."""
     bit = SKILL_BITS[skill]
     mobjs: list[Mobj] = []
@@ -224,6 +224,9 @@ def spawn_map(game_map: Map, physics, index: ThingIndex,
         if not (thing.options & bit):
             continue  # wrong skill level
         rec = type_record(thing.type)
+        if nomonsters and rec is not None \
+                and (rec["flags"] & _MF_COUNTKILL):
+            continue  # NOTE: -nomonsters skips kill-counted types
         if rec is None:
             raise ValueError(
                 f"P_SpawnMapThing: unknown type {thing.type} "

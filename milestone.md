@@ -88,15 +88,25 @@ fidelity project with a file format on top. Work happens on the branch;
 - [ ] Cosmetic-only gaps (finale typing, splat anims, automap marks)
       stay as-is unless they block validation.
 
-## E. Demo format + playback machine
+## E. Demo format + playback machine — done on bit-exact-emu
 
-- [ ] Writer/reader: header (version 109, skill, episode, map,
+- [x] Writer/reader: header (version 109, skill, episode, map,
       deathmatch/respawn/fast/nomonsters bytes), ticcmd stream,
       `DEMOMARKER` footer (`pydoom/demo.py` or new module).
-- [ ] Playback state machine (`G_DoPlayDemo` idea): level transitions
+      (`pydoom/demo.py`: header/ticcmd/footer round-trips; angle
+      quantization matches `G_WriteDemoTiccmd`.)
+- [x] Playback state machine (`G_DoPlayDemo` idea): level transitions
       inside the demo, clean return to title, `-playdemo` /
-      `-timedemo` / `-record` CLI flags.
-- [ ] RNG streams reset/seeded exactly like `G_DoLoadLevel`.
+      `-timedemo` / `-record` CLI flags. (`--playdemo/--timedemo/
+      --record-demo`; stream spans transitions unbroken; DEMOMARKER
+      and episode victory return to title. Intermission/finale tics
+      are skipped symmetrically on both sides — vanilla alignment of
+      those stretches is F work.)
+- [x] RNG streams reset/seeded exactly like `G_DoLoadLevel`.
+      (Correction: vanilla seeds in `G_InitNew`, not LoadLevel —
+      `flow.init_new` mirrors that: clear + fast/nightmare tables on
+      fresh runs only, never on transitions. `-nomonsters` spawns
+      filter like `P_SpawnMapThing`.)
 
 ## F. Validation (defines "compatible")
 

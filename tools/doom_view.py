@@ -10,6 +10,9 @@ Dev keys (only with --debug): N noclip, F freeze AI, X AI info,
 PgUp/PgDn switch map, G grabs/releases the mouse.
 Demos (fixed-step, checksum-verified): --record=FILE logs inputs,
 --play=FILE replays them (regression: matching checksums agree).
+Vanilla demos: --record-demo=FILE writes a version-109 .lmp,
+--playdemo=FILE plays one back (level transitions included),
+--timedemo=FILE plays it fast with no drawing and reports stats.
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -31,6 +34,7 @@ import pygame
 
 from pydoom import combat
 from pydoom import cheats
+from pydoom import demo
 from pydoom import flow
 from pydoom import interm
 from pydoom import menu
@@ -178,8 +182,11 @@ def main() -> int:
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
+    rec_demo_path = None  # --record-demo=FILE: vanilla-format .lmp
+    play_demo_path = None  # --playdemo=FILE: play a vanilla .lmp
+    timedemo = False  # --timedemo=FILE: play fast, no draw, report
+    nomonsters = False  # demo header / vanilla -nomonsters spawn filter
     respawn = False  # --respawn: monsters return (any skill, like vanilla)
-    kinematic = False  # --kinematic: legacy camera mover (milestone B)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
@@ -188,6 +195,13 @@ def main() -> int:
             rec_path = a.split("=", 1)[1]
         elif a.startswith("--play="):
             play_path = a.split("=", 1)[1]
+        elif a.startswith("--record-demo="):
+            rec_demo_path = a.split("=", 1)[1]
+        elif a.startswith("--playdemo="):
+            play_demo_path = a.split("=", 1)[1]
+        elif a.startswith("--timedemo="):
+            play_demo_path = a.split("=", 1)[1]
+            timedemo = True
         elif a == "--debug":
             debug = True
         elif a == "--kinematic":
@@ -207,6 +221,36 @@ def main() -> int:
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
     default_wad = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
     wad_path = args[1] if len(args) > 1 else default_wad
+    demo_header = None  # parsed .lmp header driving this run, if any
+    if rec_demo_path is not None and play_demo_path is not None:
+        raise SystemExit("cannot --record-demo and --playdemo together")
+    if play_demo_path is not None:
+        try:
+            with open(play_demo_path, "rb") as f:
+                demo_blob = f.read()
+            demo_header = demo.DemoHeader.from_bytes(demo_blob)
+        except (OSError, ValueError) as exc:
+            print(f"demo: refused ({exc}), booting normally")
+            demo_header = None
+            play_demo_path = None
+            timedemo = False
+        else:
+            if not demo_header.single_player():
+                print("demo: refused (multiplayer/deathmatch "
+                      "streams need netgame), booting normally")
+                demo_header = None
+                play_demo_path = None
+                timedemo = False
+            else:
+                skill = demo_header.skill_name()
+                fast = bool(demo_header.fast)
+                respawn = bool(demo_header.respawn)
+                nomonsters = bool(demo_header.nomonsters)
+                map_name = demo_header.marker()
+                print(f"demo: {play_demo_path} skill={skill} map={map_name}"
+                      f"{'+FAST' if fast else ''}"
+                      f"{'+RESPAWN' if respawn else ''}"
+                      f"{'+NOMONSTERS' if nomonsters else ''}")
 
     wad = WadFile(wad_path)
     texman = TextureManager(wad)
@@ -249,7 +293,7 @@ def main() -> int:
         index = ThingIndex(game_map)
         phys.things = index
         phys.damage_hook = lambda tm, th: combat.things_hit(tm, th, ctx)
-        mobjs = spawn_map(game_map, phys, index, skill)
+        mobjs = spawn_map(game_map, phys, index, skill, nomonsters)
         world.totals = level_totals(mobjs, game_map.sectors)
         # Player body for monster AI and walls alike: the camera drives
         # this mobj directly (no separate physics body, so there is no
@@ -291,6 +335,10 @@ def main() -> int:
                  "bob": 0, "face": FaceState()}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
 
+    # NOTE: G_InitNew sim part (M_ClearRandom + fast tables) runs on
+    # fresh runs only: boot, menu new game, demo start. Transitions,
+    # warps and snapshots keep the stream going, like vanilla.
+    flow.init_new(skill, fast)
     game_map, cam, phys, player_mo, world, mobjs, ctx, state = load_map(
         map_name)
     combat.register_combat_actions()
@@ -390,7 +438,7 @@ def main() -> int:
         return {
             "version": saveg.SAVE_VERSION, "name": name,
             "marker": game_map.marker, "skill": skill,
-            "fast": fast, "respawn": respawn,
+            "fast": fast, "respawn": respawn, "nomonsters": nomonsters,
             "time": world.time, "rng": get_state(),
             "cam": (cam.x, cam.y, cam.angle, cam.viewz),
             "player": mobjs.index(player_mo),
@@ -405,7 +453,8 @@ def main() -> int:
         from pydoom.m_random import set_state
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
             mobjs, ctx, state, map_idx, amap, message, message_tics, \
-            noclip, skill, fast, respawn, running, has_level
+            noclip, skill, fast, respawn, nomonsters, running, has_level, \
+            demo_play
         err = saveg.validate(bundle, maps)
         if err is not None:
             audio.play("oof")
@@ -413,6 +462,8 @@ def main() -> int:
         skill = bundle["skill"]
         fast = bundle.get("fast", False)
         respawn = bundle.get("respawn", False)
+        nomonsters = bundle.get("nomonsters", False)
+        demo_play = None  # NOTE: saves carry no stream position
         (game_map, cam, phys, player_mo, world, mobjs, ctx,
          state) = load_map(bundle["marker"])
         sectors_old, thinkers, mobjs_new, ps_new = saveg.unpack_blob(
@@ -457,7 +508,8 @@ def main() -> int:
         """Menu selections: quit, or a wiped fresh start on E1M1."""
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
             mobjs, ctx, state, map_idx, amap, message, message_tics, \
-            noclip, skill, running, has_level, paused, quickslot
+            noclip, skill, running, has_level, paused, quickslot, \
+            demo_play
         if mev == "close":
             gamestate = "level" if has_level else "title"
         elif mev == "quit":
@@ -472,6 +524,8 @@ def main() -> int:
             has_level = False
             paused = False
             amap = None
+            demo_play = None
+            finish_demo_rec()
             audio.music_play(TITLE_SONG, "end-game")
             gamestate = "title"
         elif isinstance(mev, tuple) and mev[0] == "save_game":
@@ -485,10 +539,16 @@ def main() -> int:
         elif isinstance(mev, tuple) and mev[0] == "new_game":
             old = last_fb.copy() if last_fb is not None else None
             skill = mev[2]
+            demo_play = None  # NOTE: new game stops playback (G_DoNewGame)
+            flow.init_new(skill, fast)
+            if rec_demo_path is not None:
+                finish_demo_rec()
             has_level = True
             map_idx = maps.index("E1M1")
             (game_map, cam, phys, player_mo, world, mobjs, ctx,
              state) = load_map("E1M1")
+            if rec_demo_path is not None:
+                arm_demo_rec()  # NOTE: header names the fresh start map
             amap = None
             message, message_tics = None, 0
             noclip = False
@@ -542,8 +602,60 @@ def main() -> int:
     demo_sum = 0  # framebuffer checksum (record and replay agree)
     rec_events: list = []
     tbuilder = ticcmd.TiccmdBuilder()  # 35 Hz input packets (milestone A)
+    demo_play = None  # DemoReader driving ticcmds (G_DoPlayDemo)
+    if play_demo_path is not None and demo_header is not None:
+        demo_play = demo.DemoReader(demo_blob)
+    demo_rec = None  # DemoWriter for --record-demo (vanilla .lmp)
+
+    def arm_demo_rec() -> None:
+        """(Re)start the .lmp recorder with a fresh header (run start)."""
+        nonlocal demo_rec
+        demo_rec = demo.DemoWriter(demo.DemoHeader(
+            skill=demo.SKILL_NAMES.index(skill)
+            if skill in demo.SKILL_NAMES else 2,
+            episode=1, map=int(game_map.marker[3:]), deathmatch=0,
+            respawn=int(respawn), fast=int(fast),
+            nomonsters=int(nomonsters), consoleplayer=0,
+            players=(1, 0, 0, 0)))
+
+    def finish_demo_rec() -> None:
+        """Append DEMOMARKER and flush the .lmp (G_CheckDemoStatus tail)."""
+        nonlocal demo_rec
+        if demo_rec is not None and rec_demo_path is not None:
+            with open(rec_demo_path, "wb") as f:
+                f.write(demo_rec.finish())
+            print(f"demo: recorded {demo_rec.tics} tics"
+                  f" -> {rec_demo_path}")
+            demo_rec = None
+
+    def end_demo_playback(note: str) -> None:
+        """Stream over (DEMOMARKER, finale): back to title like vanilla
+        G_CheckDemoStatus; -timedemo prints stats and quits instead."""
+        nonlocal demo_play, running, gamestate, has_level
+        tics = demo_play.tics if demo_play is not None else 0
+        demo_play = None
+        if timedemo:
+            print(f"timedemo: {tics} tics {note} {game_map.marker} "
+                  f"({player_mo.x >> 16},{player_mo.y >> 16}) "
+                  f"hp={player_mo.health} k={state['ps'].killcount}")
+            running = False
+        gamestate = "title"
+        has_level = False
+        audio.music_play(TITLE_SONG, "demo-title")
+
+    if rec_demo_path is not None:
+        arm_demo_rec()
+    if demo_play is not None:
+        # NOTE: vanilla boots straight into the demo (no title wait);
+        # menu new games still cancel playback (G_DoNewGame).
+        gamestate = "level"
+        has_level = True
     while running:
-        if recording or replaying:
+        if timedemo:
+            clock.tick(0)  # NOTE: uncapped, like -timedemo -nodraw
+            dt = 1.0 / 60  # NOTE: fixed steps keep stream alignment
+        elif recording or replaying or demo_play is not None \
+                or demo_rec is not None:
             clock.tick(60)
             dt = 1.0 / 60  # NOTE: demos run on fixed steps, tic-exact
         else:
@@ -634,11 +746,17 @@ def main() -> int:
                             apply_menu_event(mev)
                     continue
                 if gamestate == "inter":
-                    if inter is not None:
+                    # NOTE: observers don't hurry the tally (vanilla reads
+                    # stream buttons here; our stream skips non-level tics,
+                    # so any hurry stays self-consistent either way).
+                    if demo_play is None and inter is not None:
                         inter.keypress()  # NOTE: hurry the tally
                     continue
                 if gamestate == "finale":
-                    # NOTE: E1TEXT read: any key returns to the title.
+                    # NOTE: E1TEXT read: any key returns to the title
+                    # (playback already ended at the exit above).
+                    if demo_play is not None:
+                        continue
                     has_level = False
                     audio.music_play(TITLE_SONG, "finale-title")
                     gamestate = "title"
@@ -683,10 +801,13 @@ def main() -> int:
                         message_tics = 3 * TICRATE
                     elif cname == "idclev":
                         # NOTE: shareware warp is E1M1-E1M9, fresh start
-                        # (PST_REBORN); bad digits fail silently.
+                        # (PST_REBORN); bad digits fail silently. Like
+                        # G_DoNewGame this stops playback and reseeds.
                         if carg[0] == "1" and carg[1] in "123456789":
                             dest = f"E1M{carg[1]}"
                             if dest in maps:
+                                demo_play = None
+                                flow.init_new(skill, fast)
                                 map_idx = maps.index(dest)
                                 (game_map, cam, phys, player_mo, world,
                                  mobjs, ctx, state) = load_map(
@@ -737,6 +858,8 @@ def main() -> int:
                 elif ev.key == pygame.K_PAGEUP:
                     if not debug:
                         continue
+                    demo_play = None  # NOTE: debug warp: fresh stream state
+                    flow.init_new(skill, fast)
                     map_idx = (map_idx - 1) % len(maps)
                     (game_map, cam, phys, player_mo, world, mobjs, ctx,
                      state) = load_map(maps[map_idx])
@@ -749,6 +872,8 @@ def main() -> int:
                 elif ev.key == pygame.K_PAGEDOWN:
                     if not debug:
                         continue
+                    demo_play = None  # NOTE: debug warp: fresh stream state
+                    flow.init_new(skill, fast)
                     map_idx = (map_idx + 1) % len(maps)
                     (game_map, cam, phys, player_mo, world, mobjs, ctx,
                      state) = load_map(maps[map_idx])
@@ -967,16 +1092,27 @@ def main() -> int:
             tkeys = pygame.key.get_pressed()
             if demo_keys is not None:
                 tkeys = demo_keys  # NOTE: replayed held-keys, not hardware
-            cmd = tbuilder.build(ticcmd.RawInput(
-                up=bool(tkeys[pygame.K_w] or tkeys[pygame.K_UP]),
-                down=bool(tkeys[pygame.K_s] or tkeys[pygame.K_DOWN]),
-                strafeleft=bool(tkeys[pygame.K_a]),
-                straferight=bool(tkeys[pygame.K_d]),
-                turnleft=bool(tkeys[pygame.K_LEFT]),
-                turnright=bool(tkeys[pygame.K_RIGHT]),
-                speed=bool(tkeys[pygame.K_LSHIFT]
-                            or tkeys[pygame.K_RSHIFT]),
-                attack=bool(state["firing"] or tkeys[pygame.K_SPACE])))
+            cmd = None
+            if demo_play is not None:
+                # NOTE: G_Ticker demo branch: the stream drives the sim.
+                cmd = demo_play.read_cmd()
+                if cmd is None:
+                    end_demo_playback("end")
+                    continue
+            if cmd is None:
+                cmd = tbuilder.build(ticcmd.RawInput(
+                    up=bool(tkeys[pygame.K_w] or tkeys[pygame.K_UP]),
+                    down=bool(tkeys[pygame.K_s] or tkeys[pygame.K_DOWN]),
+                    strafeleft=bool(tkeys[pygame.K_a]),
+                    straferight=bool(tkeys[pygame.K_d]),
+                    turnleft=bool(tkeys[pygame.K_LEFT]),
+                    turnright=bool(tkeys[pygame.K_RIGHT]),
+                    speed=bool(tkeys[pygame.K_LSHIFT]
+                               or tkeys[pygame.K_RSHIFT]),
+                    attack=bool(state["firing"]
+                                or tkeys[pygame.K_SPACE])))
+                if demo_rec is not None:
+                    demo_rec.append(cmd)
             ps.cmd = cmd  # NOTE: friction reads the move axes (P_XYMovement)
             if not (kinematic or noclip) \
                     and ps.playerstate == p_user.PST_LIVE \
@@ -1225,6 +1361,11 @@ def main() -> int:
                        else render_scene())
                 if nxt is None:
                     # NOTE: E1M8 exit melts to the black finale screen.
+                    # During playback the run ends here (vanilla would
+                    # keep consuming stream tics behind the text).
+                    if demo_play is not None:
+                        end_demo_playback("victory")
+                        continue
                     melt.start(old, np.zeros((200, 320), dtype=np.uint8))
                     audio.music_play(FINALE_SONG, "exit-finale")
                     wipe_after = "finale"
@@ -1276,6 +1417,13 @@ def main() -> int:
             frames += 1
             if frames_opt is not None and frames >= frames_opt:
                 print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
+                running = False
+            continue
+        if timedemo:
+            # NOTE: no draw/blit at all (vanilla -nodraw/-noblit); the
+            # sim still ticks on fixed steps above.
+            frames += 1
+            if frames_opt is not None and frames >= frames_opt:
                 running = False
             continue
         if has_level:
@@ -1383,6 +1531,7 @@ def main() -> int:
         print(f"demo: recorded {len(demo_log)} frames, checksum {demo_sum}")
     if play_path is not None:
         print(f"demo: replayed {demo_idx} frames, checksum {demo_sum}")
+    finish_demo_rec()
     audio.music_shutdown()  # song thread out before the mixer dies
     pygame.quit()
     return 0
