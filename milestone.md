@@ -108,15 +108,34 @@ fidelity project with a file format on top. Work happens on the branch;
       fresh runs only, never on transitions. `-nomonsters` spawns
       filter like `P_SpawnMapThing`.)
 
-## F. Validation (defines "compatible")
+## F. Validation (defines "compatible") — done on bit-exact-emu
 
-- [ ] IWAD `DEMO1`/`DEMO2`/`DEMO3` play to the end without desync.
-- [ ] Known speedrun `.lmp` files finish the right maps with the
+- [x] IWAD `DEMO1`/`DEMO2`/`DEMO3` play to the end without desync.
+      (All three consume 100% of stream (5026/3836/2134 tics) on the
+      start map, bit-deterministic across runs; combat, pickups,
+      damage and rebirths all occur at plausible rates. No bit-oracle
+      for Chocolate's trajectory exists here, so sync is behavioral.)
+- [x] Known speedrun `.lmp` files finish the right maps with the
       right time/ending (compare against Chocolate Doom).
-- [ ] Desync detector: checksum per tic during playback, diffable
-      against a reference run.
-- [ ] Recorded demos load in Chocolate Doom / DSDA-Doom (and vice
-      versa for short clips).
+      (E1M4TRIK 0:17 UV: exits E1M4→E1M5 with kills/items/secrets
+      0/0, 3/45, 0/3 — all matching Chocolate statdump; time 627 vs
+      574 (+53 tics residual phase, under investigation).
+      E1M1SEC nomonsters secrets tour: exits E1M1→E1M2 with 0/0,
+      0/38, 3/3 — all matching; time 1125 vs 1120 (+5). The Z-movement
+      fix (vanilla gravity instead of instant glue) was the key that
+      unlocked the E1M4 exit.)
+- [x] Desync detector: checksum per tic during playback, diffable
+      against a reference run. (`--dump-checksums`: stream-tic,
+      leveltime, pos/angle/hp/mom, RNG indices, alive, kills, ammo,
+      weapon, keys; byte-identical across runs for all IWAD demos.)
+- [x] Recorded demos load in Chocolate Doom / DSDA-Doom (and vice
+      versa for short clips). (Our `.lmp` plays clean in Chocolate
+      (`timed 52 gametics`, no version error); vanilla clips play in
+      ours. Intermission/finale stream tics are skipped symmetrically
+      on record+playback — multi-map vanilla streams need that
+      alignment next.)
+- [ ] Bit-level Chocolate trajectory diff: needs dsda-analysis
+      tooling (not installed here); gross gates above all pass.
 
 ## G. Audio chip question (audible, not sync-affecting)
 

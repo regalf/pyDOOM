@@ -185,6 +185,7 @@ def main() -> int:
     rec_demo_path = None  # --record-demo=FILE: vanilla-format .lmp
     play_demo_path = None  # --playdemo=FILE: play a vanilla .lmp
     timedemo = False  # --timedemo=FILE: play fast, no draw, report
+    checksum_path = None  # --dump-checksums=FILE: per-tic sim trace
     nomonsters = False  # demo header / vanilla -nomonsters spawn filter
     respawn = False  # --respawn: monsters return (any skill, like vanilla)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
@@ -202,6 +203,8 @@ def main() -> int:
         elif a.startswith("--timedemo="):
             play_demo_path = a.split("=", 1)[1]
             timedemo = True
+        elif a.startswith("--dump-checksums="):
+            checksum_path = a.split("=", 1)[1]
         elif a == "--debug":
             debug = True
         elif a == "--kinematic":
@@ -636,12 +639,32 @@ def main() -> int:
         demo_play = None
         if timedemo:
             print(f"timedemo: {tics} tics {note} {game_map.marker} "
+                  f"t={world.time} "
                   f"({player_mo.x >> 16},{player_mo.y >> 16}) "
                   f"hp={player_mo.health} k={state['ps'].killcount}")
             running = False
         gamestate = "title"
         has_level = False
         audio.music_play(TITLE_SONG, "demo-title")
+
+    checksum_lines: list = []  # per-tic sim trace (desync detector)
+
+    def trace_sim_tic() -> None:
+        """Append one desync-detector line (stream pos + sim state)."""
+        from pydoom.m_random import get_state
+        from pydoom.player import AM_CLIP, AM_SHELL
+        rng0, rng1 = get_state()
+        ps = state["ps"]
+        checksum_lines.append(
+            f"{demo_play.tics if demo_play is not None else -1} "
+            f"{world.time} {game_map.marker} "
+            f"{player_mo.x} {player_mo.y} {player_mo.z} "
+            f"{player_mo.angle} {player_mo.health} "
+            f"{player_mo.momx} {player_mo.momy} "
+            f"{rng0} {rng1} "
+            f"{sum(1 for mo in mobjs if not mo.dead)} "
+            f"{ps.killcount} {ps.ammo[AM_CLIP]} {ps.ammo[AM_SHELL]} "
+            f"{ps.readyweapon} {ps.keys}")
 
     if rec_demo_path is not None:
         arm_demo_rec()
@@ -1234,6 +1257,8 @@ def main() -> int:
                     ctx.player_state = state["ps"]
                     ps = state["ps"]
                 else:
+                    if checksum_path is not None and demo_play is not None:
+                        trace_sim_tic()
                     continue  # corpse waits: no fire/move/pickup this tic
             if kinematic or noclip:
                 # NOTE: legacy camera mover (--kinematic, debug noclip):
@@ -1313,8 +1338,7 @@ def main() -> int:
                     if msg is not None:
                         message, message_tics = msg, 3 * TICRATE
             if not noclip:
-                # Gravity lite + floor glue (no full gamesim falling):
-                # ride lifts up, fall fast, snap when close.
+                # Floor/ceiling refresh (lifts carry standing bodies).
                 res = phys.check_position(
                     player_mo, player_mo.x, player_mo.y)
                 if res.ok:
@@ -1324,11 +1348,17 @@ def main() -> int:
                         # NOTE: P_ZMovement smooth step-up: stairs dip
                         # the view, calc_height walks it back.
                         p_user.z_step_adjust(ps, player_mo)
-                    if player_mo.z > player_mo.floorz:
-                        player_mo.z = max(player_mo.floorz,
-                                          player_mo.z - 8 * 65536)
-                    else:
-                        player_mo.z = player_mo.floorz
+                if kinematic:
+                    # NOTE: legacy gravity lite + floor glue (comparison
+                    # path only): ride lifts up, fall fast, snap close.
+                    if res.ok:
+                        if player_mo.z > player_mo.floorz:
+                            player_mo.z = max(player_mo.floorz,
+                                              player_mo.z - 8 * 65536)
+                        else:
+                            player_mo.z = player_mo.floorz
+                elif p_user.z_movement(player_mo, ps):
+                    audio.play("oof", player_mo.x, player_mo.y, player_mo)
             # Walk-over pickups (P_TouchSpecialThing sweep) + power ticks.
             ps = state["ps"]
             ps.tick(player_mo)
@@ -1353,6 +1383,13 @@ def main() -> int:
                 cur = game_map.marker
                 nxt = flow.next_map(cur, world.exit_kind == "secret")
                 ps_exit, hp_exit = state["ps"], player_mo.health
+                if demo_play is not None:
+                    # NOTE: desync-detector checkpoint (statdump-style).
+                    tk, ti, ts = world.totals
+                    print(f"demo: exit {cur} -> {nxt} t={world.time} "
+                          f"k={ps_exit.killcount}/{tk} "
+                          f"i={ps_exit.itemcount}/{ti} "
+                          f"s={ps_exit.secretcount}/{ts}")
                 try:
                     par = interm.E1_PARS[int(cur[3:])] * 35
                 except (ValueError, IndexError):
@@ -1397,6 +1434,8 @@ def main() -> int:
                     floor = player_mo.z / 65536.0
                 target = floor + VIEWHEIGHT_ABOVE_FLOOR
                 cam.viewz += (target - cam.viewz) * 0.3
+            if checksum_path is not None and demo_play is not None:
+                trace_sim_tic()
 
         audio.set_listener(player_mo.x, player_mo.y, cam.bam)
         if amap is not None:
@@ -1532,6 +1571,13 @@ def main() -> int:
     if play_path is not None:
         print(f"demo: replayed {demo_idx} frames, checksum {demo_sum}")
     finish_demo_rec()
+    if checksum_path is not None:
+        with open(checksum_path, "w") as f:
+            f.write("# pydoom sim trace v1: stream-tic leveltime marker "
+                    "x y z angle hp momx momy rng0 rng1 alive kills\n")
+            f.write("\n".join(checksum_lines) + "\n")
+        print(f"demo: wrote {len(checksum_lines)} trace lines"
+              f" -> {checksum_path}")
     audio.music_shutdown()  # song thread out before the mixer dies
     pygame.quit()
     return 0

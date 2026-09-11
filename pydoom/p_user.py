@@ -16,8 +16,11 @@ from __future__ import annotations
 
 from pydoom.angles import point_to_angle2
 from pydoom.fixed import ANG90, ANG180, FRACUNIT, fixed_mul
-from pydoom.info import STATE_INDEX
+from pydoom.info import MF_FLAGS, STATE_INDEX
 from pydoom.player import CF_NOMOMENTUM
+
+_GRAVITY = FRACUNIT  # p_local.h GRAVITY
+_MF_NOGRAVITY = MF_FLAGS["MF_NOGRAVITY"]
 from pydoom.tables import (
     ANGLETOFINESHIFT,
     FINEANGLES,
@@ -107,6 +110,32 @@ def z_step_adjust(ps, mo) -> None:
     if mo.z < mo.floorz:
         ps.viewheight -= mo.floorz - mo.z
         ps.deltaviewheight = (VIEWHEIGHT - ps.viewheight) >> 3
+
+
+def z_movement(mo, ps) -> bool:
+    """P_ZMovement player path: accelerating falls, hard-landing view
+    dip, ceiling clip. Returns True when the landing earns sfx_oof
+    (momz < -8*GRAVITY, vanilla threshold). Skull/missile/floater
+    branches never apply to players."""
+    mo.z += mo.momz
+    oof = False
+    if mo.z <= mo.floorz:
+        if mo.momz < 0:
+            if mo.momz < -_GRAVITY * 8:
+                ps.deltaviewheight = mo.momz >> 3
+                oof = True
+            mo.momz = 0
+        mo.z = mo.floorz
+    elif not (mo.flags & _MF_NOGRAVITY):
+        if mo.momz == 0:
+            mo.momz = -_GRAVITY * 2
+        else:
+            mo.momz -= _GRAVITY
+    if mo.z + mo.height > mo.ceilingz:
+        if mo.momz > 0:
+            mo.momz = 0
+        mo.z = mo.ceilingz - mo.height
+    return oof
 
 
 def death_think(ps, mo, leveltime: int, use_pressed: bool) -> int:

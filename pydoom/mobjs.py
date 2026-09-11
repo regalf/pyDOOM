@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pydoom.fixed import FRACUNIT, fixed_mul
-from pydoom.info import MF_FLAGS, STATES, STATE_INDEX, type_record
+from pydoom.info import MF_FLAGS, MT_INDEX, STATES, STATE_INDEX, type_record
 from pydoom.mapdata import MAPBLOCKSHIFT, Map
 from pydoom.m_random import p_random
 from pydoom.player import CF_NOMOMENTUM
@@ -225,8 +225,11 @@ def spawn_map(game_map: Map, physics, index: ThingIndex,
             continue  # wrong skill level
         rec = type_record(thing.type)
         if nomonsters and rec is not None \
-                and (rec["flags"] & _MF_COUNTKILL):
-            continue  # NOTE: -nomonsters skips kill-counted types
+                and (rec["flags"] & _MF_COUNTKILL
+                     or rec["mt"] == MT_INDEX["SKULL"]):
+            # NOTE: -nomonsters skips kill-counted types plus lost souls
+            # (vanilla also skips MT_SKULL, which is not COUNTKILL).
+            continue
         if rec is None:
             raise ValueError(
                 f"P_SpawnMapThing: unknown type {thing.type} "

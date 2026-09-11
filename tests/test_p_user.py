@@ -267,3 +267,44 @@ def test_momentum_ramp_on_real_e1m1():
     # NOTE: ~250 mu after 24 tics: the acceleration ramp, not the flat
     # legacy 13.0 (which would read exactly 312).
     assert 220 < disp < 290
+
+
+def test_z_movement_falls_with_gravity():
+    """Vanilla falls accelerate (momz 0/-2/-3...), land exactly, and
+    oof past -8 (unlike the old instant -8 glue, which gifted thrust
+    tics vanilla spends airborne)."""
+    from pydoom.fixed import FRACUNIT
+    ps = PlayerState()
+    mo = make_mo(z=100 * FRACUNIT, floorz=0, ceilingz=200 * FRACUNIT,
+                 momz=0, height=56 * FRACUNIT)
+    zs = []
+    for _ in range(6):
+        oof = p_user.z_movement(mo, ps)
+        zs.append(mo.z // FRACUNIT)
+    assert zs == [100, 98, 95, 91, 86, 80]  # accel, not linear
+    assert mo.momz == -7 * FRACUNIT  # 0, -2, -3, ... per tic
+    assert oof is False  # soft so far
+    while mo.z > mo.floorz:
+        oof = p_user.z_movement(mo, ps)
+    assert mo.z == mo.floorz == 0
+    assert mo.momz == 0
+    assert oof is True  # 100mu fall lands hard
+    assert ps.deltaviewheight < 0  # view squats (P_ZMovement)
+
+
+def test_z_movement_rise_snaps_and_clips_ceiling():
+    from pydoom.fixed import FRACUNIT
+    ps = PlayerState()
+    mo = make_mo(z=0, floorz=40 * FRACUNIT, ceilingz=200 * FRACUNIT,
+                 height=56 * FRACUNIT)
+    assert p_user.z_movement(mo, ps) is False
+    assert mo.z == 40 * FRACUNIT  # stairs/lifts glue, like vanilla
+    mo.floorz = 0
+    mo.ceilingz = 50 * FRACUNIT  # headroom under body height
+    p_user.z_movement(mo, ps)
+    assert mo.z == 50 * FRACUNIT - mo.height  # duck under
+    assert mo.momz == -2 * FRACUNIT  # NOTE: vanilla only clears
+    # upward momz on ceiling contact...
+    mo.ceilingz = 200 * FRACUNIT  # headroom restored: land next tic
+    assert p_user.z_movement(mo, ps) is False
+    assert (mo.z, mo.momz) == (0, 0)
