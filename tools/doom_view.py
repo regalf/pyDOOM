@@ -14,8 +14,6 @@ Vanilla demos: --record-demo=FILE writes a version-109 .lmp,
 --playdemo=FILE plays one back (level transitions included),
 --timedemo=FILE plays it fast with no drawing and reports stats.
 Idle title falls into the IWAD demo loop (any key stops it).
---demo-log narrates demo events point by point (shots, kills, damage,
-pickups, doors, teleports, secrets).
 Hidden test hook: --frames=N quits after N frames (headless smoke test).
 
 Movement uses the real physics (P_TryMove/P_SlideMove): walls block,
@@ -38,7 +36,6 @@ import pygame
 from pydoom import combat
 from pydoom import cheats
 from pydoom import demo
-from pydoom import demolog
 from pydoom import flow
 from pydoom import interm
 from pydoom import menu
@@ -51,12 +48,13 @@ from pydoom.automap import Automap
 from pydoom.ai import AIContext, check_sight
 from pydoom.doors import World
 from pydoom.info import MT_INDEX, MT_NAMES, STATE_INDEX
+from pydoom.info import MF_FLAGS as _MF_FLAGS
 from pydoom.mapdata import Map
 from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map, spawn_mobj
 from pydoom.mobjs import level_totals, set_mobj_state, think_mobj
 from pydoom.mobjs import xy_movement
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
-from pydoom.physics import MF_NOCLIP, Mover, Physics
+from pydoom.physics import MF_NOCLIP, Physics
 from pydoom.pickup import collect_touched
 from pydoom.player import (
     CF_NOCLIP,
@@ -190,9 +188,6 @@ def main() -> int:
     play_demo_path = None  # --playdemo=FILE: play a vanilla .lmp
     timedemo = False  # --timedemo=FILE: play fast, no draw, report
     checksum_path = None  # --dump-checksums=FILE: per-tic sim trace
-    narrate = False  # --demo-log: narrate demo events point by point
-    shots_dir = None  # --shots-dir=DIR: save screenshots every N frames
-    shots_every = 60
     nomonsters = False  # demo header / vanilla -nomonsters spawn filter
     respawn = False  # --respawn: monsters return (any skill, like vanilla)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
@@ -212,12 +207,6 @@ def main() -> int:
             timedemo = True
         elif a.startswith("--dump-checksums="):
             checksum_path = a.split("=", 1)[1]
-        elif a == "--demo-log":
-            narrate = True
-        elif a.startswith("--shots-dir="):
-            shots_dir = a.split("=", 1)[1]
-        elif a.startswith("--shots-every="):
-            shots_every = int(a.split("=", 1)[1])
         elif a == "--debug":
             debug = True
         elif a == "--kinematic":
@@ -234,13 +223,26 @@ def main() -> int:
             respawn = True
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
-    demolog.enabled = narrate  # NOTE: point-by-point demo narrator
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
     default_wad = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
     wad_path = args[1] if len(args) > 1 else default_wad
+    msettings = menu.Settings()
+    menu.settings_load(menu.CONFIG_PATH, msettings)
+    # NOTE: vanilla demo compat (.lmp playback/record, attract loop)
+    # is experimental and off by default; enable with `demos 1` in
+    # pydoom.cfg (PYDOOM_DEMOS=1 covers the automated test harness).
+    demos_enabled = msettings.demos or os.getenv("PYDOOM_DEMOS") == "1"
     demo_header = None  # parsed .lmp header driving this run, if any
     if rec_demo_path is not None and play_demo_path is not None:
         raise SystemExit("cannot --record-demo and --playdemo together")
+    if (play_demo_path is not None or timedemo
+            or rec_demo_path is not None) and not demos_enabled:
+        print("demo: disabled (vanilla demo compat is experimental "
+              "and off by default; set `demos 1` in pydoom.cfg to "
+              "enable), booting normally")
+        play_demo_path = None
+        timedemo = False
+        rec_demo_path = None
     if play_demo_path is not None:
         try:
             with open(play_demo_path, "rb") as f:
@@ -292,7 +294,29 @@ def main() -> int:
     def load_map(marker: str, keep_ps=None, keep_hp: int | None = None):
         game_map = Map.from_wad(wad, marker)
         texman.resolve_map(game_map)
-        start = next(t for t in game_map.things if t.type == 1)
+        phys = Physics(game_map)
+        # Live mobjs (statues until AI lands); physics sees them.
+        index = ThingIndex(game_map)
+        phys.things = index
+        phys.damage_hook = lambda tm, th: combat.things_hit(tm, th, ctx)
+        # NOTE: vanilla P_SetupLevel order: the THINGS loop (console
+        # player spawned inline at its loop position, with its lastlook
+        # draw) runs BEFORE World/P_SpawnSpecials (light thinkers draw
+        # flicker/strobe seeds), so the RNG stream lines up from tic 0.
+        player_box: dict = {}
+        mobjs = spawn_map(game_map, phys, index, skill, nomonsters,
+                          player_hook=lambda mo, th: player_box.update(
+                              mo=mo, thing=th))
+        world = World(game_map, texman)
+        world.totals = level_totals(mobjs, game_map.sectors)
+        # Player body for monster AI and walls alike: the camera drives
+        # this mobj directly (no separate physics body, so there is no
+        # self-collision). Culled from its own view like vanilla.
+        player_mo = player_box["mo"]
+        player_mo.is_player = True
+        start = player_box["thing"]
+        if keep_hp is not None:
+            player_mo.health = keep_hp
         sub = renderer.sector_at(
             game_map, start.x << 16, start.y << 16
         )
@@ -300,32 +324,6 @@ def main() -> int:
         floor = sub.sector.floorheight / 65536.0
         cam = Camera(float(start.x), float(start.y), float(start.angle),
                      floor + VIEWHEIGHT_ABOVE_FLOOR)
-        phys = Physics(game_map)
-        mover = Mover(x=start.x << 16, y=start.y << 16,
-                      z=sub.sector.floorheight)
-        mover.floorz = sub.sector.floorheight
-        mover.ceilingz = sub.sector.ceilingheight
-        world = World(game_map, texman)
-        # Live mobjs (statues until AI lands); physics sees them.
-        index = ThingIndex(game_map)
-        phys.things = index
-        phys.damage_hook = lambda tm, th: combat.things_hit(tm, th, ctx)
-        mobjs = spawn_map(game_map, phys, index, skill, nomonsters)
-        world.totals = level_totals(mobjs, game_map.sectors)
-        # Player body for monster AI and walls alike: the camera drives
-        # this mobj directly (no separate physics body, so there is no
-        # self-collision). Culled from its own view like vanilla.
-        player_mo = spawn_mobj(game_map, phys, index,
-                               mover.x, mover.y, mover.z,
-                               MT_INDEX["PLAYER"])
-        player_mo.is_player = True
-        # NOTE: spawn facing rides the mapthing angle (P_SpawnPlayer);
-        # the vanilla mover follows mo.angle, so a zero here would face
-        # east on every level (E1M1 starts at 90, toward the entry door).
-        player_mo.angle = int(start.angle * 0x100000000 / 360) & 0xFFFFFFFF
-        if keep_hp is not None:
-            player_mo.health = keep_hp
-        mobjs.append(player_mo)
         ctx = AIContext(
             physics=phys, world=world, players=[player_mo],
             sector_index={id(s): i for i, s in enumerate(game_map.sectors)},
@@ -349,6 +347,7 @@ def main() -> int:
         state = {"cooldown": 0, "refire": False, "firing": False,
                  "start": start, "ps": ps, "won": False,
                  "flash_until": 0, "atk_until": 0, "atk_span": 1,
+                 "pending": [],  # NOTE: scheduled shots (weapon windup)
                  "bob": 0, "face": FaceState()}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
 
@@ -370,8 +369,6 @@ def main() -> int:
     message: str | None = None
     message_tics = 0
     map_idx = maps.index(game_map.marker) if game_map.marker in maps else 0
-    msettings = menu.Settings()
-    menu.settings_load(menu.CONFIG_PATH, msettings)
     game_menu = menu.Menu(
         wad, msettings,
         menu.SKILLS.index(skill) if skill in menu.SKILLS else 2)
@@ -735,7 +732,7 @@ def main() -> int:
             f"{rng0} {rng1} "
             f"{sum(1 for mo in mobjs if not mo.dead)} "
             f"{ps.killcount} {ps.ammo[AM_CLIP]} {ps.ammo[AM_SHELL]} "
-            f"{ps.readyweapon} {ps.keys}")
+             f"{ps.readyweapon} {ps.keys}")
 
     if rec_demo_path is not None:
         arm_demo_rec()
@@ -758,9 +755,12 @@ def main() -> int:
         if gamestate == "title" and demo_play is None \
                 and play_demo_path is None and not timedemo \
                 and rec_demo_path is None and rec_path is None \
-                and play_path is None and frames_opt is None:
+                and play_path is None and frames_opt is None \
+                and demos_enabled:
             # NOTE: D_AdvanceDemo lite: an idle title falls into the
             # IWAD demo loop (any key wakes it instead, below).
+            # Gated: demo compat is experimental (see `demos` in
+            # pydoom.cfg); otherwise the title simply waits.
             attract_idle += dt
             if attract_idle >= ATTRACT_DELAY:
                 attract_idle = 0.0
@@ -1140,35 +1140,15 @@ def main() -> int:
         while tic_acc >= 1.0 / TICRATE and not state["won"] \
                 and gamestate == "level" and not paused:
             tic_acc -= 1.0 / TICRATE
-            state["tics"] = state.get("tics", 0) + 1
-            demolog.leveltime = state["tics"]
-            demolog.streamtic = (demo_play.tics if demo_play is not None
-                                 else -1)
+            index = phys.things  # NOTE: bound up front; the thinkers
+            # loop below runs after the player block (vanilla order).
             if message_tics:
                 message_tics -= 1
                 if not message_tics:
                     message = None
-            # Door thinkers, buttons, crush checks (blocker = player).
-            # NOTE: vanilla P_ChangeSector sees every body overlapping
-            # the moving sector, not just the center point: sample the
-            # bbox corners too, so a closing door catches you standing
-            # on its threshold instead of sealing you inside solid rock
-            # (no fit -> stuck under the map).
-            radius = player_mo.radius
-            touched: list = []  # NOTE: order-stable dedup (center first):
-            for px, py in ((player_mo.x, player_mo.y),  # no hash-order here
-                           (player_mo.x - radius, player_mo.y - radius),
-                           (player_mo.x + radius, player_mo.y - radius),
-                           (player_mo.x - radius, player_mo.y + radius),
-                           (player_mo.x + radius, player_mo.y + radius)):
-                sub = phys.subsector_at(px, py)
-                if sub.sector is not None and sub.sector not in touched:
-                    touched.append(sub.sector)
-            world.blocker = (
-                (tuple(touched), player_mo.z, player_mo.height)
-                if touched else None
-            )
-            world.tick()
+            # NOTE: vanilla P_Ticker order (players, then thinkers, then
+            # specials): the player block runs first below, mobjs after
+            # it, and world.tick()/leveltime close the tic at the end.
             if amap is not None:
                 # NOTE: vanilla automap ticks with the gamesim, not the
                 # display: zoom/pan speed stays constant at any fps.
@@ -1179,24 +1159,7 @@ def main() -> int:
                 else:
                     amap.zoom_release()
                 amap.ticker()
-            # Think mobjs (the player body is driven by the camera).
-            index = phys.things
-            for mo in list(mobjs):
-                if mo is player_mo:
-                    continue
-                crossed_mo = think_mobj(mo, phys, ctx)
-                for line in crossed_mo:
-                    world.cross_special_line(line, False, mo, phys,
-                                             mobjs)  # silent
-                if mo.dead:
-                    mobjs.remove(mo)
-                    if index is not None:
-                        index.unlink(mo)
-                    if mo.sector is not None:
-                        try:
-                            mo.sector.thinglist.remove(mo)
-                        except ValueError:
-                            pass
+            # NOTE: mobjs think after the player block below (P_RunThinkers).
             # Weapon raise ticks, then one input packet per tic: held
             # keys are sampled here (35 Hz), not per display frame.
             ps = state["ps"]
@@ -1214,6 +1177,9 @@ def main() -> int:
                     end_demo_playback("end")
                     continue
             if cmd is None:
+                # NOTE: low-res turning only while recording (vanilla
+                # G_BuildTiccmd); plain play stays full-res.
+                tbuilder.lowres_turn = demo_rec is not None
                 cmd = tbuilder.build(ticcmd.RawInput(
                     up=bool(tkeys[pygame.K_w] or tkeys[pygame.K_UP]),
                     down=bool(tkeys[pygame.K_s] or tkeys[pygame.K_DOWN]),
@@ -1228,6 +1194,13 @@ def main() -> int:
                 if demo_rec is not None:
                     demo_rec.append(cmd)
             ps.cmd = cmd  # NOTE: friction reads the move axes (P_XYMovement)
+            if player_mo.flags & _MF_FLAGS["MF_JUSTATTACKED"]:
+                # NOTE: chainsaw lunge (vanilla P_PlayerThink): the next
+                # packet drives straight forward, ignoring the turn keys.
+                cmd.angleturn = 0
+                cmd.forwardmove = 0xC800 // 512
+                cmd.sidemove = 0
+                player_mo.flags &= ~_MF_FLAGS["MF_JUSTATTACKED"]
             if not (kinematic or noclip) \
                     and ps.playerstate == p_user.PST_LIVE \
                     and player_mo.health > 0:
@@ -1239,28 +1212,10 @@ def main() -> int:
                 else:
                     p_user.move_player(player_mo, cmd, set_mobj_state)
                 cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
-            want_fire = bool(cmd.buttons & ticcmd.BT_ATTACK)
-            if want_fire and not state["cooldown"] and player_mo.health > 0:
-                if kinematic or noclip:
-                    player_mo.angle = cam.bam  # NOTE: legacy: camera leads
-                cd = weapons.fire(ps, player_mo, phys, index, mobjs,
-                                  renderer.skyflatnum,
-                                  accurate=not state["refire"], ctx=ctx)
-                if cd >= 0:
-                    state["cooldown"] = cd
-                    body, flash = weapons.PSPRITES[ps.readyweapon]
-                    state["atk_until"] = state.get("tics", 0) + cd
-                    state["atk_span"] = max(1, cd)
-                    if flash is not None:
-                        state["flash_until"] = (
-                            state.get("tics", 0)
-                            + weapons.FLASH_TICS[ps.readyweapon])
-                # NOTE: cd < 0 means still switching or just auto-switched
-                # off a dry gun (vanilla never clicks empty).
-            state["refire"] = want_fire
-            # NOTE: BT_USE edges through usedown (vanilla P_MovePlayer):
-            # holding E must not re-trigger doors every tic. Dead bodies
-            # wait for USE to reborn (death_think below), never use lines.
+            # NOTE: BT_USE edges through usedown (vanilla P_MovePlayer
+            # runs use before psprites/fire): holding E must not
+            # re-trigger doors every tic. Dead bodies wait for USE to
+            # reborn (death_think below), never use lines.
             if (cmd.buttons & ticcmd.BT_USE and not ps.usedown
                     and ps.playerstate == p_user.PST_LIVE):
                 # NOTE: use-aim is the exact integer angle on the vanilla
@@ -1271,8 +1226,6 @@ def main() -> int:
                     player_mo.x, player_mo.y, aim, phys,
                     state["ps"].keys, player_mo, mobjs)
                 message_tics = 3 * TICRATE if message else 0
-                if message is not None:
-                    demolog.emit(f"use: {message}")
                 if world.teleport_angle is not None:
                     cam.angle = (world.teleport_angle
                                  * 2 * math.pi / 0x100000000)
@@ -1282,18 +1235,51 @@ def main() -> int:
                 ps.usedown = True
             elif not cmd.buttons & ticcmd.BT_USE:
                 ps.usedown = False
+            # NOTE: damaging floors/secrets (vanilla P_PlayerThink runs
+            # these pre-move, while still airborne from last tic: the
+            # z-gate skips falling bodies, so stairs don't zap mid-drop).
+            if ps.playerstate == p_user.PST_LIVE:
+                sec_msg = world.player_in_special_sector(player_mo, ps, ctx)
+                if sec_msg is not None:
+                    message, message_tics = sec_msg, 3 * TICRATE
+            want_fire = bool(cmd.buttons & ticcmd.BT_ATTACK)
+            if weapons.tick_pending(ps, player_mo, phys, index, mobjs,
+                                    renderer.skyflatnum, ctx,
+                                    state["pending"]) \
+                    and player_mo.health > 0:
+                # NOTE: a scheduled muzzle flash shows (its shot may
+                # follow later, or never, if the gun lowered).
+                _body, _flash = weapons.PSPRITES[ps.readyweapon]
+                if _flash is not None:
+                    state["flash_until"] = (
+                        state.get("tics", 0)
+                        + weapons.FLASH_TICS[ps.readyweapon])
+            if want_fire and not state["cooldown"] and player_mo.health > 0:
+                if kinematic or noclip:
+                    player_mo.angle = cam.bam  # NOTE: legacy: camera leads
+                cd, flash_now = weapons.fire(
+                    ps, player_mo, phys, index, mobjs,
+                    renderer.skyflatnum, accurate=not state["refire"],
+                    ctx=ctx, queue=state["pending"])
+                if cd >= 0:
+                    state["cooldown"] = cd
+                    body, flash = weapons.PSPRITES[ps.readyweapon]
+                    state["atk_until"] = state.get("tics", 0) + cd
+                    state["atk_span"] = max(1, cd)
+                    if flash_now and flash is not None:
+                        state["flash_until"] = (
+                            state.get("tics", 0)
+                            + weapons.FLASH_TICS[ps.readyweapon])
+                # NOTE: cd < 0 means still switching or just auto-switched
+                # off a dry gun (vanilla never clicks empty).
+            state["refire"] = want_fire
             if (cmd.buttons & ticcmd.BT_CHANGE
                     and ps.playerstate == p_user.PST_LIVE):
                 # NOTE: bit i is digit i+1 through the KEYMAP toggle
                 # (request_weapon is idempotent, holds don't stall it).
-                before = ps.pendingweapon
                 weapons.request_weapon(
                     ps, str(((cmd.buttons & ticcmd.BT_WEAPONMASK)
                              >> ticcmd.BT_WEAPONSHIFT) + 1))
-                if ps.pendingweapon != before:
-                    from pydoom.player import WEAPON_NAMES
-                    demolog.emit("player readies "
-                                 f"{WEAPON_NAMES[ps.pendingweapon]}")
             # NOTE: Doomguy face ticks with the gamesim (ST_updateFaceWidget).
             state["facelump"] = update_face(state["face"], ps, player_mo,
                                             bool(want_fire))
@@ -1313,6 +1299,7 @@ def main() -> int:
                 # (P_DeathThink); the corpse keeps no inventory yet.
                 ps.playerstate = p_user.PST_DEAD
                 message, message_tics = "YOU DIED", 3 * TICRATE
+            dead_this_tic = False
             if ps.playerstate == p_user.PST_DEAD:
                 dead_viewz = p_user.death_think(
                     ps, player_mo, state.get("tics", 0),
@@ -1352,14 +1339,16 @@ def main() -> int:
                                  + VIEWHEIGHT_ABOVE_FLOOR)
                     state["ps"] = PlayerState()
                     state["ps"].usedown = True
+                    state["pending"] = []  # NOTE: rebirth drops windups
                     ctx.player_state = state["ps"]
                     ps = state["ps"]
-                    demolog.emit("player reborn at map start")
+                    dead_this_tic = False
                 else:
-                    if checksum_path is not None and demo_play is not None:
-                        trace_sim_tic()
-                    continue  # corpse waits: no fire/move/pickup this tic
-            if kinematic or noclip:
+                    # NOTE: corpse waits for USE (vanilla P_DeathThink):
+                    # no fire/move/pickup, but mobjs, specials and the
+                    # clock keep running below (never freeze the world).
+                    dead_this_tic = True
+            if (kinematic or noclip) and not dead_this_tic:
                 # NOTE: legacy camera mover (--kinematic, debug noclip):
                 # the packet drives position directly, no momentum.
                 if tkeys[pygame.K_LSHIFT] or tkeys[pygame.K_RSHIFT]:
@@ -1374,11 +1363,13 @@ def main() -> int:
                 # ran right after the build (P_MovePlayer before firing);
                 # here come CalcHeight, then friction/slide in xy_movement.
                 # The camera only follows the integer body.
-                onground = player_mo.z <= player_mo.floorz
-                cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
-                cam.viewz = p_user.calc_height(
-                    ps, player_mo, state.get("tics", 0), onground) / 65536.0
-                state["bobamp"] = min(16, ps.bob >> 16)
+                if not dead_this_tic:
+                    onground = player_mo.z <= player_mo.floorz
+                    cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
+                    cam.viewz = p_user.calc_height(
+                        ps, player_mo, state.get("tics", 0),
+                        onground) / 65536.0
+                    state["bobamp"] = min(16, ps.bob >> 16)
                 fwd = strafe = 0.0
             if fwd or strafe:
                 # NOTE: weapon bob amplitude chases speed (P_CalcHeight);
@@ -1420,9 +1411,10 @@ def main() -> int:
                 # the vanilla path already set bobamp from player->bob.
                 if kinematic or noclip:
                     state["bobamp"] = max(state.get("bobamp", 0) - 4, 0)
-            if not (kinematic or noclip):
+            if not (kinematic or noclip) and not dead_this_tic:
                 # NOTE: friction/slide/crossing (P_XYMovement); the camera
                 # follows the integer body, like the renderer follows mo.
+                # Corpses hold still (their view falls via death_think).
                 crossed_v: list = []
                 if player_mo.momx or player_mo.momy:
                     ox, oy = player_mo.x, player_mo.y
@@ -1436,7 +1428,7 @@ def main() -> int:
                                                    phys, mobjs)
                     if msg is not None:
                         message, message_tics = msg, 3 * TICRATE
-            if not noclip:
+            if not noclip and not dead_this_tic:
                 # Floor/ceiling refresh (lifts carry standing bodies).
                 res = phys.check_position(
                     player_mo, player_mo.x, player_mo.y)
@@ -1465,7 +1457,6 @@ def main() -> int:
                 got = collect_touched(phys, player_mo, ps, ctx)
                 if got is not None:
                     message, message_tics = got, 3 * TICRATE
-                    demolog.emit(f"pickup: {got}")
             if world.teleport_angle is not None:
                 # NOTE: W1 teleports land mid-stride (E1M8 exit chain).
                 cam.angle = (world.teleport_angle
@@ -1473,17 +1464,41 @@ def main() -> int:
                 cam.x = player_mo.x / 65536.0
                 cam.y = player_mo.y / 65536.0
                 world.teleport_angle = None
-            # Damaging floors, secrets and the E1M8 burn-out exit. Corpses
-            # wait for rebirth: vanilla skips these while PST_DEAD.
-            if ps.playerstate == p_user.PST_LIVE:
-                sec_msg = world.player_in_special_sector(player_mo, ps, ctx)
-                if sec_msg is not None:
-                    message, message_tics = sec_msg, 3 * TICRATE
+            # Think mobjs (P_RunThinkers on a live list: thinkers born
+            # this tic think right away, like vanilla's head-to-tail
+            # walk; removal holds the index so the next body slides in).
+            index = phys.things
+            _mi = 0
+            while _mi < len(mobjs):
+                mo = mobjs[_mi]
+                if mo is player_mo:
+                    # NOTE: the player body moves in the player block
+                    # above (camera-driven); it never thinks here.
+                    _mi += 1
+                    continue
+                crossed_mo = think_mobj(mo, phys, ctx)
+                for line in crossed_mo:
+                    world.cross_special_line(line, False, mo, phys,
+                                             mobjs)  # silent
+                if mo.dead and not (mo.flags & combat._MF_CORPSE):
+                    # NOTE: spent puffs/blood/missiles/fog and picked-up
+                    # items leave (vanilla idles their S_NULL thinkers;
+                    # dropping them is behavior-neutral and saves the
+                    # think loop). Corpses stay for crush/respawn/render.
+                    del mobjs[_mi]
+                    if index is not None:
+                        index.unlink(mo)
+                    if mo.sector is not None:
+                        try:
+                            mo.sector.thinglist.remove(mo)
+                        except ValueError:
+                            pass
+                else:
+                    _mi += 1
             if world.exit_kind:
                 cur = game_map.marker
                 nxt = flow.next_map(cur, world.exit_kind == "secret")
                 ps_exit, hp_exit = state["ps"], player_mo.health
-                demolog.emit(f"exit {cur} -> {nxt}")
                 if demo_play is not None:
                     # NOTE: desync-detector checkpoint (statdump-style).
                     tk, ti, ts = world.totals
@@ -1535,6 +1550,30 @@ def main() -> int:
                     floor = player_mo.z / 65536.0
                 target = floor + VIEWHEIGHT_ABOVE_FLOOR
                 cam.viewz += (target - cam.viewz) * 0.3
+            # NOTE: leveltime closes the tic (vanilla P_Ticker): specials
+            # think last, so doors/lights/crush see post-move bodies.
+            state["tics"] = state.get("tics", 0) + 1
+            # Door thinkers, buttons, crush checks (blocker = player).
+            # NOTE: vanilla P_ChangeSector sees every body overlapping
+            # the moving sector, not just the center point: sample the
+            # bbox corners too, so a closing door catches you standing
+            # on its threshold instead of sealing you inside solid rock
+            # (no fit -> stuck under the map).
+            radius = player_mo.radius
+            touched: list = []  # NOTE: order-stable dedup (center first):
+            for px, py in ((player_mo.x, player_mo.y),  # no hash-order here
+                           (player_mo.x - radius, player_mo.y - radius),
+                           (player_mo.x + radius, player_mo.y - radius),
+                           (player_mo.x - radius, player_mo.y + radius),
+                           (player_mo.x + radius, player_mo.y + radius)):
+                sub = phys.subsector_at(px, py)
+                if sub.sector is not None and sub.sector not in touched:
+                    touched.append(sub.sector)
+            world.blocker = (
+                (tuple(touched), player_mo.z, player_mo.height)
+                if touched else None
+            )
+            world.tick()
             if checksum_path is not None and demo_play is not None:
                 trace_sim_tic()
 
@@ -1660,12 +1699,6 @@ def main() -> int:
                                WIN_H // 2 + 130))
         pygame.display.flip()
         frames += 1
-        if shots_dir is not None and frames % shots_every == 0:
-            try:
-                pygame.image.save(
-                    screen, f"{shots_dir}/shot_{frames:06d}.png")
-            except OSError:
-                shots_dir = None  # NOTE: bad dir: shoot once, stop
         if frames_opt is not None and frames >= frames_opt:
             print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
             running = False

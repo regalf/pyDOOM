@@ -146,15 +146,26 @@ def _melee(ps, shooter, physics, index, mobjs, skyflat, ctx,
            saw: bool) -> None:
     """A_Punch/A_Saw: spread-aimed short hitscan (berserk fists x10)."""
     from pydoom.ai import MELEERANGE
+    from pydoom.info import MF_FLAGS
     attack_range = MELEERANGE + (65536 if saw else 0)
-    angle = (shooter.angle + ((p_random() - p_random()) << 18)) & 0xFFFFFFFF
-    slope, _t = aim_line_attack(shooter, angle, attack_range,
-                                physics, index, mobjs, skyflat)
+    if saw:
+        # NOTE: A_Saw lunges (P_PlayerThink overrides the next cmd).
+        shooter.flags |= MF_FLAGS["MF_JUSTATTACKED"]
+    # NOTE: vanilla draws damage first, then the SubRandom spread
+    # (A_Punch/A_Saw): same count, but the values must land in order.
     damage = ((p_random() % 10) + 1) * 2
     if not saw and ps.powers.get(PW_STRENGTH):
         damage *= 10
-    line_attack(shooter, angle, attack_range, slope, damage,
-                physics, index, mobjs, skyflat, ctx)
+    angle = (shooter.angle + ((p_random() - p_random()) << 18)) & 0xFFFFFFFF
+    slope, _t = aim_line_attack(shooter, angle, attack_range,
+                                physics, index, mobjs, skyflat)
+    hit = line_attack(shooter, angle, attack_range, slope, damage,
+                      physics, index, mobjs, skyflat, ctx)
+    if hit is not None:
+        # NOTE: vanilla A_Punch/A_Saw turn into the struck target.
+        from pydoom.angles import point_to_angle2
+        shooter.angle = point_to_angle2(shooter.x, shooter.y,
+                                        hit.x, hit.y) & 0xFFFFFFFF
     # NOTE: vanilla never re-aims the shooter here (manual chainsaw
     # tracking); mo.target may mirror vanilla state but stays unread.
 
@@ -223,32 +234,73 @@ def _bfg_spray(ball, shooter, physics, index, mobjs, skyflat, ctx) -> None:
         damage_mobj(target, shooter, shooter, damage, ctx)
 
 
+# NOTE: P_FireWeapon->fire-action windup in tics (vanilla psprite
+# states): the shot lands W tics after the trigger pull, while noise
+# alerts at the pull. Chaingun/plasma/saw fire on entry (+0).
+WINDUP = {WP_FIST: 4, WP_PISTOL: 4, WP_SHOTGUN: 3, WP_CHAINGUN: 0,
+          WP_MISSILE: 8, WP_PLASMA: 0, WP_BFG: 30, WP_CHAINSAW: 0}
+# NOTE: muzzle-flash delay (A_GunFlash on S_MISSILE1 fires at the pull,
+# BFG flash on S_BFG2 at +20); every other flash rides its shot.
+FLASH_DELAY = {WP_MISSILE: 0, WP_BFG: 20}  # default: WINDUP[weapon]
+
+
 def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
-         ctx=None) -> int:
-    """Fire the ready weapon. Returns cooldown tics, or -1 to hold
-    (still switching, or just auto-switched off a dry gun)."""
+         ctx=None, queue=None) -> tuple:
+    """Trigger pull (P_FireWeapon). Returns (cooldown, flash_now).
+
+    Cooldown gates the next pull (-1 holds: still switching, or just
+    auto-switched off a dry gun). Shots with windup land in
+    tick_pending(); flash_now asks the viewer for this tic's flash.
+    """
     if ps.pendingweapon != ps.readyweapon:
-        return -1
+        return -1, False
     if not has_ammo_for(ps, ps.readyweapon):
         check_ammo(ps)
-        return -1
+        return -1, False
     weapon = ps.readyweapon
+    # NOTE: P_FireWeapon always alerts on a successful trigger pull
+    # (every weapon, fists/saw included): the shot wakes the flood
+    # region before any projectile/hitscan lands.
+    if ctx is not None:
+        from pydoom.ai import noise_alert
+        noise_alert(shooter, shooter, ctx)
+    windup = WINDUP[weapon]
+    if windup <= 0 or queue is None:
+        _shoot(ps, weapon, shooter, physics, index, mobjs, skyflat,
+               accurate, ctx)
+        return COOLDOWN[weapon], True
+    queue.append({"weapon": weapon, "shot": windup,
+                  "flash": FLASH_DELAY.get(weapon, windup),
+                  "accurate": accurate})
+    return COOLDOWN[weapon], FLASH_DELAY.get(weapon, windup) <= 0
+
+
+def tick_pending(ps, shooter, physics, index, mobjs, skyflat, ctx,
+                 queue) -> bool:
+    """Advance scheduled shots; True when a muzzle flash shows. Shots
+    need a live body on the same weapon (switching/death drops them,
+    like lowering the gun mid-windup)."""
+    flashed = False
+    for pend in list(queue):
+        pend["shot"] -= 1
+        pend["flash"] -= 1
+        if pend["flash"] == 0:
+            flashed = True
+        if pend["shot"] <= 0:
+            queue.remove(pend)
+            if shooter.health > 0 and ps.readyweapon == pend["weapon"] \
+                    and ps.pendingweapon == ps.readyweapon:
+                _shoot(ps, pend["weapon"], shooter, physics, index,
+                       mobjs, skyflat, pend["accurate"], ctx)
+    return flashed
+
+
+def _shoot(ps, weapon, shooter, physics, index, mobjs, skyflat,
+           accurate: bool, ctx=None) -> None:
+    """The fire action itself (ammo, projectile/hitscan, shot sound)."""
     ammo, cost = COST[weapon]
     if ammo >= 0:
         ps.ammo[ammo] -= cost
-    from pydoom import demolog
-    from pydoom.player import WEAPON_NAMES
-    if getattr(shooter, "is_player", False):
-        demolog.emit(f"player fires {WEAPON_NAMES[weapon]}")
-        if ctx is not None:
-            # NOTE: P_FireWeapon alerts the map (wakes non-ambush
-            # monsters through open lines); silent shots desync AI.
-            from pydoom.ai import noise_alert
-            noise_alert(shooter, shooter, ctx)
-    from pydoom import demolog
-    from pydoom.player import WEAPON_NAMES
-    if getattr(shooter, "is_player", False):
-        demolog.emit(f"player fires {WEAPON_NAMES[weapon]}")
     from pydoom import audio
     if weapon == WP_FIST:
         # NOTE: vanilla fists swing silent.
@@ -278,6 +330,10 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
                              mobjs)
     elif weapon == WP_PLASMA:
         # NOTE: shareware has no plasma lump; feel free to hear nothing.
+        # NOTE: vanilla picks flashstate+(P_Random()&1) before spawning
+        # (A_FirePlasma): the draw counts even though the flash sprite
+        # rides our own psprite clock.
+        _flash = p_random() & 1
         spawn_player_missile(shooter, MT_INDEX["PLASMA"], physics, index,
                              mobjs)
     elif weapon == WP_BFG:

@@ -10,8 +10,8 @@ ai.ACTIONS by register_combat_actions().
 
 Scope (documented, never silent):
 
-* No armor, godmode, powers or intermission counts: health only.
-  Item drops on death are skipped (no pickups yet).
+* No godmode, powers or intermission counts: health only.
+  Item drops on death spawn always (vanilla clip/shotgun table).
 * No sounds. Muzzle flash/extralight and weapon psprites arrive with
   p_pspr; the viewer fires hitscan directly with its own cooldown.
 * P_ShootSpecialLine never fires (shootable switches don't trigger).
@@ -26,7 +26,7 @@ from __future__ import annotations
 from pydoom import tables
 from pydoom.player import PW_INVULN, CF_GODMODE, WP_CHAINSAW
 from pydoom.angles import point_to_angle2
-from pydoom.fixed import FRACBITS, FRACUNIT, fixed_div, fixed_mul
+from pydoom.fixed import FRACBITS, FRACUNIT, c_div, fixed_div, fixed_mul
 from pydoom.info import MF_FLAGS, MOBJ_TYPES, MT_INDEX, MT_NAMES, STATE_INDEX
 from pydoom.mapdata import ML_TWOSIDED
 from pydoom.m_random import p_random
@@ -92,26 +92,6 @@ def _info(mo):
     return MOBJ_TYPES[mo.type]
 
 
-def _who(mo) -> str:
-    """Narrator name for a damage party (demolog)."""
-    if mo is None:
-        return "world"
-    if getattr(mo, "is_player", False):
-        return "player"
-    name = MT_NAMES[mo.type] if 0 <= mo.type < len(MT_NAMES) else "?"
-    return name
-
-
-def _who(mo) -> str:
-    """Narrator name for a damage party (demolog)."""
-    if mo is None:
-        return "world"
-    if getattr(mo, "is_player", False):
-        return "player"
-    name = MT_NAMES[mo.type] if 0 <= mo.type < len(MT_NAMES) else "?"
-    return name
-
-
 def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
     """P_DamageMobj with player armor/invulnerability/godmode."""
     from pydoom.mobjs import set_mobj_state
@@ -144,16 +124,6 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
             damage -= saved
         # NOTE: red flash tracks post-armor damage, capped at 100.
         ps.damagecount = min(100, ps.damagecount + damage)
-        if damage > 0:
-            from pydoom import demolog
-            demolog.emit(f"player takes {damage}hp"
-                         f" ({_who(source)}/{_who(inflictor)}"
-                         f" hp {target.health - damage})")
-        if damage > 0:
-            from pydoom import demolog
-            demolog.emit(f"player takes {damage}hp"
-                         f" ({_who(source)}/{_who(inflictor)}"
-                         f" hp {target.health - damage})")
     chainsawing = (ps is not None and ps.readyweapon == WP_CHAINSAW)
     if (inflictor is not None and not (target.flags & MF_FLAGS["MF_NOCLIP"])
             and (source is None or not getattr(source, "is_player", False)
@@ -193,19 +163,7 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
 
 def kill_mobj(source, target, ctx=None) -> None:
     """P_KillMobj with clip/shotgun drops and the intermission tally."""
-    from pydoom import demolog
     from pydoom.mobjs import set_mobj_state
-
-    if getattr(target, "is_player", False):
-        demolog.emit(f"PLAYER DIES (by {_who(source)})")
-    elif target.flags & _MF_COUNTKILL:
-        demolog.emit(f"{_who(target)} dies (by {_who(source)})"
-                     f" at ({target.x >> 16},{target.y >> 16})")
-
-    if getattr(target, "is_player", False):
-        demolog.emit(f"PLAYER DIES (by {_who(source)})")
-    elif target.flags & _MF_COUNTKILL:
-        demolog.emit(f"{_who(target)} dies (by {_who(source)})")
 
     if target.flags & _MF_COUNTKILL and ctx is not None:
         # NOTE: every COUNTKILL death tallies, infights included.
@@ -230,21 +188,19 @@ def kill_mobj(source, target, ctx=None) -> None:
         target.tics = 1
     # NOTE: death cries ride the DIE2/XDIE2 states (A_Scream family).
     if ctx is not None:
-        # NOTE: vanilla clip/shotgun/chaingun drops (dropped = half ammo).
+        # NOTE: vanilla clip/shotgun/chaingun drops, always spawned
+        # (dropped = half ammo); no ctx-missing escape hatch.
         drop = {MT_INDEX["POSSESSED"]: MT_INDEX["CLIP"],
                 MT_INDEX["SHOTGUY"]: MT_INDEX["SHOTGUN"],
                 MT_INDEX["WOLFSS"]: MT_INDEX["CLIP"],
                 MT_INDEX["CHAINGUY"]: MT_INDEX["CHAINGUN"]}
         if target.type in drop:
             from pydoom.mobjs import spawn_mobj
-            phys = getattr(ctx, "physics", None)
-            index = getattr(phys, "things", None) if phys is not None else None
-            mobjs = getattr(ctx, "mobjs", None)
-            if phys is not None and index is not None and mobjs is not None:
-                th = spawn_mobj(None, phys, index, target.x, target.y, -1,
-                                drop[target.type])
-                th.flags |= MF_FLAGS["MF_DROPPED"]
-                mobjs.append(th)
+            phys = ctx.physics
+            th = spawn_mobj(None, phys, phys.things, target.x, target.y,
+                            -1, drop[target.type])
+            th.flags |= MF_FLAGS["MF_DROPPED"]
+            ctx.mobjs.append(th)
 
 
 def spawn_missile(source, dest, mt: int, physics, index, mobjs) -> object:
@@ -293,6 +249,11 @@ def explode_missile(mo, ctx=None) -> None:
     from pydoom.mobjs import set_mobj_state
     mo.momx = mo.momy = mo.momz = 0
     set_mobj_state(mo, _info(mo)[_I_DEATHSTATE], ctx)
+    # NOTE: vanilla P_ExplodeMissile jitters the death tics (every
+    # rocket impact draws once); without it the stream under-consumes.
+    mo.tics -= p_random() & 3
+    if mo.tics < 1:
+        mo.tics = 1
     mo.flags &= ~MF_FLAGS["MF_MISSILE"]  # NOTE: spent shells go inert
     voice = audio.MISSILE_DEATHS.get(MT_NAMES[mo.type])
     if voice is not None:
@@ -343,8 +304,6 @@ def spawn_puff(x: int, y: int, z: int, physics, index, mobjs,
     from pydoom.mobjs import set_mobj_state, spawn_mobj
     z += ((p_random() - p_random()) << 10)
     th = spawn_mobj(None, physics, index, x, y, z, MT_INDEX["PUFF"])
-    from pydoom import demolog
-    demolog.emit(f"puff at ({x >> 16},{y >> 16})")
     th.momz = FRACUNIT
     th.tics -= p_random() & 3
     if th.tics < 1:
@@ -362,8 +321,6 @@ def spawn_blood(x: int, y: int, z: int, damage: int, physics, index,
     from pydoom.mobjs import set_mobj_state, spawn_mobj
     z += ((p_random() - p_random()) << 10)
     th = spawn_mobj(None, physics, index, x, y, z, MT_INDEX["BLOOD"])
-    from pydoom import demolog
-    demolog.emit(f"blood dmg {damage} at ({x >> 16},{y >> 16})")
     th.momz = FRACUNIT * 2
     th.tics -= p_random() & 3
     if th.tics < 1:
@@ -429,8 +386,8 @@ def _aim_traverse(shot: _Shot, intercept) -> bool:
     thingbottomslope = fixed_div(th.z - shot.shootz, dist)
     if thingbottomslope > shot.topslope:
         return True
-    shot.aimslope = (min(thingtopslope, shot.topslope)
-                     + max(thingbottomslope, shot.bottomslope)) // 2
+    shot.aimslope = c_div(min(thingtopslope, shot.topslope)
+                          + max(thingbottomslope, shot.bottomslope), 2)
     shot.linetarget = th
     return False
 
@@ -468,8 +425,12 @@ def _shoot_traverse(shot: _Shot, intercept) -> bool:
         return True
     frac2 = frac - fixed_div(10 * FRACUNIT, shot.attackrange)
     x, y, z = _trace_point(shot, frac2)
+    # NOTE: vanilla records linetarget (A_Punch turns into the hit) and
+    # punches don't spark (S_PUFF3 when attackrange is melee).
+    shot.linetarget = th
     if th.flags & MF_FLAGS["MF_NOBLOOD"]:
-        spawn_puff(x, y, z, shot.physics, shot.index, shot.mobjs)
+        spawn_puff(x, y, z, shot.physics, shot.index, shot.mobjs,
+                   melee=(shot.attackrange == MELEERANGE))
     else:
         spawn_blood(x, y, z, shot.damage, shot.physics, shot.index,
                     shot.mobjs)
@@ -534,7 +495,7 @@ def line_attack(shooter, angle: int, distance: int, slope: int,
     shot.ctx = ctx
     physics.path_traverse(shooter.x, shooter.y, x2, y2, 3,
                           lambda inter: _shoot_traverse(shot, inter))
-    return None  # damage/puffs applied inline (linetarget is aim-only)
+    return shot.linetarget
 
 
 def bullet_slope(shooter, physics, index, mobjs, skyflat) -> int:
@@ -601,15 +562,18 @@ def things_hit(mover, thing, ctx=None) -> bool:
 
 
 def _face(actor) -> None:
+    """A_FaceTarget: drop the ambush, snap, spray spectres (2 draws)."""
     from pydoom.angles import point_to_angle2
-    if actor.target is not None:
-        actor.angle = point_to_angle2(actor.x, actor.y,
-                                      actor.target.x, actor.target.y)
-        if actor.target.flags & MF_FLAGS["MF_SHADOW"]:
-            # NOTE: A_FaceTarget sprays spectres (vanilla <<21); the two
-            # draws keep the P_Random stream aligned on infights.
-            actor.angle = (actor.angle
-                           + ((p_random() - p_random()) << 21)) & _U32
+    if actor.target is None:
+        return
+    actor.flags &= ~MF_FLAGS["MF_AMBUSH"]
+    actor.angle = point_to_angle2(actor.x, actor.y,
+                                  actor.target.x, actor.target.y)
+    if actor.target.flags & MF_FLAGS["MF_SHADOW"]:
+        # NOTE: A_FaceTarget sprays spectres (vanilla <<21); the two
+        # draws keep the P_Random stream aligned on infights.
+        actor.angle = (actor.angle
+                       + ((p_random() - p_random()) << 21)) & _U32
 
 
 def _a_posattack(actor, ctx, pellets: int, sound: str) -> None:
@@ -710,7 +674,8 @@ def a_skullattack(actor, ctx) -> None:
     dist = aprox_distance(dest.x - actor.x, dest.y - actor.y) // SKULLSPEED
     if dist < 1:
         dist = 1
-    actor.momz = (dest.z + (dest.height >> 1) - actor.z) // dist
+    # NOTE: C truncating division (negative when the target is below).
+    actor.momz = c_div(dest.z + (dest.height >> 1) - actor.z, dist)
 
 
 def a_explode(actor, ctx) -> None:

@@ -75,6 +75,8 @@ MONSTERS = {
     "SHADOWS": ("sgtsit", "dmpain", "sgtdth", "dmact"),
     "BRUISER": ("brssit", "dmpain", "brsdth", "dmact"),
     "KNIGHT": ("brssit", "dmpain", "brsdth", "dmact"),
+    "HEAD": ("cacsit", "dmpain", "cacdth", "dmact"),
+    "SKULL": (None, "dmpain", "firxpl", "dmact"),
     "BARREL": (None, None, "barexp", None),
 }
 

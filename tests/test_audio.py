@@ -231,7 +231,12 @@ def test_shotgun_blast_cries_once(monkeypatch):
     audio_mod.engine.play = lambda n, x=None, y=None, origin=None: (
         cries.append(n), False)[1]
     try:
-        weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+        _queue: list = []
+        weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx,
+                     _queue)
+        while _queue:  # NOTE: shotgun windup runs out here
+            weapons.tick_pending(ps, player, phys, index, ctx.mobjs,
+                                 None, ctx, _queue)
         assert troop.health < 1000  # pellets landed, baron stands
         for _ in range(12):
             think_mobj(troop, phys, ctx)
@@ -261,6 +266,11 @@ def test_every_played_sound_resolves():
     names.update(re.findall(r'audio\.play\("(\w+)"', src))
     names.discard("plasma")
     names.discard("bfg")  # NOTE: shareware has no lumps for these
+    # NOTE: cacodemon/skull wake/death lumps are registered-only; the
+    # MONSTERS table keeps them for activesound-draw parity (no E1 use).
+    names.discard("cacsit")
+    names.discard("cacdth")
+    names.discard("firxpl")
     missing = [n for n in names
                if n not in audio_mod.SFX or ("DS" + n.upper()) not in lumps]
     assert missing == [], missing

@@ -101,7 +101,10 @@ def test_lmp_roundtrip_is_deterministic(tmp_path):
     import sys
     root = os.path.join(os.path.dirname(__file__), "..")
     env = dict(os.environ, SDL_VIDEODRIVER="dummy",
-               SDL_AUDIODRIVER="dummy")
+               SDL_AUDIODRIVER="dummy",
+               # NOTE: vanilla demo compat is off by default; the
+               # harness opts in explicitly (users use pydoom.cfg).
+               PYDOOM_DEMOS="1")
     script = tmp_path / "fwd.pkl"
     with open(script, "wb") as f:
         pickle.dump([{"ev": [],
@@ -147,19 +150,3 @@ def test_nomonsters_spawn_skips_kill_types():
     phys.things = index2
     bare = spawn_map(game_map, phys, index2, "normal", True)
     assert not any(mo.flags & MF_FLAGS["MF_COUNTKILL"] for mo in bare)
-
-
-def test_demolog_format_and_gate(capsys):
-    from pydoom import demolog
-    demolog.enabled = False
-    demolog.emit("silent")
-    assert capsys.readouterr().out == ""
-    demolog.enabled = True
-    try:
-        demolog.leveltime = 2149
-        demolog.streamtic = 2148
-        demolog.emit("PLAYER DIES (by TROOP)")
-        out = capsys.readouterr().out
-        assert out == "[1:01 t2148] PLAYER DIES (by TROOP)\n"
-    finally:
-        demolog.enabled = False

@@ -60,8 +60,8 @@ def move_player(mo, cmd, set_state=None) -> bool:
     if cmd.sidemove and onground:
         # NOTE: angled strafe is just thrust at angle-ANG90.
         thrust(mo, (mo.angle - ANG90) & (_U32 - 1), cmd.sidemove * 2048)
-    # NOTE: MF_JUSTATTACKED (chainsaw lunge) skipped: our A_Saw never
-    # sets the flag, so the cmd override would never fire.
+    # NOTE: MF_JUSTATTACKED (chainsaw lunge) is applied by the caller
+    # (P_PlayerThink overrides the packet before P_MovePlayer runs).
     if ((cmd.forwardmove or cmd.sidemove)
             and mo.state == STATE_INDEX["S_PLAY"] and set_state is not None):
         set_state(mo, STATE_INDEX["S_PLAY_RUN1"])

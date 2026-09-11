@@ -147,9 +147,13 @@ than it gives. This file lists every known one, by area. Rules:
 
 - Own input format (events plus movement intent, ticcmd spirit) at
   fixed steps with framebuffer checksums — deterministic across
-  runs, verified record-vs-replay equal. No vanilla demo
-  compatibility (that needs ticcmd physics) and no title attract
-  loop yet.
+  runs, verified record-vs-replay equal.
+- Vanilla demo compatibility (.lmp playback/record, title attract
+  loop with DEMO1-3) exists but is experimental and off by default
+  (`demos 1` in pydoom.cfg): streams consume fully and
+  deterministically, scripted runs exit within a tic of vanilla
+  with identical stats, but long IWAD demos still drift in
+  monster-combat phase and need more development.
 
 ## Cheats
 

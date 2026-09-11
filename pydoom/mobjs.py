@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pydoom.fixed import FRACUNIT, fixed_mul
+from pydoom.fixed import FRACUNIT, c_div, fixed_mul
 from pydoom.info import MF_FLAGS, MT_INDEX, STATES, STATE_INDEX, type_record
 from pydoom.mapdata import MAPBLOCKSHIFT, Map
 from pydoom.m_random import p_random
@@ -209,16 +209,43 @@ def spawn_mobj(game_map, physics, index: ThingIndex, x: int, y: int, z: int,
     return mo
 
 
+# NOTE: p_setup.c P_LoadThings skips these Doom2-only doomednums when
+# the game is not commercial (shareware/registered). This engine only
+# supports the shareware IWAD, so the filter always applies.
+_NON_SHAREWARE_TYPES = frozenset({68, 64, 88, 89, 69, 67, 71, 65, 66, 84})
+
+
 def spawn_map(game_map: Map, physics, index: ThingIndex,
-              skill: str = "normal", nomonsters: bool = False) -> list[Mobj]:
-    """P_SpawnMapThing over all map things (players skipped, see docstring)."""
+              skill: str = "normal", nomonsters: bool = False,
+              player_hook=None) -> list[Mobj]:
+    """P_SpawnMapThing over all map things, in lump order.
+
+    The console player (type 1) spawns inline at its loop position, like
+    vanilla's P_SpawnPlayer call inside the THINGS loop: its lastlook
+    draw lands at the right point of the RNG stream. player_hook(mo,
+    thing) receives the player body (None hook keeps the old behavior
+    of skipping players, for unit tests).
+    """
     bit = SKILL_BITS[skill]
     mobjs: list[Mobj] = []
     for thing in game_map.things:
         if thing.type == 11:
             continue  # deathmatch starts recorded elsewhere in vanilla
         if thing.type <= 4:
+            # NOTE: vanilla records starts 1-4 and spawns the console
+            # player inline (non-deathmatch); other starts wait.
+            if thing.type == 1 and player_hook is not None:
+                mo = spawn_mobj(game_map, physics, index,
+                                thing.x << 16, thing.y << 16, -1,
+                                MT_INDEX["PLAYER"])
+                mo.angle = 0x20000000 * (thing.angle // 45)
+                mobjs.append(mo)
+                player_hook(mo, thing)
             continue  # players spawn separately (no player mobj here)
+        if thing.type in _NON_SHAREWARE_TYPES:
+            # NOTE: vanilla P_LoadThings breaks the whole loop here
+            # (!commercial + Doom2-only type), it does not skip one.
+            break
         if thing.options & 16:
             continue  # multiplayer-only
         if not (thing.options & bit):
@@ -319,7 +346,9 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
     elif (ctx is not None and (getattr(ctx, "skill", "normal") == "nightmare"
                                 or getattr(ctx, "respawn", False))
             and mo.spawnpoint is not None
-            and (mo.flags & _MF_COUNTKILL) and not mo.dead):
+            and (mo.flags & _MF_COUNTKILL)):
+        # NOTE: S_NULL corpses qualify (tics -1, movecount aged); live
+        # monsters never reach this branch (their states tick down).
         _maybe_respawn(mo, physics, ctx)
     return crossed
 
@@ -416,7 +445,10 @@ def xy_movement(mo: Mobj, physics, ctx=None) -> list:
     is_player = mo.is_player and not (mo.flags & _MF_MISSILE)
     while xmove or ymove:
         if xmove > MAXMOVE // 2 or ymove > MAXMOVE // 2:
-            ptryx, ptryy = mo.x + xmove // 2, mo.y + ymove // 2
+            # NOTE: C halves with truncating division (xmove/2), not
+            # floor: odd negatives step -188945, not -188946 (oracolo:
+            # 1 subunit drift from tic 103 of E1M4TRIK otherwise).
+            ptryx, ptryy = mo.x + c_div(xmove, 2), mo.y + c_div(ymove, 2)
             xmove >>= 1
             ymove >>= 1
         else:

@@ -149,3 +149,21 @@ def test_angleturn_to_rad_sign_convention():
     # NOTE: positive angleturn turns left (CCW), like cam.turn(+).
     assert ticcmd.angleturn_to_rad(16384) == math.pi / 2
     assert ticcmd.angleturn_to_rad(-16384) == -math.pi / 2
+
+
+def test_lowres_carry_accumulates():
+    # NOTE: vanilla G_BuildTiccmd low-res turning: 256-unit steps with
+    # the rounding error carried, so small moves accumulate exactly.
+    builder = TiccmdBuilder()
+    builder.lowres_turn = True
+    builder.mouse_units_per_px = 8.0
+    total = 0
+    for _ in range(32):
+        builder.add_mouse(1, 0)  # 8 units/tic, below one 256 step
+        total += builder.build(RawInput()).angleturn
+    assert total == -32 * 8  # nothing lost to quantization (left is -)
+    # Plain play stays full-res.
+    free = TiccmdBuilder()
+    free.mouse_units_per_px = 8.0
+    free.add_mouse(1, 0)
+    assert free.build(RawInput()).angleturn == -8

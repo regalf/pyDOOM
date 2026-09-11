@@ -76,6 +76,17 @@ def ready_weapon(ps, weapon):
     ps.switchtics = 0
 
 
+def fire_all(ps, player, phys, index, mobjs, skyflat, accurate, ctx):
+    """Trigger pull + run out the windup (vanilla shot timing)."""
+    queue = []
+    cd, _flash = weapons.fire(ps, player, phys, index, mobjs, skyflat,
+                              accurate, ctx, queue)
+    while queue:
+        weapons.tick_pending(ps, player, phys, index, mobjs, skyflat,
+                             ctx, queue)
+    return cd
+
+
 @requires_wad
 def test_request_gating_and_raise(setup):
     game_map, phys, index, ctx = setup
@@ -108,8 +119,9 @@ def test_fire_during_switch_holds(setup):
     ps.weapons |= 1 << WP_SHOTGUN
     ps.ammo[AM_SHELL] = 8
     weapons.request_weapon(ps, "3")
-    assert weapons.fire(ps, player, phys, index, ctx.mobjs, None, True,
-                        ctx) == -1
+    cd, _flash = weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                              True, ctx, [])
+    assert cd == -1
     assert ps.ammo[AM_SHELL] == 8  # nothing spent mid-switch
 
 
@@ -123,7 +135,7 @@ def test_shotgun_fires_seven_spread_pellets(setup, monkeypatch):
     monkeypatch.setattr(
         weapons, "gunshot",
         lambda shooter, accurate, *a: calls.append(accurate))
-    cd = weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+    cd = fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     assert cd == weapons.COOLDOWN[WP_SHOTGUN]
     assert ps.ammo[AM_SHELL] == 7
     assert calls == [False] * 7  # shotguns always spread
@@ -134,13 +146,14 @@ def test_dry_pistol_falls_back_to_fist(setup):
     game_map, phys, index, ctx = setup
     player, troop, ps, ctx, _ = make_range(setup, dist_units=30)
     ps.ammo[AM_CLIP] = 0
-    assert weapons.fire(ps, player, phys, index, ctx.mobjs, None, True,
-                        ctx) == -1
+    cd, _flash = weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                              True, ctx, [])
+    assert cd == -1
     assert ps.pendingweapon == WP_FIST  # P_CheckAmmo fallback
     for _ in range(weapons.SWITCH_TICS):
         weapons.tick_weapon(ps)
     hp = troop.health
-    cd = weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+    cd = fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     assert cd == weapons.COOLDOWN[WP_FIST]
     assert troop.health < hp  # fists need no ammo
 
@@ -150,12 +163,12 @@ def test_berserk_fists_hit_tenfold(setup):
     game_map, phys, index, ctx = setup
     player, troop, ps, ctx, _ = make_range(setup, dist_units=30)
     ready_weapon(ps, WP_FIST)
-    weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+    fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     plain = 60 - troop.health
     assert 2 <= plain <= 20
     troop.health = 1000  # survive the berserk punch for measuring
     ps.powers[PW_STRENGTH] = -1
-    weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+    fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     assert 1000 - troop.health >= 20
 
 
@@ -168,8 +181,7 @@ def test_rocket_and_plasma_spawn_missiles(setup):
         ready_weapon(ps, weapon)
         ps.ammo[ammo] = 10
         n0 = len(ctx.mobjs)
-        cd = weapons.fire(ps, player, phys, index, ctx.mobjs, None, True,
-                          ctx)
+        cd = fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
         assert cd == weapons.COOLDOWN[weapon]
         assert ps.ammo[ammo] == 9
         kinds = [mo.type for mo in ctx.mobjs[n0:]]
@@ -182,16 +194,16 @@ def test_bfg_needs_forty_cells(setup):
     player, troop, ps, ctx, _ = make_range(setup)
     ready_weapon(ps, WP_BFG)
     ps.ammo[AM_CELL] = 39
-    assert weapons.fire(ps, player, phys, index, ctx.mobjs, None, True,
-                        ctx) == -1  # dry: auto-switch, no shot
+    cd, _flash = weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                              True, ctx, [])
+    assert cd == -1  # dry: auto-switch, no shot
     assert ps.ammo[AM_CELL] == 39
     ps.ammo[AM_CELL] = 40
     assert weapons.request_weapon(ps, "7")  # re-raise the BFG
     for _ in range(weapons.SWITCH_TICS):
         weapons.tick_weapon(ps)
     n0 = len(ctx.mobjs)
-    cd = weapons.fire(ps, player, phys, index, ctx.mobjs, None, True,
-                      ctx)
+    cd = fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     assert cd == weapons.COOLDOWN[WP_BFG]
     assert ps.ammo[AM_CELL] == 0
     assert MT_INDEX["BFG"] in [mo.type for mo in ctx.mobjs[n0:]]
@@ -203,7 +215,7 @@ def test_bfg_spray_hurts_downrange(setup):
     player, troop, ps, ctx, _ = make_range(setup, dist_units=100)
     ready_weapon(ps, WP_BFG)
     ps.ammo[AM_CELL] = 300
-    weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+    fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
     assert troop.health < 60  # ball flies, spray lands at once
 
 
@@ -217,8 +229,8 @@ def test_chaingun_honors_accurate_flag(setup, monkeypatch):
     monkeypatch.setattr(
         weapons, "gunshot",
         lambda shooter, accurate, *a: calls.append(accurate))
-    weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx)
-    weapons.fire(ps, player, phys, index, ctx.mobjs, None, False, ctx)
+    weapons.fire(ps, player, phys, index, ctx.mobjs, None, True, ctx, [])
+    weapons.fire(ps, player, phys, index, ctx.mobjs, None, False, ctx, [])
     assert calls == [True, False]  # aimed first, sprayed on refire
 
 
@@ -240,8 +252,8 @@ def test_weapons_fire_pistol_hits(setup):
     ctx.mobjs = [player, troop]
     hp = troop.health
     for _ in range(6):
-        assert weapons.fire(ps, player, phys, index, ctx.mobjs, None,
-                            True, ctx) >= 0
+        cd = fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+        assert cd >= 0
     assert troop.health < hp
 
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from pydoom.angles import point_to_angle2
 from pydoom.fixed import ANG90, ANG180, ANG270, fixed_div
-from pydoom.info import MF_FLAGS, MT_INDEX, MT_NAMES
+from pydoom.info import MF_FLAGS, MT_INDEX
 from pydoom.mapdata import ML_SOUNDBLOCK, ML_TWOSIDED
 from pydoom.m_random import p_random
 from pydoom.physics import aprox_distance, intercept_vector
@@ -417,15 +417,8 @@ def noise_alert(target, emitter, ctx: AIContext) -> None:
     recursive_sound(emitter.sector, 0, ctx)
 
 
-def _face_target(actor, ctx=None) -> None:
-    """A_FaceTarget: snap angle toward the target (sounds skipped)."""
-    if actor.target is not None:
-        actor.angle = point_to_angle2(actor.x, actor.y,
-                                      actor.target.x, actor.target.y)
-
-
 def _wake_sound(actor) -> None:
-    """A_Look seeyou: posit cycle, bgsit cycle, direct otherwise."""
+    """A_Look seeyou: posit/bgsit cycles, direct otherwise."""
     from pydoom import audio
     from pydoom.info import MT_NAMES
     entry = audio.MONSTERS.get(MT_NAMES[actor.type])
@@ -434,17 +427,14 @@ def _wake_sound(actor) -> None:
     see = entry[0]
     if see is None:
         return
-    if see == "posit1":
+    # NOTE: vanilla cycles posit1/2/3 (%3) and bgsit1/2 (%2); every
+    # other seesound plays fixed (no draw). Missing entries stay
+    # silent AND drawless, like sfx_None.
+    if see in ("posit1", "posit2", "posit3"):
         see = f"posit{p_random() % 3 + 1}"
-    elif see == "bgsit1":
+    elif see in ("bgsit1", "bgsit2"):
         see = f"bgsit{p_random() % 2 + 1}"
     audio.play(see, actor.x, actor.y, actor)
-
-
-def _ai_note(actor, why: str) -> None:
-    """Narrator hook for seestate entries (demolog)."""
-    from pydoom import demolog
-    demolog.emit(f"{MT_NAMES[actor.type]} wakes ({why})")
 
 
 def a_look(actor, ctx: AIContext) -> None:
@@ -457,18 +447,15 @@ def a_look(actor, ctx: AIContext) -> None:
         if actor.flags & _MF_AMBUSH:
             if check_sight(actor, actor.target, ctx):
                 _wake_sound(actor)
-                _ai_note(actor, "sight")
                 set_mobj_state(actor, actor.seestate, ctx)
                 return
         else:
             _wake_sound(actor)
-            _ai_note(actor, "noise")
             set_mobj_state(actor, actor.seestate, ctx)
             return
     if not look_for_players(actor, ctx, False):
         return
     _wake_sound(actor)
-    _ai_note(actor, "sight")
     set_mobj_state(actor, actor.seestate, ctx)
 
 
@@ -501,14 +488,12 @@ def a_chase(actor, ctx: AIContext) -> None:
             new_chase_dir(actor, ctx)
         return
     if actor.meleestate and check_melee_range(actor, ctx):
-        _ai_note(actor, "melee")
         set_mobj_state(actor, actor.meleestate, ctx)
         return
     if actor.missilestate:
         if not (ctx.skill != "nightmare" and not ctx.fast
                 and actor.movecount):
             if check_missile_range(actor, ctx):
-                _ai_note(actor, "missile")
                 set_mobj_state(actor, actor.missilestate, ctx)
                 actor.flags |= _MF_JUSTATTACKED
                 return
@@ -525,10 +510,15 @@ def a_chase(actor, ctx: AIContext) -> None:
 
 
 def _face_target(actor, ctx=None) -> None:
-    """A_FaceTarget: snap angle toward the target (sounds skipped)."""
-    if actor.target is not None:
-        actor.angle = point_to_angle2(actor.x, actor.y,
-                                      actor.target.x, actor.target.y)
+    """A_FaceTarget: drop the ambush, snap, spray spectres (2 draws)."""
+    if actor.target is None:
+        return
+    actor.flags &= ~_MF_AMBUSH
+    actor.angle = point_to_angle2(actor.x, actor.y,
+                                  actor.target.x, actor.target.y)
+    if actor.target.flags & _MF_SHADOW:
+        actor.angle = (actor.angle
+                       + ((p_random() - p_random()) << 21)) & _U32
 
 
 ACTIONS = {

@@ -36,6 +36,10 @@ class Settings:
     mus_vol: int = 8
     mouse_sens: int = 4
     messages: bool = True
+    # NOTE: vanilla demo compat (.lmp playback/record, attract loop)
+    # is experimental and OFF by default (needs more development for
+    # full demo parity); set `demos 1` in pydoom.cfg to enable it.
+    demos: bool = False
 
 
 CONFIG_PATH = "pydoom.cfg"
@@ -66,6 +70,8 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.mouse_sens = max(0, min(SENS_MAX, val))
         elif key == "messages":
             settings.messages = bool(val)
+        elif key == "demos":
+            settings.demos = bool(val)
 
 
 def settings_save(path: str, settings: Settings) -> None:
@@ -76,7 +82,11 @@ def settings_save(path: str, settings: Settings) -> None:
             f.write(f"sfx_vol {settings.sfx_vol}\n"
                     f"mus_vol {settings.mus_vol}\n"
                     f"mouse_sens {settings.mouse_sens}\n"
-                    f"messages {int(settings.messages)}\n")
+                    f"messages {int(settings.messages)}\n"
+                    "# demos 1 enables vanilla demo compat (.lmp "
+                    "playback/record, attract loop); experimental, "
+                    "off by default, needs more development\n"
+                    f"demos {int(settings.demos)}\n")
     except OSError:
         pass
 

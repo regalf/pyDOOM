@@ -119,6 +119,12 @@ class TiccmdBuilder:
         self.use_pending = False
         self.weap_held: set[int] = set()
         self.weap_latched: set[int] = set()
+        # NOTE: low-res turning (vanilla G_BuildTiccmd, recording only):
+        # angleturn quantizes to 256-unit steps and the rounding error
+        # carries to the next tic, so small moves accumulate. Plain
+        # play stays full-res; the viewer enables this while recording.
+        self.lowres_turn = False
+        self.carry = 0
 
     def add_mouse(self, dx: int, dy: int) -> None:
         """Accumulate one motion event (vanilla mousex/mousey units).
@@ -202,5 +208,10 @@ class TiccmdBuilder:
             side = MAXPLMOVE
         elif side < -MAXPLMOVE:
             side = -MAXPLMOVE
+
+        if self.lowres_turn:
+            desired = wrap_angleturn(angleturn + self.carry)
+            angleturn = ((desired + 128) // 256) * 256
+            self.carry = desired - angleturn
 
         return Ticcmd(forward, side, wrap_angleturn(angleturn), buttons)

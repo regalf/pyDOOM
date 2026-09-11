@@ -80,9 +80,7 @@ fidelity project with a file format on top. Work happens on the branch;
       skipped, E1 has none (shareware scope, see DIVERGENCES).
 - [x] Full monster line-trigger set (vanilla `P_CrossSpecialLine`):
       gate was already exact; added 125/126 monsters-only teleports
-      and unconditional W1 clearing. Teleport destinations scan
-      sectors by index (not spawn order) like vanilla, so same-tag
-      pads resolve identically.
+      and unconditional W1 clearing.
 - [x] Nightmare/fast Parm behavior exactly per skill table
       (incl. `-respawn` semantics outside nightmare): `--respawn`
       flag wired to think + savegames (skill bits, baby halve,
@@ -129,11 +127,7 @@ fidelity project with a file format on top. Work happens on the branch;
 - [x] Desync detector: checksum per tic during playback, diffable
       against a reference run. (`--dump-checksums`: stream-tic,
       leveltime, pos/angle/hp/mom, RNG indices, alive, kills, ammo,
-      weapon, keys; byte-identical across runs for all IWAD demos.
-      `--demo-log` narrates every shot/kill/damage/pickup/door/
-      teleport/secret with timestamps for point-by-point audits,
-      including wakes, missile/melee entries and puff-vs-blood
-      hitscan outcomes.)
+      weapon, keys; byte-identical across runs for all IWAD demos.)
 - [x] Recorded demos load in Chocolate Doom / DSDA-Doom (and vice
       versa for short clips). (Our `.lmp` plays clean in Chocolate
       (`timed 52 gametics`, no version error); vanilla clips play in

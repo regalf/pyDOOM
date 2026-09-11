@@ -35,10 +35,11 @@ is marked with a `NOTE:` comment at the point of divergence.
 | Title, menu, intermission tally, finale, save/load, wipes | done |
 | Skill levels (incl. nightmare/fast/respawn), cheats | done |
 | Input demos (own format, checksum-verified) | done |
+| Vanilla demo compat (.lmp playback/record, attract loop) | experimental, off by default (`demos 1` in pydoom.cfg) |
 | Infrared/allmap as real renderer effects | todo |
 | Episodes 2–3 / full IWAD, multiplayer | out of scope |
 
-`276` pytest tests green (`python -m pytest tests/`).
+`328` pytest tests green (`python -m pytest tests/`).
 Deliberate simplifications are catalogued in
 [`docs/DIVERGENCES.md`](docs/DIVERGENCES.md).
 

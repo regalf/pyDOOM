@@ -40,7 +40,7 @@ def played(monkeypatch):
 
 def make_actor(type_name, target=None):
     return SimpleNamespace(type=MT_INDEX[type_name], x=0, y=0, z=0,
-                           angle=0, target=target)
+                           angle=0, target=target, flags=0)
 
 
 def test_scream_cycles_podth_with_one_draw(monkeypatch):
@@ -96,12 +96,14 @@ def test_face_target_sprays_spectres(monkeypatch):
                              flags=MF_FLAGS["MF_SHOOTABLE"]
                              | MF_FLAGS["MF_SHADOW"])
     actor = make_actor("TROOP", target)
+    actor.flags = MF_FLAGS["MF_AMBUSH"]
     set_state((0, 60))
     combat._face(actor)
     t1, t2 = _RNDTABLE[61], _RNDTABLE[62]
     from pydoom.angles import point_to_angle2
     base = point_to_angle2(0, 0, 100 << 16, 0)
     assert actor.angle == (base + ((t1 - t2) << 21)) & 0xFFFFFFFF
+    assert not actor.flags & MF_FLAGS["MF_AMBUSH"]  # A_FaceTarget drops it
     assert get_state() == (0, 62)
     # NOTE: solid targets cost no draws.
     actor2 = make_actor("TROOP", SimpleNamespace(
