@@ -38,16 +38,29 @@ fidelity project with a file format on top. Work happens on the branch;
       its angle with pistol+50 and `usedown` set (corpse dropped, not
       kept — see `docs/DIVERGENCES.md`).
 
-## C. Determinism audit (sim must be bit-exact)
+## C. Determinism audit (sim must be bit-exact) — done on bit-exact-emu
 
-- [ ] Purge floats from sim paths (camera, `math.cos/sin` → fine
-      tables); renderer/visual-only code is exempt.
-- [ ] No hash-order iteration in sim paths (`PYTHONHASHSEED`
-      sensitivity: sets/dicts keyed by id/strings).
-- [ ] Audit `P_Random`/`M_Random` consumption order call-by-call
+- [x] Purge floats from sim paths (camera, `math.cos/sin` → fine
+      tables); renderer/visual-only code is exempt. (`fixed_div` is
+      already bit-exact: vanilla computes it in doubles too, and the
+      saturation guard runs first. Shots/aim now use the integer
+      `mo.angle` on the vanilla path instead of float-rounded
+      `cam.bam`; thrust moved before firing like `P_MovePlayer` before
+      `P_MovePsprites`.)
+- [x] No hash-order iteration in sim paths (`PYTHONHASHSEED`
+      sensitivity: sets/dicts keyed by id/strings). (Only lookups and
+      insertion-ordered dicts remain; the door blocker uses an
+      order-stable sector list. Covered by a two-seed headless run.)
+- [x] Audit `P_Random`/`M_Random` consumption order call-by-call
       against linuxdoom (`p_enemy.c`, `p_map.c`, `p_pspr.c`, …).
-- [ ] Never touch Python `random` in sim code (already true; keep it
+      Fixed: `A_Scream` podth/bgdth cycling drew nothing (stream fell
+      behind on every such kill), `A_PosAttack` drew damage before
+      spread (vanilla: spread first), `A_FaceTarget` missed the
+      spectre `<<21` spray. `tests/test_rng_stream.py` pins counts,
+      order and table values.
+- [x] Never touch Python `random` in sim code (already true; keep it
       that way — it broke demo determinism once, see commit history).
+      (Only the quit jingle uses it: cosmetic, outside the sim.)
 
 ## D. Close sim-affecting divergences (see docs/DIVERGENCES.md)
 

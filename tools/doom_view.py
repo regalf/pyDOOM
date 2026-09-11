@@ -915,15 +915,15 @@ def main() -> int:
             # on its threshold instead of sealing you inside solid rock
             # (no fit -> stuck under the map).
             radius = player_mo.radius
-            touched = set()
-            for px, py in ((player_mo.x, player_mo.y),
+            touched: list = []  # NOTE: order-stable dedup (center first):
+            for px, py in ((player_mo.x, player_mo.y),  # no hash-order here
                            (player_mo.x - radius, player_mo.y - radius),
                            (player_mo.x + radius, player_mo.y - radius),
                            (player_mo.x - radius, player_mo.y + radius),
                            (player_mo.x + radius, player_mo.y + radius)):
                 sub = phys.subsector_at(px, py)
-                if sub.sector is not None:
-                    touched.add(sub.sector)
+                if sub.sector is not None and sub.sector not in touched:
+                    touched.append(sub.sector)
             world.blocker = (
                 (tuple(touched), player_mo.z, player_mo.height)
                 if touched else None
@@ -977,9 +977,21 @@ def main() -> int:
                             or tkeys[pygame.K_RSHIFT]),
                 attack=bool(state["firing"] or tkeys[pygame.K_SPACE])))
             ps.cmd = cmd  # NOTE: friction reads the move axes (P_XYMovement)
+            if not (kinematic or noclip) \
+                    and ps.playerstate == p_user.PST_LIVE \
+                    and player_mo.health > 0:
+                # NOTE: angle+thrust run before firing (vanilla P_MovePlayer
+                # precedes P_MovePsprites), so shots use this tic's exact
+                # integer angle; XY/friction stay at the move site below.
+                if player_mo.reactiontime:
+                    player_mo.reactiontime -= 1
+                else:
+                    p_user.move_player(player_mo, cmd, set_mobj_state)
+                cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
             want_fire = bool(cmd.buttons & ticcmd.BT_ATTACK)
             if want_fire and not state["cooldown"] and player_mo.health > 0:
-                player_mo.angle = cam.bam
+                if kinematic or noclip:
+                    player_mo.angle = cam.bam  # NOTE: legacy: camera leads
                 cd = weapons.fire(ps, player_mo, phys, index, mobjs,
                                   renderer.skyflatnum,
                                   accurate=not state["refire"], ctx=ctx)
@@ -1000,8 +1012,12 @@ def main() -> int:
             # wait for USE to reborn (death_think below), never use lines.
             if (cmd.buttons & ticcmd.BT_USE and not ps.usedown
                     and ps.playerstate == p_user.PST_LIVE):
+                # NOTE: use-aim is the exact integer angle on the vanilla
+                # path (cam.bam rounds through float); legacy uses cam.
+                aim = (player_mo.angle if not (kinematic or noclip)
+                       else cam.bam)
                 message = world.use_lines(
-                    player_mo.x, player_mo.y, cam.bam, phys,
+                    player_mo.x, player_mo.y, aim, phys,
                     state["ps"].keys, player_mo, mobjs)
                 message_tics = 3 * TICRATE if message else 0
                 if world.teleport_angle is not None:
@@ -1093,16 +1109,11 @@ def main() -> int:
                 fwd = cmd.forwardmove * tic_scale
                 strafe = cmd.sidemove * tic_scale
             else:
-                # NOTE: vanilla momentum path (milestone B): angle and
-                # thrust are fixed-point on the integer body (P_MovePlayer);
-                # the camera only follows. Bob amplitude is the real
-                # player->bob (P_CalcHeight), not the input chase.
-                if player_mo.reactiontime:
-                    player_mo.reactiontime -= 1
-                    onground = player_mo.z <= player_mo.floorz
-                else:
-                    onground = p_user.move_player(
-                        player_mo, cmd, set_mobj_state)
+                # NOTE: vanilla momentum path (milestone B): angle+thrust
+                # ran right after the build (P_MovePlayer before firing);
+                # here come CalcHeight, then friction/slide in xy_movement.
+                # The camera only follows the integer body.
+                onground = player_mo.z <= player_mo.floorz
                 cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
                 cam.viewz = p_user.calc_height(
                     ps, player_mo, state.get("tics", 0), onground) / 65536.0

@@ -559,6 +559,11 @@ def _face(actor) -> None:
     if actor.target is not None:
         actor.angle = point_to_angle2(actor.x, actor.y,
                                       actor.target.x, actor.target.y)
+        if actor.target.flags & MF_FLAGS["MF_SHADOW"]:
+            # NOTE: A_FaceTarget sprays spectres (vanilla <<21); the two
+            # draws keep the P_Random stream aligned on infights.
+            actor.angle = (actor.angle
+                           + ((p_random() - p_random()) << 21)) & _U32
 
 
 def _a_posattack(actor, ctx, pellets: int, sound: str) -> None:
@@ -571,8 +576,10 @@ def _a_posattack(actor, ctx, pellets: int, sound: str) -> None:
         slope, _t = aim_line_attack(actor, actor.angle, MISSILERANGE,
                                     ctx.physics, ctx.physics.things,
                                     ctx.mobjs, ctx.skyflatnum)
-        damage = ((p_random() % 5) + 1) * 3
+        # NOTE: vanilla draws spread before damage (A_PosAttack); the
+        # player gunshot below draws damage first, like A_FireShotgun.
         angle = (actor.angle + ((p_random() - p_random()) << 20)) & _U32
+        damage = ((p_random() % 5) + 1) * 3
         line_attack(actor, angle, MISSILERANGE, slope, damage,
                     ctx.physics, ctx.physics.things, ctx.mobjs,
                     ctx.skyflatnum, ctx)
@@ -686,7 +693,20 @@ def _death_cry(actor, name: str) -> None:
 
 
 def a_scream(actor, ctx) -> None:
-    _death_cry(actor, "pldeth")  # NOTE: pdiehi is commercial-only
+    # NOTE: A_Scream cycles podth/bgdth variants (vanilla draws
+    # P_Random here, so the death cry keeps the stream aligned).
+    from pydoom import audio
+    if getattr(actor, "is_player", False):
+        audio.play("pldeth", actor.x, actor.y, actor)  # pdiehi: commercial
+        return
+    entry = audio.MONSTERS.get(MT_NAMES[actor.type])
+    sound = entry[2] if entry is not None else None
+    if sound in ("podth1", "podth2", "podth3"):
+        sound = f"podth{p_random() % 3 + 1}"
+    elif sound in ("bgdth1", "bgdth2"):
+        sound = f"bgdth{p_random() % 2 + 1}"
+    if sound is not None:
+        audio.play(sound, actor.x, actor.y, actor)
 
 
 def a_xscream(actor, ctx) -> None:

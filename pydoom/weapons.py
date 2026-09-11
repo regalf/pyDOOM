@@ -146,7 +146,6 @@ def _melee(ps, shooter, physics, index, mobjs, skyflat, ctx,
            saw: bool) -> None:
     """A_Punch/A_Saw: spread-aimed short hitscan (berserk fists x10)."""
     from pydoom.ai import MELEERANGE
-    from pydoom.angles import point_to_angle2
     attack_range = MELEERANGE + (65536 if saw else 0)
     angle = (shooter.angle + ((p_random() - p_random()) << 18)) & 0xFFFFFFFF
     slope, _t = aim_line_attack(shooter, angle, attack_range,
@@ -156,10 +155,8 @@ def _melee(ps, shooter, physics, index, mobjs, skyflat, ctx,
         damage *= 10
     line_attack(shooter, angle, attack_range, slope, damage,
                 physics, index, mobjs, skyflat, ctx)
-    target = getattr(shooter, "target", None)
-    if target is not None and getattr(target, "health", 0) > 0:
-        shooter.angle = point_to_angle2(shooter.x, shooter.y,
-                                        target.x, target.y)
+    # NOTE: vanilla never re-aims the shooter here (manual chainsaw
+    # tracking); mo.target may mirror vanilla state but stays unread.
 
 
 BFG_SPRAY_RANGE = 16 * 64 * 65536  # p_pspr.c, not MISSILERANGE
@@ -273,6 +270,9 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
     elif weapon == WP_BFG:
         # NOTE: shareware has no BFG lump either.
         # NOTE: A_FireBFG only launches; A_BFGSpray runs on the ball.
+        # DIVERGENCE (commercial-only, no E1 impact): the spray below
+        # fires at launch, vanilla sprays at ball impact, so the 40x15
+        # P_Random draws land earlier in the stream.
         ball = spawn_player_missile(shooter, MT_INDEX["BFG"], physics,
                                     index, mobjs)
         _bfg_spray(ball, shooter, physics, index, mobjs, skyflat, ctx)
