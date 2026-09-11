@@ -254,6 +254,10 @@ def main() -> int:
                                mover.x, mover.y, mover.z,
                                MT_INDEX["PLAYER"])
         player_mo.is_player = True
+        # NOTE: spawn facing rides the mapthing angle (P_SpawnPlayer);
+        # the vanilla mover follows mo.angle, so a zero here would face
+        # east on every level (E1M1 starts at 90, toward the entry door).
+        player_mo.angle = int(start.angle * 0x100000000 / 360) & 0xFFFFFFFF
         if keep_hp is not None:
             player_mo.health = keep_hp
         mobjs.append(player_mo)
