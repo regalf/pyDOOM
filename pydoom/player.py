@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pydoom.fixed import FRACUNIT
+from pydoom.ticcmd import Ticcmd
+
 # Ammo types (ammotype_t order).
 AM_CLIP, AM_SHELL, AM_CELL, AM_MISL = 0, 1, 2, 3
 AMMO_NAMES = ("clip", "shell", "cell", "rocket")
@@ -34,11 +37,15 @@ KEY_COLORS = {"blue": KEY_BLUE | KEY_BSKULL,
               "red": KEY_RED | KEY_RSKULL}
 
 # Cheat flags (doomdef.h CF_): god and noclip live on PlayerState.cheats.
-CF_NOCLIP, CF_GODMODE = 1, 2
+CF_NOCLIP, CF_GODMODE, CF_NOMOMENTUM = 1, 2, 4
 
 # Powers (powertype_t names); tics remaining, strength is level-long.
 PW_INVULN, PW_STRENGTH, PW_INVIS = "invuln", "strength", "invis"
 PW_IRONFEET, PW_ALLMAP, PW_INFRARED = "ironfeet", "allmap", "infrared"
+
+# NOTE: eye height above the feet (p_local.h VIEWHEIGHT); the p_user
+# thinker walks viewheight toward this after stairs and landings.
+VIEWHEIGHT = 41 * FRACUNIT
 
 MAXHEALTH = 100
 GODHEALTH = 200  # soulsphere/health-bonus cap (maxhealth stays 100)
@@ -69,6 +76,16 @@ class PlayerState:
     killcount: int = 0  # NOTE: intermission tally, reset per level
     itemcount: int = 0  # NOTE: intermission tally, reset per level
     secretcount: int = 0  # NOTE: intermission tally, reset per level
+    # NOTE: p_user thinker state (player_t minus the mobj link): eye
+    # height walks toward VIEWHEIGHT, bob feeds view and gun sway,
+    # usedown edges BT_USE, playerstate is PST_LIVE/DEAD/REBORN, and cmd
+    # is the last built Ticcmd (friction reads its move axes).
+    viewheight: int = VIEWHEIGHT
+    deltaviewheight: int = 0
+    bob: int = 0
+    usedown: bool = False
+    playerstate: int = 0  # PST_LIVE (p_user.PST_DEAD/PST_REBORN)
+    cmd: Ticcmd | None = None
 
     def tick(self, player_mo=None) -> None:
         """P_PlayerThink counters: powers, palette flash countdowns."""

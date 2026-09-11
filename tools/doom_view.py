@@ -35,6 +35,7 @@ from pydoom import flow
 from pydoom import interm
 from pydoom import menu
 from pydoom import oplmusic
+from pydoom import p_user
 from pydoom import ticcmd
 from pydoom import weapons
 from pydoom import audio
@@ -44,7 +45,8 @@ from pydoom.doors import World
 from pydoom.info import MT_INDEX, MT_NAMES, STATE_INDEX
 from pydoom.mapdata import Map
 from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map, spawn_mobj
-from pydoom.mobjs import level_totals, think_mobj
+from pydoom.mobjs import level_totals, set_mobj_state, think_mobj
+from pydoom.mobjs import xy_movement
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Mover, Physics
 from pydoom.pickup import collect_touched
@@ -176,6 +178,7 @@ def main() -> int:
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
+    kinematic = False  # --kinematic: legacy camera mover (milestone B)
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
@@ -185,6 +188,8 @@ def main() -> int:
             play_path = a.split("=", 1)[1]
         elif a == "--debug":
             debug = True
+        elif a == "--kinematic":
+            kinematic = True  # NOTE: legacy camera mover for A/B compare
         elif a.startswith("--skill="):
             skill = a.split("=", 1)[1].lower()
             from pydoom.mobjs import SKILL_BITS
@@ -279,7 +284,7 @@ def main() -> int:
             flow.strip_for_next_level(ps)
         ctx.player_state = ps
         state = {"cooldown": 0, "refire": False, "firing": False,
-                 "usedown": False, "start": start, "ps": ps, "won": False,
+                 "start": start, "ps": ps, "won": False,
                  "flash_until": 0, "atk_until": 0, "atk_span": 1,
                  "bob": 0, "face": FaceState()}
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
@@ -951,8 +956,9 @@ def main() -> int:
                 speed=bool(tkeys[pygame.K_LSHIFT]
                             or tkeys[pygame.K_RSHIFT]),
                 attack=bool(state["firing"] or tkeys[pygame.K_SPACE])))
+            ps.cmd = cmd  # NOTE: friction reads the move axes (P_XYMovement)
             want_fire = bool(cmd.buttons & ticcmd.BT_ATTACK)
-            if want_fire and not state["cooldown"]:
+            if want_fire and not state["cooldown"] and player_mo.health > 0:
                 player_mo.angle = cam.bam
                 cd = weapons.fire(ps, player_mo, phys, index, mobjs,
                                   renderer.skyflatnum,
@@ -970,8 +976,10 @@ def main() -> int:
                 # off a dry gun (vanilla never clicks empty).
             state["refire"] = want_fire
             # NOTE: BT_USE edges through usedown (vanilla P_MovePlayer):
-            # holding E must not re-trigger doors every tic.
-            if cmd.buttons & ticcmd.BT_USE and not state["usedown"]:
+            # holding E must not re-trigger doors every tic. Dead bodies
+            # wait for USE to reborn (death_think below), never use lines.
+            if (cmd.buttons & ticcmd.BT_USE and not ps.usedown
+                    and ps.playerstate == p_user.PST_LIVE):
                 message = world.use_lines(
                     player_mo.x, player_mo.y, cam.bam, phys,
                     state["ps"].keys, player_mo, mobjs)
@@ -982,10 +990,11 @@ def main() -> int:
                     cam.x = player_mo.x / 65536.0
                     cam.y = player_mo.y / 65536.0
                     world.teleport_angle = None
-                state["usedown"] = True
+                ps.usedown = True
             elif not cmd.buttons & ticcmd.BT_USE:
-                state["usedown"] = False
-            if cmd.buttons & ticcmd.BT_CHANGE:
+                ps.usedown = False
+            if (cmd.buttons & ticcmd.BT_CHANGE
+                    and ps.playerstate == p_user.PST_LIVE):
                 # NOTE: bit i is digit i+1 through the KEYMAP toggle
                 # (request_weapon is idempotent, holds don't stall it).
                 weapons.request_weapon(
@@ -1004,43 +1013,81 @@ def main() -> int:
                 # S_SAW/S_SAWB pair ticks 4+4), so every 8 tics, not 4.
                 # Tails ring out first: the rev waits for a free moment.
                 audio.play("sawidl", player_mo.x, player_mo.y, player_mo)
-            if player_mo.health <= 0:
-                # Respawn at the map start, monsters lose interest.
+            if player_mo.health <= 0 \
+                    and ps.playerstate == p_user.PST_LIVE:
+                # NOTE: PST_DEAD: the view falls and waits for USE
+                # (P_DeathThink); the corpse keeps no inventory yet.
+                ps.playerstate = p_user.PST_DEAD
                 message, message_tics = "YOU DIED", 3 * TICRATE
-                start = state["start"]
-                if index is not None:
-                    index.unlink(player_mo)
-                if player_mo.sector is not None:
-                    try:
-                        player_mo.sector.thinglist.remove(player_mo)
-                    except ValueError:
-                        pass
-                if player_mo in mobjs:
-                    mobjs.remove(player_mo)
-                player_mo = spawn_mobj(
-                    game_map, phys, index, start.x << 16, start.y << 16,
-                    -1, MT_INDEX["PLAYER"])
-                player_mo.is_player = True
-                mobjs.append(player_mo)
-                ctx.players = [player_mo]
-                for mo in mobjs:
-                    mo.target = None
-                    mo.threshold = 0
-                cam.x, cam.y = float(start.x), float(start.y)
-                cam.viewz = player_mo.z / 65536.0 + VIEWHEIGHT_ABOVE_FLOOR
-                # NOTE: vanilla rebirth resets the inventory to pistol+50.
-                state["ps"] = PlayerState()
-                ctx.player_state = state["ps"]
-            # NOTE: the packet drives the kinematic mover until the
-            # section-B momentum rewrite; scales keep today's walk/run
-            # feel (vanilla units 25/50 map to WALK/RUN_SPEED).
-            if tkeys[pygame.K_LSHIFT] or tkeys[pygame.K_RSHIFT]:
-                tic_scale = RUN_SPEED / 50.0
+            if ps.playerstate == p_user.PST_DEAD:
+                dead_viewz = p_user.death_think(
+                    ps, player_mo, state.get("tics", 0),
+                    bool(cmd.buttons & ticcmd.BT_USE))
+                cam.viewz = dead_viewz / 65536.0
+                cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
+                if ps.playerstate == p_user.PST_REBORN:
+                    # NOTE: G_DoReborn/G_PlayerReborn: fresh body at the
+                    # start spot facing its angle, pistol+50 inventory;
+                    # the corpse is dropped (see DIVERGENCES), monsters
+                    # re-acquire by sight, USE needs a re-press.
+                    start = state["start"]
+                    if index is not None:
+                        index.unlink(player_mo)
+                    if player_mo.sector is not None:
+                        try:
+                            player_mo.sector.thinglist.remove(player_mo)
+                        except ValueError:
+                            pass
+                    if player_mo in mobjs:
+                        mobjs.remove(player_mo)
+                    player_mo = spawn_mobj(
+                        game_map, phys, index, start.x << 16,
+                        start.y << 16, -1, MT_INDEX["PLAYER"])
+                    player_mo.is_player = True
+                    player_mo.angle = int(
+                        start.angle * 0x100000000 / 360) & 0xFFFFFFFF
+                    mobjs.append(player_mo)
+                    ctx.players = [player_mo]
+                    for mo in mobjs:
+                        mo.target = None
+                        mo.threshold = 0
+                    cam.x, cam.y = float(start.x), float(start.y)
+                    cam.angle = (player_mo.angle
+                                 * 2 * math.pi / 0x100000000)
+                    cam.viewz = (player_mo.z / 65536.0
+                                 + VIEWHEIGHT_ABOVE_FLOOR)
+                    state["ps"] = PlayerState()
+                    state["ps"].usedown = True
+                    ctx.player_state = state["ps"]
+                    ps = state["ps"]
+                else:
+                    continue  # corpse waits: no fire/move/pickup this tic
+            if kinematic or noclip:
+                # NOTE: legacy camera mover (--kinematic, debug noclip):
+                # the packet drives position directly, no momentum.
+                if tkeys[pygame.K_LSHIFT] or tkeys[pygame.K_RSHIFT]:
+                    tic_scale = RUN_SPEED / 50.0
+                else:
+                    tic_scale = WALK_SPEED / 25.0
+                cam.turn(ticcmd.angleturn_to_rad(cmd.angleturn))
+                fwd = cmd.forwardmove * tic_scale
+                strafe = cmd.sidemove * tic_scale
             else:
-                tic_scale = WALK_SPEED / 25.0
-            cam.turn(ticcmd.angleturn_to_rad(cmd.angleturn))
-            fwd = cmd.forwardmove * tic_scale
-            strafe = cmd.sidemove * tic_scale
+                # NOTE: vanilla momentum path (milestone B): angle and
+                # thrust are fixed-point on the integer body (P_MovePlayer);
+                # the camera only follows. Bob amplitude is the real
+                # player->bob (P_CalcHeight), not the input chase.
+                if player_mo.reactiontime:
+                    player_mo.reactiontime -= 1
+                    onground = player_mo.z <= player_mo.floorz
+                else:
+                    onground = p_user.move_player(
+                        player_mo, cmd, set_mobj_state)
+                cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
+                cam.viewz = p_user.calc_height(
+                    ps, player_mo, state.get("tics", 0), onground) / 65536.0
+                state["bobamp"] = min(16, ps.bob >> 16)
+                fwd = strafe = 0.0
             if fwd or strafe:
                 # NOTE: weapon bob amplitude chases speed (P_CalcHeight);
                 # the sway phase rides the tic clock, like vanilla.
@@ -1077,8 +1124,26 @@ def main() -> int:
                         if msg is not None:
                             message, message_tics = msg, 3 * TICRATE
             else:
-                # NOTE: standing still settles the weapon (P_CalcHeight).
-                state["bobamp"] = max(state.get("bobamp", 0) - 4, 0)
+                # NOTE: standing still settles the weapon (P_CalcHeight);
+                # the vanilla path already set bobamp from player->bob.
+                if kinematic or noclip:
+                    state["bobamp"] = max(state.get("bobamp", 0) - 4, 0)
+            if not (kinematic or noclip):
+                # NOTE: friction/slide/crossing (P_XYMovement); the camera
+                # follows the integer body, like the renderer follows mo.
+                crossed_v: list = []
+                if player_mo.momx or player_mo.momy:
+                    ox, oy = player_mo.x, player_mo.y
+                    crossed_v = xy_movement(player_mo, phys, ctx)
+                    if (player_mo.x, player_mo.y) != (ox, oy):
+                        refresh_sector(player_mo, phys)
+                    cam.x = player_mo.x / 65536.0
+                    cam.y = player_mo.y / 65536.0
+                for line in crossed_v:
+                    msg = world.cross_special_line(line, True, player_mo,
+                                                   phys, mobjs)
+                    if msg is not None:
+                        message, message_tics = msg, 3 * TICRATE
             if not noclip:
                 # Gravity lite + floor glue (no full gamesim falling):
                 # ride lifts up, fall fast, snap when close.
@@ -1087,6 +1152,10 @@ def main() -> int:
                 if res.ok:
                     player_mo.floorz, player_mo.ceilingz = (
                         res.floorz, res.ceilingz)
+                    if not kinematic:
+                        # NOTE: P_ZMovement smooth step-up: stairs dip
+                        # the view, calc_height walks it back.
+                        p_user.z_step_adjust(ps, player_mo)
                     if player_mo.z > player_mo.floorz:
                         player_mo.z = max(player_mo.floorz,
                                           player_mo.z - 8 * 65536)
@@ -1095,9 +1164,10 @@ def main() -> int:
             # Walk-over pickups (P_TouchSpecialThing sweep) + power ticks.
             ps = state["ps"]
             ps.tick(player_mo)
-            got = collect_touched(phys, player_mo, ps, ctx)
-            if got is not None:
-                message, message_tics = got, 3 * TICRATE
+            if ps.playerstate == p_user.PST_LIVE:
+                got = collect_touched(phys, player_mo, ps, ctx)
+                if got is not None:
+                    message, message_tics = got, 3 * TICRATE
             if world.teleport_angle is not None:
                 # NOTE: W1 teleports land mid-stride (E1M8 exit chain).
                 cam.angle = (world.teleport_angle
@@ -1105,10 +1175,12 @@ def main() -> int:
                 cam.x = player_mo.x / 65536.0
                 cam.y = player_mo.y / 65536.0
                 world.teleport_angle = None
-            # Damaging floors, secrets and the E1M8 burn-out exit.
-            sec_msg = world.player_in_special_sector(player_mo, ps, ctx)
-            if sec_msg is not None:
-                message, message_tics = sec_msg, 3 * TICRATE
+            # Damaging floors, secrets and the E1M8 burn-out exit. Corpses
+            # wait for rebirth: vanilla skips these while PST_DEAD.
+            if ps.playerstate == p_user.PST_LIVE:
+                sec_msg = world.player_in_special_sector(player_mo, ps, ctx)
+                if sec_msg is not None:
+                    message, message_tics = sec_msg, 3 * TICRATE
             if world.exit_kind:
                 cur = game_map.marker
                 nxt = flow.next_map(cur, world.exit_kind == "secret")
@@ -1138,17 +1210,20 @@ def main() -> int:
                     audio.music_play(INTER_SONG, "exit-inter")
                     wipe_after = "inter"
                     gamestate = "wipe"
-            # Ease viewz toward standing height on the current floor.
-            if noclip:
-                sub = renderer.sector_at(
-                    game_map, int(cam.x * 65536), int(cam.y * 65536)
-                )
-                floor = (sub.sector.floorheight / 65536.0
-                         if sub.sector is not None else cam.viewz)
-            else:
-                floor = player_mo.z / 65536.0
-            target = floor + VIEWHEIGHT_ABOVE_FLOOR
-            cam.viewz += (target - cam.viewz) * 0.3
+            # Ease viewz toward standing height on the current floor
+            # (legacy/ noclip only: the vanilla path sets cam.viewz from
+            # P_CalcHeight every tic, no smoothing like vanilla).
+            if kinematic or noclip:
+                if noclip:
+                    sub = renderer.sector_at(
+                        game_map, int(cam.x * 65536), int(cam.y * 65536)
+                    )
+                    floor = (sub.sector.floorheight / 65536.0
+                             if sub.sector is not None else cam.viewz)
+                else:
+                    floor = player_mo.z / 65536.0
+                target = floor + VIEWHEIGHT_ABOVE_FLOOR
+                cam.viewz += (target - cam.viewz) * 0.3
 
         audio.set_listener(player_mo.x, player_mo.y, cam.bam)
         if amap is not None:

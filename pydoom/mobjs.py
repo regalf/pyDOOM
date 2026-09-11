@@ -2,7 +2,8 @@
 
 Covers P_SpawnMobj/P_SpawnMapThing (skill filter, ambush, ceiling
 placement), P_SetMobjState (no action functions yet), P_MobjThinker
-(momentum/friction/gravity/state countdown only), P_XYMovement and
+(momentum/friction/gravity/state countdown only), P_XYMovement (with the
+player slide/stop branches, driven by ctx.player_state) and
 P_ZMovement (no missiles, skulls, floaters or crush damage), plus
 sector thinglists and blockmap links (P_SetThingPosition /
 P_UnsetThingPosition).
@@ -30,9 +31,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pydoom.fixed import FRACUNIT, fixed_mul
-from pydoom.info import MF_FLAGS, STATES, type_record
+from pydoom.info import MF_FLAGS, STATES, STATE_INDEX, type_record
 from pydoom.mapdata import MAPBLOCKSHIFT, Map
 from pydoom.m_random import p_random
+from pydoom.player import CF_NOMOMENTUM
 
 __all__ = [
     "SKILL_BITS",
@@ -47,6 +49,7 @@ __all__ = [
     "spawn_mobj",
     "set_mobj_state",
     "think_mobj",
+    "xy_movement",
     "refresh_sector",
     "level_totals",
 ]
@@ -283,7 +286,7 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
     crossed: list = []
     if mo.momx or mo.momy or (mo.flags & _MF_SKULLFLY):
         ox, oy = mo.x, mo.y
-        crossed.extend(_xy_movement(mo, physics, ctx))
+        crossed.extend(xy_movement(mo, physics, ctx))
         if mo.dead:
             return crossed
         if (mo.x, mo.y) != (ox, oy):
@@ -381,8 +384,14 @@ def refresh_sector(mo: Mobj, physics) -> None:
         mo.sector.thinglist.append(mo)
 
 
-def _xy_movement(mo: Mobj, physics, ctx=None) -> list:
-    """P_XYMovement without players/skulls (see docstring)."""
+def xy_movement(mo: Mobj, physics, ctx=None) -> list:
+    """P_XYMovement: stepped slide-move, then friction or full stop.
+
+    Players slide on blocked moves (P_SlideMove) instead of stopping,
+    honor CF_NOMOMENTUM, and only stop below STOPSPEED with no move
+    input held (walking frames return to S_PLAY); the last Ticcmd and
+    cheats ride on ctx.player_state, like player->cmd/player->cheats.
+    """
     crossed: list = []
     if not mo.momx and not mo.momy:
         return crossed
@@ -395,6 +404,7 @@ def _xy_movement(mo: Mobj, physics, ctx=None) -> list:
     elif mo.momy < -MAXMOVE:
         mo.momy = -MAXMOVE
     xmove, ymove = mo.momx, mo.momy
+    is_player = mo.is_player and not (mo.flags & _MF_MISSILE)
     while xmove or ymove:
         if xmove > MAXMOVE // 2 or ymove > MAXMOVE // 2:
             ptryx, ptryy = mo.x + xmove // 2, mo.y + ymove // 2
@@ -406,17 +416,37 @@ def _xy_movement(mo: Mobj, physics, ctx=None) -> list:
         ok, got = physics.try_move(mo, ptryx, ptryy)
         crossed.extend(got)
         if not ok:
-            if mo.flags & _MF_MISSILE and not (mo.flags & _MF_NOCLIP):
+            if is_player:
+                physics.slide_move(mo, crossed)
+            elif mo.flags & _MF_MISSILE and not (mo.flags & _MF_NOCLIP):
                 from pydoom.combat import explode_missile
                 explode_missile(mo, ctx)
             else:
-                mo.momx = mo.momy = 0  # blocked (players would slide)
+                mo.momx = mo.momy = 0  # blocked
+    if is_player:
+        ps = getattr(ctx, "player_state", None)
+        if ps is not None and (ps.cheats & CF_NOMOMENTUM):
+            # NOTE: debug no-sliding option: momentum dies here.
+            mo.momx = mo.momy = 0
+            return crossed
     if mo.flags & (_MF_MISSILE | _MF_SKULLFLY):
         return crossed  # no friction for missiles ever
     if mo.z > mo.floorz:
         return crossed  # no friction when airborne
+    cmd_fwd = cmd_side = 0
+    if is_player:
+        ps = getattr(ctx, "player_state", None)
+        cmd = getattr(ps, "cmd", None) if ps is not None else None
+        if cmd is not None:
+            cmd_fwd, cmd_side = cmd.forwardmove, cmd.sidemove
     if ((mo.momx > -STOPSPEED and mo.momx < STOPSPEED
-         and mo.momy > -STOPSPEED and mo.momy < STOPSPEED)):
+         and mo.momy > -STOPSPEED and mo.momy < STOPSPEED)
+            and (not is_player or (cmd_fwd == 0 and cmd_side == 0))):
+        if is_player and (STATE_INDEX["S_PLAY_RUN1"] <= mo.state
+                          <= STATE_INDEX["S_PLAY_RUN1"] + 3):
+            # NOTE: walking frames settle back to S_PLAY (ctx-free:
+            # run frames carry no actions, so nothing else can fire).
+            set_mobj_state(mo, STATE_INDEX["S_PLAY"])
         mo.momx = mo.momy = 0
     else:
         # NOTE: the MF_CORPSE halfway-off-step exception needs the

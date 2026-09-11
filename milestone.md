@@ -20,14 +20,23 @@ fidelity project with a file format on top. Work happens on the branch;
 - [x] Keep the current intent-recorder as the fallback/debug path
       (unchanged pickle format; record/replay checksums still agree).
 
-## B. Player physics rewrite
+## B. Player physics rewrite — done on bit-exact-emu (`pydoom/p_user.py`)
 
-- [ ] `P_PlayerThink` / `P_MovePlayer`: momentum, `FRICTION` /
+- [x] `P_PlayerThink` / `P_MovePlayer`: momentum, `FRICTION` /
       `STOPSPEED`, `P_CalcHeight` (bob/viewheight), angled strafe,
-      use-button traversal — fixed-point, vanilla speeds.
-- [ ] Replace the camera-kinematic mover for the demo path (keep the
-      current mover behind a flag for comparison while porting).
-- [ ] Rebirth/death flow per vanilla (`PST_REBORN`, inventory reset).
+      use-button traversal — fixed-point, vanilla speeds
+      (`move_player` thrusts `forward*2048` through the fine tables;
+      `calc_height` walks viewheight; run converges to 16.67 mu/tic,
+      covered by `tests/test_p_user.py` incl. a real-E1M1 ramp test).
+- [x] Replace the camera-kinematic mover for the demo path (keep the
+      current mover behind a flag for comparison while porting):
+      vanilla momentum is the default, `--kinematic` restores the old
+      mover bit-exactly (same 90-frame checksum as before the rewrite).
+- [x] Rebirth/death flow per vanilla (`PST_REBORN`, inventory reset):
+      `PST_DEAD` falls the view, faces the killer in `ANG5` steps and
+      waits for `BT_USE`; rebirth respawns at the start spot facing
+      its angle with pistol+50 and `usedown` set (corpse dropped, not
+      kept — see `docs/DIVERGENCES.md`).
 
 ## C. Determinism audit (sim must be bit-exact)
 
