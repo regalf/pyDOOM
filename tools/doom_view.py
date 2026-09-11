@@ -909,10 +909,24 @@ def main() -> int:
                 if not message_tics:
                     message = None
             # Door thinkers, buttons, crush checks (blocker = player).
-            sub_now = phys.subsector_at(player_mo.x, player_mo.y)
+            # NOTE: vanilla P_ChangeSector sees every body overlapping
+            # the moving sector, not just the center point: sample the
+            # bbox corners too, so a closing door catches you standing
+            # on its threshold instead of sealing you inside solid rock
+            # (no fit -> stuck under the map).
+            radius = player_mo.radius
+            touched = set()
+            for px, py in ((player_mo.x, player_mo.y),
+                           (player_mo.x - radius, player_mo.y - radius),
+                           (player_mo.x + radius, player_mo.y - radius),
+                           (player_mo.x - radius, player_mo.y + radius),
+                           (player_mo.x + radius, player_mo.y + radius)):
+                sub = phys.subsector_at(px, py)
+                if sub.sector is not None:
+                    touched.add(sub.sector)
             world.blocker = (
-                (sub_now.sector, player_mo.z, player_mo.height)
-                if sub_now.sector is not None else None
+                (tuple(touched), player_mo.z, player_mo.height)
+                if touched else None
             )
             world.tick()
             if amap is not None:

@@ -233,9 +233,11 @@ def move_plane(sector, speed: int, dest: int, crush: bool,
                blocker=None) -> int:
     """T_MovePlane (p_floor.c) with an optional player blocker.
 
-    blocker is (sector, z, height): when the moving plane would leave
-    the blocker unfit inside *its own* sector, the move reverts and
-    reports CRUSHED, like P_ChangeSector does for mobjs standing there.
+    blocker is (sectors, z, height): every sector the player body
+    overlaps (vanilla P_ChangeSector walks the blockmap, so threshold
+    bodies count too). When the moving plane would leave the blocker
+    unfit inside the *moving* sector, the move reverts and reports
+    CRUSHED, like P_ChangeSector does for mobjs standing there.
     crush=True (crushers) is accepted but behaves the same: without
     mobjs there is nothing to damage.
     """
@@ -271,8 +273,8 @@ def move_plane(sector, speed: int, dest: int, crush: bool,
 
 
 def _blocks(blocker, sector) -> bool:
-    bsector, z, height = blocker
-    if bsector is not sector:
+    bsectors, z, height = blocker
+    if sector not in bsectors:
         return False
     return sector.ceilingheight - max(sector.floorheight, z) < height
 

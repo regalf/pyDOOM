@@ -164,7 +164,7 @@ def test_move_plane_crushes_blocker():
     from pydoom.mapdata import Sector
     sec = Sector(floorheight=0, ceilingheight=56 * FRACUNIT)
     # Blocker exactly filling the sector: any drop crushes.
-    blocker = (sec, 0, 56 * FRACUNIT)
+    blocker = ((sec,), 0, 56 * FRACUNIT)
     from pydoom.doors import PlaneResult
     assert move_plane(sec, 8 * FRACUNIT, 0, False, 1, -1, blocker) == (
         PlaneResult.CRUSHED)
@@ -173,6 +173,26 @@ def test_move_plane_crushes_blocker():
     assert move_plane(sec, 64 * FRACUNIT, 0, False, 1, -1, None) == (
         PlaneResult.PASTDEST)
     assert sec.ceilingheight == 0
+
+
+def test_move_plane_crushes_threshold_blocker():
+    """A body overlapping the moving sector crushes even when its center
+    is in the next room: the blocker carries every overlapped sector,
+    so a closing door reopens on a player mid-threshold instead of
+    sealing them inside solid geometry (stuck under the map)."""
+    from pydoom.doors import PlaneResult, move_plane
+    from pydoom.mapdata import Sector
+    door = Sector(floorheight=0, ceilingheight=56 * FRACUNIT)
+    room = Sector(floorheight=0, ceilingheight=72 * FRACUNIT)
+    blocker = ((room, door), 0, 56 * FRACUNIT)
+    assert move_plane(door, 8 * FRACUNIT, 0, False, 1, -1, blocker) == (
+        PlaneResult.CRUSHED)
+    assert door.ceilingheight == 56 * FRACUNIT  # reverted
+    # A body fully outside still lets the door close.
+    clear = ((room,), 0, 56 * FRACUNIT)
+    assert move_plane(door, 64 * FRACUNIT, 0, False, 1, -1, clear) == (
+        PlaneResult.PASTDEST)
+    assert door.ceilingheight == 0
 
 
 @requires_wad
@@ -289,7 +309,7 @@ def test_ceiling_grind_slowdown_and_quiet_lowerer(setup):
     hurt = []
     world.crush_hook = hurt.append
     # NOTE: a tall blocker in the sector grinds the ceiling forever.
-    world.blocker = (sec, sec.floorheight, 200 * FRACUNIT)
+    world.blocker = ((sec,), sec.floorheight, 200 * FRACUNIT)
     try:
         assert world.do_ceiling(SimpleNamespace(tag=sec.tag),
                                 "crushAndRaise")

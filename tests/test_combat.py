@@ -241,7 +241,7 @@ def test_blue_room_zombie_retaliates(setup):
     for _ in range(1500):
         sub = phys.subsector_at(player.x, player.y)
         world.blocker = (
-            (sub.sector, player.z, player.height)
+            ((sub.sector,), player.z, player.height)
             if sub.sector is not None else None)
         world.tick()
         for mo in list(mobjs):
