@@ -19,3 +19,7 @@ savegames/
 # local options (menu sliders)
 pydoom.cfg
 *.wav
+
+# commercial IWAD (copyrighted, never commit; tests skip without it)
+doom.wad
+DOOM.WAD
