@@ -486,11 +486,12 @@ def main() -> int:
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
             mobjs, ctx, state, map_idx, amap, message, message_tics, \
             noclip, skill, fast, respawn, nomonsters, running, has_level, \
-            demo_play
+            demo_play, wipe_after
         err = saveg.validate(bundle, maps)
         if err is not None:
             audio.play("oof")
             return
+        old = last_fb.copy() if last_fb is not None else None
         skill = bundle["skill"]
         fast = bundle.get("fast", False)
         respawn = bundle.get("respawn", False)
@@ -534,7 +535,12 @@ def main() -> int:
         map_idx = maps.index(game_map.marker)
         pygame.display.set_caption(f"pydoom - {game_map.marker}")
         audio.music_play(song_for_map(game_map.marker), "load-game")
-        gamestate = "level"
+        if old is None:
+            gamestate = "level"
+        else:  # NOTE: vanilla melts into the loaded game
+            melt.start(old, render_scene())
+            wipe_after = "level"
+            gamestate = "wipe"
 
     def apply_menu_event(mev):
         """Menu selections: quit, or a wiped fresh start on E1M1."""
