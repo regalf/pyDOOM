@@ -320,3 +320,35 @@ def test_kill_tallies_countkill(setup):
     ctx.mobjs = [troop, player]
     damage_mobj(troop, None, None, 1000, ctx)
     assert ps.killcount == 1
+
+
+@requires_wad
+def test_player_corpse_thinks_screams_and_settles(setup, monkeypatch):
+    """Player death (vanilla P_KillMobj path): the corpse counts its
+    death states down (A_PlayerScream on DIE2), slides to a stop, and
+    consumes no RNG doing it."""
+    from pydoom import audio as audio_mod
+    from pydoom.info import STATE_INDEX
+    from pydoom.m_random import get_state
+    game_map, phys, index, ctx = setup
+    _, player, ctx, _ = make_duel(setup)
+    player.is_player = True
+    player.momx = 8 * 65536  # NOTE: dying mid-stride (slide-out)
+    sounds = []
+    monkeypatch.setattr(audio_mod, "play",
+                        lambda n, *a: sounds.append(n) or False)
+    kill_mobj(None, player, ctx)
+    assert player.state == STATE_INDEX["S_PLAY_DIE1"]
+    rng0 = get_state()
+    for _ in range(12):  # DIE1 (10 tics) -> DIE2 entry screams
+        think_mobj(player, phys, ctx)
+    assert "pldeth" in sounds  # NOTE: vanilla A_PlayerScream on DIE2
+    assert player.state == STATE_INDEX["S_PLAY_DIE2"]
+    assert get_state() == rng0  # corpse animation draws nothing
+    for _ in range(400):  # slide settles via friction, never NaN
+        think_mobj(player, phys, ctx)
+    assert (player.momx, player.momy) == (0, 0)
+    # NOTE: vanilla idles corpses on DIE7 (tics -1), never S_NULL.
+    assert player.state == STATE_INDEX["S_PLAY_DIE7"]
+    assert player.tics == -1
+    assert player.flags & _MF_CORPSE  # kept for crush/render

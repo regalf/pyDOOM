@@ -183,7 +183,9 @@ def update_face(fs: FaceState, ps, mo, attackdown: bool) -> str:
     from pydoom.m_random import m_random
     from pydoom.player import PW_INVULN
     health = mo.health
-    if fs.priority < 10 and health == 0:
+    # NOTE: vanilla tests !health (dead on overkill too); == 0 would
+    # miss corpses and leak pain-offset indexes into the god face.
+    if fs.priority < 10 and health <= 0:
         fs.priority, fs.faceindex, fs.facecount = 9, 41, 1
     if fs.priority < 9 and ps.bonuscount:
         grin = False

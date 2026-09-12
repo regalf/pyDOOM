@@ -1297,8 +1297,11 @@ def main() -> int:
                     and ps.playerstate == p_user.PST_LIVE:
                 # NOTE: PST_DEAD: the view falls and waits for USE
                 # (P_DeathThink); the corpse keeps no inventory yet.
+                # The key hint is display-only (rebirth itself stays
+                # vanilla: USE edge, like the original).
                 ps.playerstate = p_user.PST_DEAD
-                message, message_tics = "YOU DIED", 3 * TICRATE
+                message, message_tics = "YOU DIED - press USE (E)", \
+                    3 * TICRATE
             dead_this_tic = False
             if ps.playerstate == p_user.PST_DEAD:
                 dead_viewz = p_user.death_think(
@@ -1306,43 +1309,36 @@ def main() -> int:
                     bool(cmd.buttons & ticcmd.BT_USE))
                 cam.viewz = dead_viewz / 65536.0
                 cam.angle = (player_mo.angle * 2 * math.pi / 0x100000000)
+                # NOTE: weapon sway chases the (decaying) corpse momentum
+                # like vanilla: no frozen bob over the death fall.
+                state["bobamp"] = min(16, ps.bob >> 16)
                 if ps.playerstate == p_user.PST_REBORN:
-                    # NOTE: G_DoReborn/G_PlayerReborn: fresh body at the
-                    # start spot facing its angle, pistol+50 inventory;
-                    # the corpse is dropped (see DIVERGENCES), monsters
-                    # re-acquire by sight, USE needs a re-press.
-                    start = state["start"]
-                    if index is not None:
-                        index.unlink(player_mo)
-                    if player_mo.sector is not None:
-                        try:
-                            player_mo.sector.thinglist.remove(player_mo)
-                        except ValueError:
-                            pass
-                    if player_mo in mobjs:
-                        mobjs.remove(player_mo)
-                    player_mo = spawn_mobj(
-                        game_map, phys, index, start.x << 16,
-                        start.y << 16, -1, MT_INDEX["PLAYER"])
-                    player_mo.is_player = True
-                    player_mo.angle = int(
-                        start.angle * 0x100000000 / 360) & 0xFFFFFFFF
-                    mobjs.append(player_mo)
-                    ctx.players = [player_mo]
-                    for mo in mobjs:
-                        mo.target = None
-                        mo.threshold = 0
-                    cam.x, cam.y = float(start.x), float(start.y)
-                    cam.angle = (player_mo.angle
-                                 * 2 * math.pi / 0x100000000)
-                    cam.viewz = (player_mo.z / 65536.0
-                                 + VIEWHEIGHT_ABOVE_FLOOR)
-                    state["ps"] = PlayerState()
+                    # NOTE: vanilla SP rebirth reloads the level from
+                    # scratch (G_DoReborn -> ga_loadlevel, no tally):
+                    # fresh map and pistol+50, tallies kept, RNG stream
+                    # untouched (multiplayer respawns in place instead).
+                    keep_kills = ps.killcount
+                    keep_items = ps.itemcount
+                    keep_secrets = ps.secretcount
+                    (game_map, cam, phys, player_mo, world, mobjs, ctx,
+                     state) = load_map(game_map.marker)
+                    index = phys.things
+                    state["ps"].killcount = keep_kills
+                    state["ps"].itemcount = keep_items
+                    state["ps"].secretcount = keep_secrets
                     state["ps"].usedown = True
-                    state["pending"] = []  # NOTE: rebirth drops windups
-                    ctx.player_state = state["ps"]
+                    message, message_tics = None, 0
                     ps = state["ps"]
                     dead_this_tic = False
+                    # NOTE: melt into the fresh level (presentation only;
+                    # vanilla cuts instantly): softens the reload snap.
+                    # The reloaded world starts thinking next tic, like
+                    # vanilla's tick-boundary ga_loadlevel.
+                    old = last_fb.copy() if last_fb is not None else None
+                    melt.start(old, render_scene())
+                    wipe_after = "level"
+                    gamestate = "wipe"
+                    continue
                 else:
                     # NOTE: corpse waits for USE (vanilla P_DeathThink):
                     # no fire/move/pickup, but mobjs, specials and the
@@ -1471,15 +1467,16 @@ def main() -> int:
             _mi = 0
             while _mi < len(mobjs):
                 mo = mobjs[_mi]
-                if mo is player_mo:
-                    # NOTE: the player body moves in the player block
-                    # above (camera-driven); it never thinks here.
+                if mo is player_mo and ps.playerstate == p_user.PST_LIVE:
+                    # NOTE: the live body moves in the player block
+                    # above (camera-driven); it never thinks here. The
+                    # corpse does (death states, scream, slide, crush).
                     _mi += 1
                     continue
                 crossed_mo = think_mobj(mo, phys, ctx)
                 for line in crossed_mo:
-                    world.cross_special_line(line, False, mo, phys,
-                                             mobjs)  # silent
+                    world.cross_special_line(line, mo.is_player, mo,
+                                             phys, mobjs)
                 if mo.dead and not (mo.flags & combat._MF_CORPSE):
                     # NOTE: spent puffs/blood/missiles/fog and picked-up
                     # items leave (vanilla idles their S_NULL thinkers;

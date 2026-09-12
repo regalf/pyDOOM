@@ -36,9 +36,10 @@ than it gives. This file lists every known one, by area. Rules:
   momentum mover (`pydoom/p_user.py`: thrust, `FRICTION`/`STOPSPEED`,
   `P_CalcHeight` bob/viewheight). `--kinematic` keeps the old
   camera-direct mover for comparison; key/mouse bindings stay fixed.
-- Death drops the corpse: vanilla keeps the dead body as an
-  unshootable decoration (monsters mill around it); rebirth removes it
-  and clears monster targets so no dangling references survive.
+- Death reloads the level from scratch in single player
+  (`G_DoReborn` → `ga_loadlevel`, no tally): fresh map and pistol+50
+  with tallies kept and the RNG stream untouched, exactly like
+  vanilla (multiplayer respawns in place instead, out of scope).
 - Gravity lite plus floor glue instead of full `P_ZMovement`: lifts
   carry the body via re-glue, falls snap when close. No falling
   damage (vanilla has none either), no jumping/crouching (same).

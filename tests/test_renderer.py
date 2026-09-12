@@ -160,6 +160,11 @@ def test_face_cascade():
     # NOTE: corpse face wins over everything while dead.
     mo.health = 0
     assert update_face(fs, ps, mo, False) == "STFDEAD0"
+    # NOTE: overkill corpses (hp<0) hold STFDEAD0 tick after tick,
+    # never the god face (vanilla tests !health, not == 0).
+    mo.health = -23
+    for _ in range(4):
+        assert update_face(fs, ps, mo, False) == "STFDEAD0"
 
 
 @requires_wad
