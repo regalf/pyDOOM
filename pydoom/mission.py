@@ -36,3 +36,10 @@ def detect(wad) -> str:
 def episode_count(mission: str) -> int:
     """Playable episodes for the mission (menu gating, demo clamp)."""
     return EPISODES.get(mission, 1)
+
+
+def episode_start(episode: int, maps) -> str:
+    """First map of the chosen episode (G_DeferedInitNew), or E1M1
+    when the lump is missing (shareware picking beyond episode 1)."""
+    dest = f"E{episode + 1}M1"
+    return dest if dest in maps else "E1M1"

@@ -576,9 +576,12 @@ def main() -> int:
             if rec_demo_path is not None:
                 finish_demo_rec()
             has_level = True
-            map_idx = maps.index("E1M1")
+            # NOTE: G_DeferedInitNew starts at the chosen episode's
+            # first map (E2M1/E3M1); unknown lumps fall back to E1M1.
+            dest = _mission.episode_start(mev[1], maps)
+            map_idx = maps.index(dest)
             (game_map, cam, phys, player_mo, world, mobjs, ctx,
-             state) = load_map("E1M1")
+             state) = load_map(dest)
             if rec_demo_path is not None:
                 arm_demo_rec()  # NOTE: header names the fresh start map
             amap = None
@@ -586,8 +589,8 @@ def main() -> int:
             noclip = False
             paused = False
             cheat.reset()
-            pygame.display.set_caption("pydoom - E1M1")
-            audio.music_play(song_for_map("E1M1"), "new-game")
+            pygame.display.set_caption(f"pydoom - {dest}")
+            audio.music_play(song_for_map(dest), "new-game")
             if old is None:
                 gamestate = "level"
             else:

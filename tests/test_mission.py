@@ -31,3 +31,12 @@ def test_demo_marker_mission_clamp():
     assert DemoHeader(episode=2, map=5).marker() == "E1M5"  # shareware
     assert DemoHeader(episode=2, map=5).marker("registered") == "E2M5"
     assert DemoHeader(episode=9, map=9).marker("registered") == "E3M9"
+
+
+def test_episode_start_routing():
+    from pydoom.mission import episode_start
+    maps = ["E1M1", "E2M1", "E3M1"]
+    assert episode_start(0, maps) == "E1M1"
+    assert episode_start(1, maps) == "E2M1"
+    assert episode_start(2, maps) == "E3M1"
+    assert episode_start(1, ["E1M1"]) == "E1M1"  # shareware fallback
