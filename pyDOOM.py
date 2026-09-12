@@ -170,6 +170,7 @@ def main() -> int:
             map_list.top = 0
 
     def launch() -> None:
+        nonlocal running
         sync_wad()
         # NOTE: map and skill only matter in debug (direct boot);
         # otherwise the game boots E1M1/normal and its menu decides.
@@ -186,6 +187,7 @@ def main() -> int:
             flags["nomonsters"], flags["kinematic"])
         print("pyDOOM:", " ".join(args[1:]))
         subprocess.run(args, cwd=ROOT)
+        running = False  # NOTE: LAUNCH closes the launcher for good
 
     def toggle_flag() -> None:
         name = FLAGS[flag_list.index]
