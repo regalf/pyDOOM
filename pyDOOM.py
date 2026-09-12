@@ -13,7 +13,26 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):  # NOTE: PyInstaller onedir layout:
+    # datas (DOOM1.WAD) live under _internal; cfg/log land with them
+    # (portable build: keep everything inside the bundle dir).
+    ROOT = os.path.abspath(getattr(sys, "_MEIPASS", os.path.dirname(
+        os.path.abspath(sys.executable))))
 sys.path.insert(0, ROOT)
+
+if len(sys.argv) > 1 and sys.argv[1] == "--viewer":
+    # NOTE: frozen child mode (subprocess can't re-run a script from
+    # inside the bundle, so the exe re-enters here and jumps straight
+    # into the viewer with the remaining argv).
+    sys.argv = [sys.argv[0]] + sys.argv[2:]
+    if getattr(sys, "frozen", False) and len(sys.argv) > 2:
+        # NOTE: manual bundle runs pass bare names (DOOM1.WAD):
+        # resolve them inside the bundle before the viewer opens.
+        cand = os.path.join(ROOT, sys.argv[2])
+        if not os.path.isabs(sys.argv[2]) and os.path.exists(cand):
+            sys.argv[2] = cand
+    from tools.doom_view import main as viewer_main
+    raise SystemExit(viewer_main())
 
 SKILLS = ("baby", "easy", "normal", "hard", "nightmare")
 FALLBACK_WAD = "DOOM1.WAD"
@@ -46,8 +65,13 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       respawn: bool = False, nomonsters: bool = False,
                       kinematic: bool = False) -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
-    args = [sys.executable, os.path.join(ROOT, "tools", "doom_view.py"),
-            map_name, os.path.join(ROOT, wad), f"--skill={skill}"]
+    if getattr(sys, "frozen", False):
+        args = [sys.executable, "--viewer", map_name,
+                os.path.join(ROOT, wad), f"--skill={skill}"]
+    else:
+        args = [sys.executable, os.path.join(ROOT, "tools",
+                                             "doom_view.py"),
+                map_name, os.path.join(ROOT, wad), f"--skill={skill}"]
     if debug:
         args.append("--debug")
     if fast:
