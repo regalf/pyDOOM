@@ -186,7 +186,17 @@ def main() -> int:
             flags["debug"], flags["fast"], flags["respawn"],
             flags["nomonsters"], flags["kinematic"])
         print("pyDOOM:", " ".join(args[1:]))
-        subprocess.run(args, cwd=ROOT)
+        # NOTE: detached child (new session, own stdio): closing the
+        # terminal or Ctrl+C here never reaches the game afterwards.
+        log_path = os.path.join(ROOT, "pydoom-viewer.log")
+        try:
+            log = open(log_path, "wb")
+        except OSError:
+            log = subprocess.DEVNULL
+        subprocess.Popen(args, cwd=ROOT, start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=log,
+                         stderr=subprocess.STDOUT, close_fds=True)
+        print(f"pyDOOM: detached, log at {log_path}")
         running = False  # NOTE: LAUNCH closes the launcher for good
 
     def toggle_flag() -> None:

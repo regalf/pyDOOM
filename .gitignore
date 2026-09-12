@@ -23,3 +23,6 @@ pydoom.cfg
 # commercial IWAD (copyrighted, never commit; tests skip without it)
 doom.wad
 DOOM.WAD
+
+# detached viewer log (launcher)
+/pydoom-viewer.log
