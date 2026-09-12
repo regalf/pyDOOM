@@ -467,3 +467,17 @@ def test_pickup_tallies_countitem(setup):
     picked, _msg = touch_special_thing(bonus, player_mo, ps, ctx)
     assert picked
     assert ps.itemcount == 1
+
+
+@requires_wad
+def test_weapon_pickup_chimes_wpnup(setup, monkeypatch):
+    from pydoom import audio as audio_mod
+    game_map, phys, index, ctx = setup
+    player, ps, ctx, _ = make_player(setup)
+    sounds = []
+    monkeypatch.setattr(audio_mod, "play",
+                        lambda n, *a: sounds.append(n) or False)
+    picked, msg = touch_special_thing(make_item(setup, 2001),
+                                      player, ps, ctx)
+    assert picked and msg == "YOU GOT THE SHOTGUN!"
+    assert sounds == ["wpnup"]  # NOTE: vanilla weapon chime (p_inter.c)

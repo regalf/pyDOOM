@@ -43,6 +43,7 @@ SFX = {
     "plpain": (96, False), "dmpain": (96, False), "popain": (96, False),
     "oof": (96, False),  # NOTE: menu error buzz (DSOOF is in the IWAD)
     "itemup": (78, True), "getpow": (60, False),
+    "wpnup": (78, False),  # NOTE: weapon pickups (DSWPNUP is in the IWAD)
     "telept": (32, False),
     "posit1": (98, True), "posit2": (98, True), "posit3": (98, True),
     "bgsit1": (98, True), "sgtsit": (98, True), "brssit": (94, True),

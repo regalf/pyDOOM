@@ -230,8 +230,8 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
     kind = spec[0]
     sound = None
     if kind == "weapon":
-        # NOTE: shareware has no wpnup lump; everything chimes itemup.
-        sound = "itemup"
+        # NOTE: vanilla chimes wpnup here (p_inter.c), not itemup.
+        sound = "wpnup"
     elif kind in ("power", "berserk", "soul", "mega"):
         sound = "getpow"
     elif kind in ("ammo", "body", "hbonus", "abonus", "armor", "backpack",
