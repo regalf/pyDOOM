@@ -53,9 +53,9 @@ FLASH_LIGHT_STEP = {WP_SHOTGUN: (4, 2), WP_BFG: (11, 2),
 # attack states: the kick reads because it lasts, like vanilla.
 ATTACK_BODY = {
     WP_FIST: "BBBBCCCCDDDDDCCCCBBBBB",
-    # NOTE: the pistol timeline starts at the peak: vanilla fires (and
-    # flashes) on S_PISTOL2/B, the A wind-up settles the cycle instead.
-    WP_PISTOL: "BBBBBBCCCCBBBBBAAAA",
+    # NOTE: pistol order is the vanilla state run (A wind-up, B fire,
+    # C settle, B recover), so the kick lands on the bang, not the pull.
+    WP_PISTOL: "AAAABBBBBBCCCCBBBBB",
     WP_SHOTGUN: ("AAAAAAAAAABBBBBCCCCCDDDDCCCCCBBBBBAAAAAAAAAA"),
     WP_CHAINGUN: "AABB",
     WP_MISSILE: "B" * 20,
@@ -64,6 +64,18 @@ ATTACK_BODY = {
     WP_CHAINSAW: "AABB",
     WP_SSG: "A" * 44,
 }
+
+
+def attack_timeline(weapon: int, flip: int = 0) -> str:
+    """Body frames for one attack cycle (render picks by elapsed tic).
+
+    Chaingun/saw pulls alternate whole AAAA/BBBB blocks per pull:
+    each vanilla 4-tic pull shows a single frame (S_CHAIN1/S_CHAIN2,
+    S_SAW1/S_SAW2), so the base "AABB" entry only pins the length.
+    """
+    if weapon in (WP_CHAINGUN, WP_CHAINSAW):
+        return "BBBB" if flip else "AAAA"
+    return ATTACK_BODY[weapon]
 # (ammo type, rounds per shot); ammo < 0 means unarmed.
 COST = {WP_FIST: (-1, 0), WP_PISTOL: (AM_CLIP, 1), WP_SHOTGUN: (AM_SHELL, 1),
         WP_CHAINGUN: (AM_CLIP, 1), WP_MISSILE: (AM_MISL, 1),

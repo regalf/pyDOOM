@@ -61,6 +61,7 @@ from pydoom.player import (
     PW_ALLMAP,
     PW_INFRARED,
     PlayerState,
+    WP_CHAINGUN,
     WP_CHAINSAW,
     palette_index,
 )
@@ -452,7 +453,8 @@ def main() -> int:
             # so kicks read instead of blinking past.
             span = max(1, state.get("atk_span", 1))
             elapsed = span - (state["atk_until"] - state.get("tics", 0))
-            timeline = weapons.ATTACK_BODY[ps.readyweapon]
+            timeline = weapons.attack_timeline(ps.readyweapon,
+                                               state.get("atkflip", 0))
             pick = timeline[min(len(timeline) - 1, max(0, elapsed))]
             if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
                                          pick):
@@ -1303,6 +1305,10 @@ def main() -> int:
                     body, flash = weapons.PSPRITES[ps.readyweapon]
                     state["atk_until"] = state.get("tics", 0) + cd
                     state["atk_span"] = max(1, cd)
+                    if ps.readyweapon in (WP_CHAINGUN, WP_CHAINSAW):
+                        # NOTE: vanilla shows one body frame per 4-tic
+                        # pull, alternating A/B across pulls.
+                        state["atkflip"] = 1 - state.get("atkflip", 0)
                     if flash_now and flash is not None:
                         state["flash_until"] = (
                             state.get("tics", 0)

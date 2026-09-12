@@ -264,3 +264,14 @@ def test_flash_light_levels():
     assert weapons.FLASH_LIGHT_STEP[2 - 2 + 2] == (4, 2)  # shotgun
     from pydoom.player import WP_BFG
     assert weapons.FLASH_LIGHT_STEP[WP_BFG] == (11, 2)
+
+
+def test_attack_timelines_match_vanilla_frames():
+    """Body timelines run the vanilla state frames in order."""
+    from pydoom.player import WP_CHAINSAW, WP_PISTOL
+    assert weapons.ATTACK_BODY[WP_PISTOL] == \
+        "AAAA" + "BBBBBB" + "CCCC" + "BBBBB"  # S_PISTOL1..4
+    assert weapons.attack_timeline(WP_CHAINGUN, 0) == "AAAA"
+    assert weapons.attack_timeline(WP_CHAINGUN, 1) == "BBBB"
+    assert weapons.attack_timeline(WP_CHAINSAW, 0) == "AAAA"
+    assert weapons.attack_timeline(WP_CHAINSAW, 1) == "BBBB"
