@@ -28,18 +28,18 @@ is marked with a `NOTE:` comment at the point of divergence.
 |---|---|
 | Software renderer (320×200, BSP, visplanes, masked sprites, fuzz, sky) | done |
 | Physics (clip/slide, lifts, stairs, crushers, teleports) | done |
-| Combat, full E1 bestiary AI, boss death / tag 666 | done |
-| All E1 line/sector specials, keys, secret exit | done |
+| Combat, full Doom 1 bestiary AI, per-episode boss deaths | done |
+| All E1–E3 line/sector specials, keys, secret exits | done |
 | Weapons 1–7, status bar, animated face, palette flashes | done |
-| OPL music (MUS + GENMIDI → OPL2, streamed) + full SFX | done |
+| OPL music (MUS + GENMIDI → OPL2 @22050, stereo) + full SFX @44100 | done |
 | Title, menu, intermission tally, finale, save/load, wipes | done |
 | Skill levels (incl. nightmare/fast/respawn), cheats | done |
-| Input demos (own format, checksum-verified) | done |
 | Vanilla demo compat (.lmp playback/record, attract loop) | experimental, off by default (`demos 1` in pydoom.cfg) |
+| E2/E3 finale texts, E3 bunny scroll + cast call | todo |
 | Infrared/allmap as real renderer effects | todo |
-| Episodes 2–3 / full IWAD, multiplayer | out of scope |
+| Doom 2, multiplayer | out of scope |
 
-`328` pytest tests green (`python -m pytest tests/`).
+`350` pytest tests green (`python -m pytest tests/`).
 Deliberate simplifications are catalogued in
 [`docs/DIVERGENCES.md`](docs/DIVERGENCES.md).
 
@@ -47,7 +47,7 @@ Deliberate simplifications are catalogued in
 
 Move `WASD`/arrows, mouse look, `Shift` run · `E` use · `1–7` weapons ·
 `TAB` automap · `M` sound · `ESC` menu. Typed cheats always work, like
-vanilla: `iddqd` `idkfa`/`idfa` `idclip` `idclev11`–`19` `idmus11`–`99`
+vanilla: `iddqd` `idkfa`/`idfa` `idclip` `idclev`/`idmus` (E1M1–E3M9)
 `iddt` `idbehold…` `idmypos` `idchoppers`.
 
 `--debug` unlocks developer keys: `N` noclip, `F` freeze AI, `X` AI
