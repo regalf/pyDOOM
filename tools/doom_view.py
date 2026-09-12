@@ -469,10 +469,10 @@ def main() -> int:
         # NOTE: classic bottom strip (covers the gun base, like vanilla).
         draw_status_bar(renderer, fb, ps, player_mo.health,
                         state.get("facelump", "STFST00"))
-        # NOTE: HUD messages ride the red STCFN font top-left (hu_stuff),
-        # above the readout block, like the original.
+        # NOTE: HUD messages ride the red STCFN font flush top-left
+        # (hu_stuff), above the readout block, like the original.
         if message is not None and msettings.messages:
-            game_menu.draw_text(fb, message, 8, 8)
+            game_menu.draw_text(fb, message, 0, 0)
         return fb
 
     def build_snapshot(name: str) -> dict:
