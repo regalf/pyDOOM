@@ -665,6 +665,7 @@ def a_bruisattack(actor, ctx) -> None:
 def a_skullattack(actor, ctx) -> None:
     if actor.target is None:
         return
+    from pydoom.physics import aprox_distance
     dest = actor.target
     actor.flags |= _MF_SKULLFLY
     _face(actor)
