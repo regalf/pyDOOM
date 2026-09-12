@@ -915,6 +915,11 @@ def main() -> int:
                     continue
                 if gamestate != "level":
                     continue  # NOTE: wipe melts undisturbed
+                if ev.key == pygame.K_SPACE:
+                    # NOTE: edge latch: sub-frame taps still fire one
+                    # tic (vanilla polls every 28 ms; level polls at
+                    # low fps miss taps between frames entirely).
+                    state["atk_latch"] = True
                 # NOTE: every typed char feeds the cheat matcher first
                 # (m_cheat, always on like vanilla); dev keys below
                 # need --debug, and quit moved into the menu.
@@ -1127,6 +1132,7 @@ def main() -> int:
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if gamestate == "level" and ev.button == 1:
                     state["firing"] = True
+                    state["atk_latch"] = True  # NOTE: same tap guarantee
             elif ev.type == pygame.MOUSEBUTTONUP:
                 if ev.button == 1:
                     state["firing"] = False
@@ -1237,6 +1243,10 @@ def main() -> int:
                                or tkeys[pygame.K_RSHIFT]),
                     attack=bool(state["firing"]
                                 or tkeys[pygame.K_SPACE])))
+                if state.pop("atk_latch", False):
+                    # NOTE: latched edge lands on this live packet
+                    # (demo streams bypass the builder, untouched).
+                    cmd.buttons |= ticcmd.BT_ATTACK
                 if demo_rec is not None:
                     demo_rec.append(cmd)
             ps.cmd = cmd  # NOTE: friction reads the move axes (P_XYMovement)
