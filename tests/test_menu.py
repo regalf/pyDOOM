@@ -241,3 +241,12 @@ def test_config_tolerates_garbage(tmp_path):
     assert back.sfx_vol == 15
     assert back.mus_vol == 8
     settings_load(str(tmp_path / "missing.cfg"), back)  # NOTE: no file
+
+
+def test_registered_episode_selects():
+    m = fresh(max_episode=2)
+    m.key("enter")
+    m.key("down")  # ep2 (The Shores of Hell)
+    assert m.key("enter") == []
+    assert m.current == "skill"  # NOTE: no scold on registered
+    assert m.episode == 1

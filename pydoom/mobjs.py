@@ -210,8 +210,7 @@ def spawn_mobj(game_map, physics, index: ThingIndex, x: int, y: int, z: int,
 
 
 # NOTE: p_setup.c P_LoadThings skips these Doom2-only doomednums when
-# the game is not commercial (shareware/registered). This engine only
-# supports the shareware IWAD, so the filter always applies.
+# the game is not commercial (shareware/registered alike).
 _NON_SHAREWARE_TYPES = frozenset({68, 64, 88, 89, 69, 67, 71, 65, 66, 84})
 
 

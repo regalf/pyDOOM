@@ -54,9 +54,12 @@ class DemoHeader:
         """Byte to skill (vanilla clamps >nightmare down to it)."""
         return SKILL_NAMES[min(self.skill, 4)]
 
-    def marker(self) -> str:
-        """Shareware start map (vanilla forces episode 1, clamps map)."""
-        return f"E1M{min(max(self.map, 1), 9)}"
+    def marker(self, mission: str = "shareware") -> str:
+        """Start map (vanilla forces episode 1 on shareware, clamps)."""
+        from pydoom.mission import episode_count
+        max_ep = max(1, episode_count(mission))
+        ep = min(max(self.episode, 1), max_ep)
+        return f"E{ep}M{min(max(self.map, 1), 9)}"
 
     def single_player(self) -> bool:
         """Refuse deathmatch/multiplayer streams (engine is 1P)."""

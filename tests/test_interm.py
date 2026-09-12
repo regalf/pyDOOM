@@ -90,3 +90,9 @@ def test_draw_both_screens_paint():
     im.draw(fb2, m)
     assert (fb2 != 0).sum() > 3000  # NOTE: splats, arrow, entering
     assert not (fb == fb2).all()  # NOTE: two distinct screens
+
+
+def test_level_patch_sequential_episodes():
+    assert level_patch("E2M1") == "WILV09"
+    assert level_patch("E2M9") == "WILV17"
+    assert level_patch("E3M1") == "WILV18"

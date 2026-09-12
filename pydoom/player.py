@@ -50,8 +50,9 @@ VIEWHEIGHT = 41 * FRACUNIT
 MAXHEALTH = 100
 GODHEALTH = 200  # soulsphere/health-bonus cap (maxhealth stays 100)
 
-# NOTE: bundled IWAD is shareware E1: plasma/BFG/SSG never spawn, and
-# vanilla gates them out of the CheckAmmo fallback (p_pspr.c).
+# NOTE: set from the IWAD mission at boot (shareware/registered);
+# plasma/BFG/SSG never spawn in Doom 1, and vanilla gates them out
+# of the CheckAmmo fallback (p_pspr.c).
 GAMEMODE = "shareware"
 
 

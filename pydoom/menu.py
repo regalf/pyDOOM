@@ -155,9 +155,12 @@ class Menu:
     """M_Responder/M_Ticker/M_Drawer: key() returns viewer events."""
 
     def __init__(self, wad, settings: Settings,
-                 skill_index: int = 2) -> None:
+                 skill_index: int = 2, max_episode: int = 0) -> None:
         self.wad = wad
         self.settings = settings
+        # NOTE: highest selectable episode (0 shareware, 2 registered,
+        # 3 retail); beyond it vanilla scolds and shows Read This!
+        self.max_episode = max_episode
         self.menus = build_menus()
         self.menus["skill"].last_on = max(
             0, min(4, skill_index))  # NOTE: CLI --skill preselects
@@ -361,7 +364,7 @@ class Menu:
             self._ask(ENDGAME, "endgame")
         elif act.startswith("ep"):
             ep = int(act[2:])
-            if ep:  # NOTE: shareware scolds and shows Read This!
+            if ep > self.max_episode:  # NOTE: scolds, shows Read This!
                 audio.play("oof")
                 self._say(SWSTRING, then="readthis")
             else:

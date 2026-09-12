@@ -150,12 +150,13 @@ def _move_keys(mv) -> list:
     return keys
 
 
-MAP_SONGS = {f"E1M{i}": f"D_E1M{i}" for i in range(1, 10)}
+MAP_SONGS = {f"E{ep}M{i}": f"D_E{ep}M{i}" for ep in (1, 2, 3)
+             for i in range(1, 10)}
 TITLE_SONG, INTER_SONG, FINALE_SONG = "D_INTRO", "D_INTER", "D_VICTOR"
 
 
 def song_for_map(marker: str) -> str:
-    """E1Mn music lump (idmus digits land here too)."""
+    """ExMy music lump (vanilla D_E1M1..D_E3M9; E4 reuses, idmus too)."""
     return MAP_SONGS.get(marker.upper(), "D_E1M1")
 
 
@@ -224,7 +225,10 @@ def main() -> int:
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
-    default_wad = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
+    basedir = os.path.join(os.path.dirname(__file__), "..")
+    default_wad = os.path.join(basedir, "doom.wad")
+    if not os.path.exists(default_wad):  # NOTE: shareware fallback
+        default_wad = os.path.join(basedir, "DOOM1.WAD")
     wad_path = args[1] if len(args) > 1 else default_wad
     msettings = menu.Settings()
     menu.settings_load(menu.CONFIG_PATH, msettings)
@@ -272,6 +276,13 @@ def main() -> int:
                       f"{'+NOMONSTERS' if nomonsters else ''}")
 
     wad = WadFile(wad_path)
+    from pydoom import mission as _mission
+    from pydoom import player as _player
+    game_mission = _mission.detect(wad)
+    _player.GAMEMODE = game_mission
+    print(f"iwad: {os.path.basename(wad_path)} ({game_mission})")
+    if demo_header is not None:  # NOTE: mission clamps the demo map
+        map_name = demo_header.marker(game_mission)
     texman = TextureManager(wad)
     try:  # NOTE: build tag in the HUD, so screenshots name their code.
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -293,6 +304,12 @@ def main() -> int:
 
     def load_map(marker: str, keep_ps=None, keep_hp: int | None = None):
         game_map = Map.from_wad(wad, marker)
+        # NOTE: g_game.c picks SKY1/2/3/4 per episode at P_SetupLevel.
+        try:
+            renderer.skytexture = texman.texture_num_for_name(
+                f"SKY{marker[1]}")
+        except Exception:
+            pass
         texman.resolve_map(game_map)
         phys = Physics(game_map)
         # Live mobjs (statues until AI lands); physics sees them.
@@ -371,7 +388,8 @@ def main() -> int:
     map_idx = maps.index(game_map.marker) if game_map.marker in maps else 0
     game_menu = menu.Menu(
         wad, msettings,
-        menu.SKILLS.index(skill) if skill in menu.SKILLS else 2)
+        menu.SKILLS.index(skill) if skill in menu.SKILLS else 2,
+        _mission.episode_count(game_mission) - 1)
     gamestate = "level"  # level|menu|wipe|title|inter|finale
     inter = None  # tally screen between maps (G_WorldDone lite)
     wipe_after = "level"  # melt landing state
@@ -633,7 +651,8 @@ def main() -> int:
         demo_rec = demo.DemoWriter(demo.DemoHeader(
             skill=demo.SKILL_NAMES.index(skill)
             if skill in demo.SKILL_NAMES else 2,
-            episode=1, map=int(game_map.marker[3:]), deathmatch=0,
+            episode=int(game_map.marker[1]),
+            map=int(game_map.marker[3:]), deathmatch=0,
             respawn=int(respawn), fast=int(fast),
             nomonsters=int(nomonsters), consoleplayer=0,
             players=(1, 0, 0, 0)))
@@ -692,16 +711,17 @@ def main() -> int:
                 header = demo.DemoHeader.from_bytes(blob)
             except Exception:
                 continue  # NOTE: missing/bad lump: try the next demo
-            if not header.single_player() or header.marker() not in maps:
+            if not header.single_player() \
+                    or header.marker(game_mission) not in maps:
                 continue
             skill = header.skill_name()
             fast = bool(header.fast)
             respawn = bool(header.respawn)
             nomonsters = bool(header.nomonsters)
             flow.init_new(skill, fast)
-            map_idx = maps.index(header.marker())
+            map_idx = maps.index(header.marker(game_mission))
             (game_map, cam, phys, player_mo, world, mobjs, ctx,
-             state) = load_map(header.marker())
+             state) = load_map(header.marker(game_mission))
             amap = None
             message, message_tics = None, 0
             pygame.display.set_caption(f"pydoom - {game_map.marker}")
@@ -711,7 +731,7 @@ def main() -> int:
             attract_active = True
             gamestate = "level"
             has_level = True
-            print(f"demo: attract {name} ({header.marker()})")
+            print(f"demo: attract {name} ({header.marker(game_mission)})")
             return True
         return False
 
@@ -911,12 +931,14 @@ def main() -> int:
                             x=player_mo.x >> 16, y=player_mo.y >> 16)
                         message_tics = 3 * TICRATE
                     elif cname == "idclev":
-                        # NOTE: shareware warp is E1M1-E1M9, fresh start
+                        # NOTE: registered warp is E1M1-E3M9, fresh start
                         # (PST_REBORN); bad digits fail silently. Like
                         # G_DoNewGame this stops playback and reseeds.
-                        if carg[0] == "1" and carg[1] in "123456789":
-                            dest = f"E1M{carg[1]}"
-                            if dest in maps:
+                        if (len(carg) == 2 and carg[0] in "123"
+                                and carg[1] in "123456789"):
+                            dest = f"E{carg[0]}M{carg[1]}"
+                            if (int(carg[0]) <= _mission.episode_count(
+                                    game_mission) and dest in maps):
                                 demo_play = None
                                 flow.init_new(skill, fast)
                                 map_idx = maps.index(dest)
@@ -929,10 +951,13 @@ def main() -> int:
                                 pygame.display.set_caption(
                                     f"pydoom - {game_map.marker}")
                     elif cname == "idmus":
-                        # NOTE: shareware jukebox is E1M1-E1M9.
-                        if len(carg) == 2 and carg[0] == "1" \
-                                and carg[1] in "123456789":
-                            audio.music_play(f"D_E1M{carg[1]}", "idmus")
+                        # NOTE: registered jukebox is E1M1-E3M9.
+                        if (len(carg) == 2 and carg[0] in "123"
+                                and carg[1] in "123456789"
+                                and int(carg[0]) <= _mission.episode_count(
+                                    game_mission)):
+                            audio.music_play(
+                                f"D_E{carg[0]}M{carg[1]}", "idmus")
                         message = cheats.MUS
                         message_tics = 3 * TICRATE
                     elif cname == "idbehold":
@@ -1504,7 +1529,7 @@ def main() -> int:
                           f"i={ps_exit.itemcount}/{ti} "
                           f"s={ps_exit.secretcount}/{ts}")
                 try:
-                    par = interm.E1_PARS[int(cur[3:])] * 35
+                    par = interm.PARS[int(cur[1]) - 1][int(cur[3:])] * 35
                 except (ValueError, IndexError):
                     par = 0
                 old = (last_fb.copy() if last_fb is not None

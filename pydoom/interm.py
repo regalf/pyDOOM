@@ -13,6 +13,10 @@ SHOWNEXTLOCDELAY = 4  # seconds on the entering screen
 PAUSE_TICS = 35  # 1 s breather between tally stages
 
 E1_PARS = (0, 30, 75, 120, 90, 165, 180, 180, 30, 165)  # g_game.c pars
+# NOTE: registered episodes share the table shape (E4 lands with retail).
+PARS = (E1_PARS,
+        (0, 90, 90, 90, 120, 90, 360, 240, 30, 170),
+        (0, 90, 45, 90, 150, 90, 90, 165, 30, 135))
 
 # lnodes[0]: E1 world-map spots, maps 1-9 (vanilla coordinates).
 LNODES = ((185, 164), (148, 143), (69, 122), (209, 102), (116, 89),
@@ -24,10 +28,9 @@ ANIM_PERIOD = 35 // 3  # TICRATE/3 between flickers
 
 
 def level_patch(marker: str) -> str:
-    """E1M1 -> WILV00 (episode-1, map-1)."""
-    ep = int(marker[1]) - 1
-    num = int(marker[3:]) - 1
-    return f"WILV{ep}{num}"
+    """E1M1 -> WILV00 (sequential (episode-1)*9 + map-1, like vanilla)."""
+    idx = (int(marker[1]) - 1) * 9 + int(marker[3:]) - 1
+    return f"WILV{idx:02d}"
 
 
 def map_index(marker: str) -> int:
@@ -145,7 +148,10 @@ class Intermission:
 
     def draw(self, fb, menu) -> None:
         """Background map, flickers, then the state screen."""
-        menu._blit("WIMAP0", fb, 0, 0)
+        try:  # NOTE: wi_stuff.c draws WIMAP{episode} (E4 reuses land later)
+            menu._blit(f"WIMAP{int(self.finished[1]) - 1}", fb, 0, 0)
+        except Exception:
+            menu._blit("WIMAP0", fb, 0, 0)
         for j, ((x, y), anim) in enumerate(zip(ANIM_LOCS, self.anims)):
             if anim["ctr"] >= 0:
                 menu._blit(f"WIA00{j}{anim['ctr']:02d}", fb, x, y)

@@ -184,3 +184,15 @@ def test_stairs_build_from_tag():
         world.tick()
     after = [s.floorheight for s in tagged]
     assert any(a > b for a, b in zip(after, before))
+
+
+def test_next_map_registered_episodes():
+    assert next_map("E2M1", False) == "E2M2"
+    assert next_map("E2M7", False) == "E2M8"
+    assert next_map("E2M8", False) is None  # episode complete
+    assert next_map("E2M5", True) == "E2M9"  # secret exit
+    assert next_map("E2M9", False) == "E2M6"  # back from secret
+    assert next_map("E3M1", False) == "E3M2"
+    assert next_map("E3M6", True) == "E3M9"  # secret exit
+    assert next_map("E3M9", False) == "E3M7"  # back from secret
+    assert next_map("E3M8", False) is None  # episode complete
