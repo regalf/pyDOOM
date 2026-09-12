@@ -222,6 +222,8 @@ def main() -> int:
             fast = True
         elif a == "--respawn":
             respawn = True
+        elif a == "--nomonsters":
+            nomonsters = True  # NOTE: vanilla -nomonsters spawn filter
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
     map_name = args[0].upper() if len(args) > 0 else "E1M1"

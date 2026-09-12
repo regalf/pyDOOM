@@ -40,6 +40,10 @@ class Settings:
     # is experimental and OFF by default (needs more development for
     # full demo parity); set `demos 1` in pydoom.cfg to enable it.
     demos: bool = False
+    # NOTE: launcher prefs (pyDOOM.py writes these on Launch).
+    last_wad: str = "DOOM1.WAD"
+    last_skill: str = "normal"
+    last_map: str = "E1M1"
 
 
 CONFIG_PATH = "pydoom.cfg"
@@ -58,6 +62,10 @@ def settings_load(path: str, settings: Settings) -> None:
         if len(parts) != 2:
             continue
         key, raw = parts
+        if key in ("last_wad", "last_skill", "last_map"):
+            # NOTE: launcher strings (validated at launch, not here).
+            setattr(settings, key, raw[:32])
+            continue
         try:
             val = int(raw)
         except ValueError:
@@ -86,7 +94,10 @@ def settings_save(path: str, settings: Settings) -> None:
                     "# demos 1 enables vanilla demo compat (.lmp "
                     "playback/record, attract loop); experimental, "
                     "off by default, needs more development\n"
-                    f"demos {int(settings.demos)}\n")
+                    f"demos {int(settings.demos)}\n"
+                    f"last_wad {settings.last_wad}\n"
+                    f"last_skill {settings.last_skill}\n"
+                    f"last_map {settings.last_map}\n")
     except OSError:
         pass
 
