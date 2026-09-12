@@ -1,7 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """pyDOOM onedir bundle (entry: pyDOOM.py launcher).
 
-Build: python -m PyInstaller pyDOOM.spec
+Build: .venv/bin/python -m PyInstaller -y pyDOOM.spec  (the project
+venv carries numba for the JIT raster and PyOPL for music; a bare
+interpreter builds a working but slower, silent bundle instead)
 Run:   ./dist/pyDOOM/pyDOOM
 Ships DOOM1.WAD (freely distributable shareware, under _internal/);
 drop a full doom.wad next to it to unlock E1-E3 (never bundle it:
