@@ -398,6 +398,7 @@ def main() -> int:
         gamestate = "title"  # NOTE: vanilla boots to TITLESCREEN
     has_level = gamestate == "level"  # menu-close target before new game
     melt = MeltWipe()
+    melt_acc = 0.0  # NOTE: wipe_ScreenWipe melts in real-time tics
     last_fb = None
     # NOTE: M_QuitDOOM death jingle (shareware picks the first table).
     QUITSOUNDS = ("pldeth", "dmpain", "popain", "slop", "telept",
@@ -1650,7 +1651,9 @@ def main() -> int:
             fb = np.zeros((200, 320), dtype=np.uint8)
             inter.draw(fb, game_menu)
         elif gamestate == "wipe":
-            stepped = melt.tick()
+            melt_acc += dt * TICRATE  # NOTE: 35Hz wall-clock, like asset
+            steps, melt_acc = int(melt_acc), melt_acc - int(melt_acc)
+            stepped = melt.tick(steps) if steps else fb
             if stepped is None:
                 gamestate = wipe_after
             else:
