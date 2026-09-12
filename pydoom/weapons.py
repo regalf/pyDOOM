@@ -46,6 +46,10 @@ COOLDOWN = {WP_FIST: 22, WP_PISTOL: 19, WP_SHOTGUN: 44, WP_CHAINGUN: 4,
 HELD_COOLDOWN = {WP_FIST: 17, WP_PISTOL: 14, WP_SHOTGUN: 37,
                  WP_CHAINGUN: 4, WP_MISSILE: 20, WP_PLASMA: 3,
                  WP_BFG: 40, WP_CHAINSAW: 8, WP_SSG: 44}
+# NOTE: cooldown value at which a held trigger re-pulls mid-cycle
+# (the refire-entry tic: FULL - SHORT). A fresh pull lands on 0 and
+# runs the whole tail; a pull here chains the short cycle instead.
+REFIRE_AT = {w: COOLDOWN[w] - HELD_COOLDOWN[w] for w in COOLDOWN}
 # NOTE: muzzle-flash lengths from the FLASH states (lights skipped).
 FLASH_TICS = {WP_FIST: 0, WP_PISTOL: 7, WP_SHOTGUN: 7, WP_CHAINGUN: 5,
               WP_MISSILE: 7, WP_PLASMA: 4, WP_BFG: 17, WP_CHAINSAW: 0,
