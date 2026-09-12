@@ -199,7 +199,7 @@ _WALK_ONCE = {
     25: ("ceiling", "crushAndRaise"), 40: ("ceiling", "raiseToHighest"),
     44: ("ceiling", "lowerAndCrush"), 57: ("ceilingStop", None),
     12: ("light", 0), 13: ("light", 255), 35: ("light", 35),
-    52: ("exit", None), 39: ("teleport", None),
+    52: ("exit", None),
 }
 _WALK_RETRIGGER = {
     75: ("door", DoorType.CLOSE),
@@ -218,7 +218,6 @@ _WALK_RETRIGGER = {
     72: ("ceiling", "lowerAndCrush"), 73: ("ceiling", "crushAndRaise"),
     74: ("ceilingStop", None),
     77: ("ceiling", "fastCrushAndRaise"),
-    97: ("teleport", None),
 }
 _SWITCH_LOCKS = {133: PD_BLUEO, 135: PD_REDO, 137: PD_YELLOWO,
                  99: PD_BLUEO, 134: PD_REDO, 136: PD_YELLOWO}
@@ -1240,12 +1239,17 @@ class World:
                     audio.play("noway", mover.x, mover.y, mover)
                 return _SWITCH_LOCKS[special]
             # NOTE: key held, fall through to the door action below.
-        if special == 97:
-            # NOTE: SR teleport needs the activator body (E1M8 exit).
+        if special in (39, 97, 125, 126):
+            # NOTE: pressing USE on teleport lines hops, like walking
+            # them (P_UseSpecialLine); W1 clears, WR stays, and the
+            # monsters-only pair skips players.
+            if special in (125, 126) and is_player:
+                return None
             if mover is None or physics is None or mobjs is None:
                 return None
             if self.teleport(line, mover, physics, mobjs, side):
-                self.change_switch_texture(line, True)
+                if special in (39, 125):
+                    line.special = 0
             return None
         if special in _SWITCH_DOORS:
             dtype, use_again = _SWITCH_DOORS[special]
@@ -1345,13 +1349,25 @@ class World:
                 self.change_switch_texture(line, False)
 
     def cross_special_line(self, line, is_player: bool, mover=None,
-                             physics=None, mobjs=None) -> str | None:
+                             physics=None, mobjs=None,
+                             side: int = 0) -> str | None:
         """P_CrossSpecialLine: W1 (once) and WR (retrigger) walk-overs."""
         if not is_player and line.special not in (
                 39, 97, 125, 126, 4, 10, 88):
             return None  # NOTE: vanilla monster gate (teleports, W1
             # door/plat only); everything else ignores monsters.
         special = line.special
+        if special in (39, 97, 125, 126):
+            if special in (125, 126) and is_player:
+                return None  # NOTE: monsters-only teleports skip players
+            if mover is not None and physics is not None \
+                    and mobjs is not None:
+                self.teleport(line, mover, physics, mobjs, side)
+                if special in (39, 125):
+                    # NOTE: W1 clears even on a failed hop (vanilla).
+                    line.special = 0
+                return None
+            return "Teleporter (not implemented yet)"
         if special in _WALK_ONCE:
             kind, arg = _WALK_ONCE[special]
             done = self._fire_walk(kind, arg, line)
@@ -1361,17 +1377,7 @@ class World:
         if special in _WALK_RETRIGGER:
             kind, arg = _WALK_RETRIGGER[special]
             return self._fire_walk(kind, arg, line)
-        if special in (39, 97, 125, 126):
-            if special in (125, 126) and is_player:
-                return None  # NOTE: monsters-only teleports skip players
-            if mover is not None and physics is not None \
-                    and mobjs is not None:
-                self.teleport(line, mover, physics, mobjs)
-                if special in (39, 125):
-                    # NOTE: W1 clears even on a failed hop (vanilla).
-                    line.special = 0
-                return None
-            return "Teleporter (not implemented yet)"
+        return None
         return None
 
     def _fire_walk(self, kind: str, arg, line) -> str | None:
@@ -1395,8 +1401,6 @@ class World:
         elif kind == "exit":
             self.exit_kind = "normal"
             return None
-        elif kind == "teleport":
-            return "Teleporter (not implemented yet)"
         return None
 
     def use_lines(self, x: int, y: int, angle_bam: int,

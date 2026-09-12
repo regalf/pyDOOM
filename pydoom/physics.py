@@ -430,7 +430,9 @@ class Physics:
     def try_move(self, mover: Mover, x: int, y: int) -> tuple[bool, list]:
         """Attempt the move; returns (moved, crossed special lines).
 
-        crossed is reported on success AND failure (P_Move uses the
+        crossed holds (line, side) tuples, side being the side the
+        mover started on (P_CrossSpecialLine refuses backside hops);
+        it is reported on success AND failure (P_Move uses the
         failed-move list to open doors); callers execute only the
         successful crossings, except monster movement.
         """
@@ -477,10 +479,10 @@ class Physics:
         crossed = []
         if not (mover.flags & (MF_TELEPORT | MF_NOCLIP)):
             for ld in res.spechit:
-                if (point_on_line_side(x, y, ld)
-                        != point_on_line_side(oldx, oldy, ld)):
+                old_side = point_on_line_side(oldx, oldy, ld)
+                if point_on_line_side(x, y, ld) != old_side:
                     if ld.special:
-                        crossed.append(ld)
+                        crossed.append((ld, old_side))
         return True, crossed
 
     # -- slide (P_SlideMove + P_HitSlideLine + PTR_SlideTraverse) --

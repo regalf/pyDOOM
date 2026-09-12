@@ -276,3 +276,85 @@ def test_keendie_opens_tag666_once_last_keen_dies(monkeypatch):
         for mo in list(keens):
             think_mobj(mo, phys, ctx)
     assert len(calls) == 1 and calls[0][0] == 666  # doors swing open
+
+
+@requires_wad
+def test_walk_teleport_hops_and_w1_clears():
+    from pydoom.mobjs import spawn_mobj
+    game_map, phys, index, world, ctx = load_world("E1M8")
+    mobjs = spawn_map(game_map, phys, index)
+    ctx.mobjs = mobjs
+    player = spawn_mobj(game_map, phys, index, 0, 0, 0,
+                        MT_INDEX["PLAYER"])
+    player.is_player = True
+    pads = [mo for mo in mobjs if mo.type == MT_INDEX["TELEPORTMAN"]]
+    pad = next(mo for mo in pads if mo.sector is not None
+               and mo.sector.tag == 3)
+    line = next(li for li in game_map.lines
+                if li.special == 97 and li.tag == 3)
+    assert world.cross_special_line(line, True, player, phys,
+                                    mobjs, 0) is None
+    assert (player.x, player.y) == (pad.x, pad.y)  # NOTE: WR hops
+    assert line.special == 97  # retrigger stays armed
+    line.special = 39  # same line as a W1 trigger
+    player2 = spawn_mobj(game_map, phys, index, 0, 0, 0,
+                         MT_INDEX["PLAYER"])
+    assert world.cross_special_line(line, True, player2, phys,
+                                    mobjs, 0) is None
+    assert (player2.x, player2.y) == (pad.x, pad.y)
+    assert line.special == 0  # NOTE: W1 clears even on success here
+
+
+@requires_wad
+def test_walk_teleport_backside_refuses():
+    from pydoom.mobjs import spawn_mobj
+    game_map, phys, index, world, ctx = load_world("E1M8")
+    mobjs = spawn_map(game_map, phys, index)
+    ctx.mobjs = mobjs
+    player = spawn_mobj(game_map, phys, index, 0, 0, 0,
+                        MT_INDEX["PLAYER"])
+    line = next(li for li in game_map.lines
+                if li.special == 97 and li.tag == 3)
+    assert world.cross_special_line(line, True, player, phys,
+                                    mobjs, 1) is None
+    assert (player.x, player.y) == (0, 0)  # NOTE: back side stays shut
+
+
+@requires_wad
+def test_walk_teleport_carries_monsters():
+    from pydoom.mobjs import spawn_mobj
+    game_map, phys, index, world, ctx = load_world("E1M8")
+    mobjs = spawn_map(game_map, phys, index)
+    ctx.mobjs = mobjs
+    troop = spawn_mobj(game_map, phys, index, 0, 0, 0,
+                       MT_INDEX["TROOP"])
+    pads = [mo for mo in mobjs if mo.type == MT_INDEX["TELEPORTMAN"]]
+    pad = next(mo for mo in pads if mo.sector is not None
+               and mo.sector.tag == 3)
+    line = next(li for li in game_map.lines
+                if li.special == 97 and li.tag == 3)
+    assert world.cross_special_line(line, False, troop, phys,
+                                    mobjs, 0) is None
+    assert (troop.x, troop.y) == (pad.x, pad.y)
+
+
+@requires_wad
+def test_use_teleport_hops_without_texture_swap(monkeypatch):
+    from pydoom.mobjs import spawn_mobj
+    game_map, phys, index, world, ctx = load_world("E1M8")
+    mobjs = spawn_map(game_map, phys, index)
+    ctx.mobjs = mobjs
+    player = spawn_mobj(game_map, phys, index, 0, 0, 0,
+                        MT_INDEX["PLAYER"])
+    pads = [mo for mo in mobjs if mo.type == MT_INDEX["TELEPORTMAN"]]
+    pad = next(mo for mo in pads if mo.sector is not None
+               and mo.sector.tag == 3)
+    line = next(li for li in game_map.lines
+                if li.special == 97 and li.tag == 3)
+    swaps = []
+    monkeypatch.setattr(world, "change_switch_texture",
+                        lambda *a: swaps.append(a))
+    assert world.use_special_line(line, 0, True, 0, player, phys,
+                                  mobjs) is None
+    assert (player.x, player.y) == (pad.x, pad.y)  # USE hops (vanilla)
+    assert swaps == []  # NOTE: WR never swaps textures

@@ -1425,9 +1425,9 @@ def main() -> int:
                         phys.slide_move(player_mo, crossed)
                         cam.x = player_mo.x / 65536.0
                         cam.y = player_mo.y / 65536.0
-                    for line in crossed:
+                    for line, side in crossed:
                         msg = world.cross_special_line(line, True, player_mo,
-                                                       phys, mobjs)
+                                                       phys, mobjs, side)
                         if msg is not None:
                             message, message_tics = msg, 3 * TICRATE
             else:
@@ -1447,9 +1447,9 @@ def main() -> int:
                         refresh_sector(player_mo, phys)
                     cam.x = player_mo.x / 65536.0
                     cam.y = player_mo.y / 65536.0
-                for line in crossed_v:
+                for line, side in crossed_v:
                     msg = world.cross_special_line(line, True, player_mo,
-                                                   phys, mobjs)
+                                                   phys, mobjs, side)
                     if msg is not None:
                         message, message_tics = msg, 3 * TICRATE
             if not noclip and not dead_this_tic:
@@ -1502,9 +1502,9 @@ def main() -> int:
                     _mi += 1
                     continue
                 crossed_mo = think_mobj(mo, phys, ctx)
-                for line in crossed_mo:
+                for line, side in crossed_mo:
                     world.cross_special_line(line, mo.is_player, mo,
-                                             phys, mobjs)
+                                             phys, mobjs, side)
                 if mo.dead and not (mo.flags & combat._MF_CORPSE):
                     # NOTE: spent puffs/blood/missiles/fog and picked-up
                     # items leave (vanilla idles their S_NULL thinkers;

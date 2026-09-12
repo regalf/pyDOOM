@@ -50,9 +50,10 @@ def cross_line(ph, world, game_map, line, dist_units=24):
         mo.ceilingz = res.ceilingz
         tx, ty = 2 * mx - px, 2 * my - py
         ok, crossed = ph.try_move(mo, tx, ty)
-        if ok and line in crossed:
+        if ok and line in [ld for ld, _side in crossed]:
             msgs = [m for m in
-                    (world.cross_special_line(ld, True) for ld in crossed)
+                    (world.cross_special_line(ld, True, mo, ph, None)
+                     for ld, _side in crossed)
                     if m is not None]
             return mo, msgs
     raise AssertionError(f"could not cross line {line.special}")
