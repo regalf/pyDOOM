@@ -153,11 +153,11 @@ def test_monster_table_covers_e1_cast():
             assert name is None or name in audio.SFX, (mt, name)
 
 
-def test_mixer_format_is_unsigned_8bit():
-    """DS lumps are unsigned (128 = silence); signed playback turns
-    silence into full-scale DC, i.e. harsh noise instead of Doom."""
+def test_mixer_format_is_signed_16bit():
+    """Mixer matches chocolate (44.1 kHz stereo s16); lumps upsample
+    on load instead of playing raw."""
     from pydoom.audio import MIXER_SIZE
-    assert MIXER_SIZE == 8
+    assert MIXER_SIZE == -16
 
 
 @requires_wad
@@ -171,20 +171,20 @@ def test_real_lumps_decode_centered():
 
 @requires_wad
 def test_init_enforces_lump_spec():
-    """pygame.init pre-opens CD quality; lump bytes misread there play
-    4x fast. init() must force 11025/8/mono back (viewer boot order)."""
+    """pygame.init pre-opens whatever the desktop wants; init() must
+    force 44100/s16/stereo back (viewer boot order)."""
     import pygame
     eng = SoundEngine()
     pygame.mixer.quit()
-    pygame.mixer.pre_init(44100, -16, 2, 512)
+    pygame.mixer.pre_init(22050, -8, 1, 512)
     pygame.mixer.init()
-    assert tuple(pygame.mixer.get_init()) != (11025, 8, 1)
+    assert tuple(pygame.mixer.get_init()) != (44100, -16, 2)
     assert eng.init(WadFile(WAD_PATH)) is True
-    assert tuple(pygame.mixer.get_init()) == (11025, 8, 1)
+    assert tuple(pygame.mixer.get_init()) == (44100, -16, 2)
     snd = eng.sound("pistol")
     import numpy as np
-    frames = pygame.sndarray.array(snd).shape[0]
-    assert frames == 5661  # NOTE: full half-second, not 1415 chipmunk
+    arr = pygame.sndarray.array(snd)
+    assert arr.shape == ((5661 - 1) * 4 + 1, 2)  # NOTE: x4 stereo
     pygame.mixer.quit()
 
 
@@ -324,31 +324,61 @@ def test_music_pump_caps_backlog():
 
 
 def test_sfx_volume_reaches_channel():
-    """Slider regression: master scales the channel (pygame-ce ignores
-    the two-arg set_volume on mono mixers, so single-arg it is)."""
+    """Slider regression: master scales both stereo channel gains
+    (get_volume can't read stereo gains back, so capture set_volume)."""
     import os
     import pygame
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     was_init = pygame.mixer.get_init() is not None
     if not was_init:
         try:
-            pygame.mixer.pre_init(11025, 8, 1, 512)
+            pygame.mixer.pre_init(44100, -16, 2, 512)
             pygame.mixer.init()
         except Exception:
             pytest.skip("no mixer available")
+
+    gains = []
+
+    class FakeChannel:
+        def get_busy(self):
+            return False
+
+        def set_volume(self, left, right):
+            gains.append((left, right))
+
+        def play(self, snd):
+            self.played = snd
+
+        def stop(self):
+            pass
+
+    class FakeMixer:
+        def Sound(self, buffer=None):
+            return ("sound", len(buffer or b""))
+
+        def Channel(self, i):
+            return FakeChannel()
+
+        def set_num_channels(self, n):
+            pass
+
     old_master, old_slots = audio.engine.master, audio.engine.slots
     old_mixer, old_wad = audio.engine.mixer, audio.engine.wad
-    audio.engine.mixer = pygame.mixer
-    audio.engine.wad = WadFile(os.path.join(os.path.dirname(__file__),
-                                            "..", "DOOM1.WAD"))
+    old_cache = dict(audio.engine.cache)
+    audio.engine.mixer = FakeMixer()
+    audio.engine.wad = None
+    audio.engine.cache = {"pistol": ("cached", 1)}
     try:
         audio.engine.master = 0.2
         audio.engine.slots = []
-        assert audio.play("pistol")
-        assert pygame.mixer.Channel(0).get_volume() == pytest.approx(
-            0.2, abs=0.02)
+        assert audio.play("pistol")  # UI: full L/R, scaled by master
+        assert gains[-1] == pytest.approx((0.2, 0.2))
+        audio.engine.master = 0.0
+        audio.engine.slots = []
+        assert not audio.play("pistol")  # NOTE: inaudible, skipped
     finally:
         audio.engine.master, audio.engine.slots = old_master, old_slots
         audio.engine.mixer, audio.engine.wad = old_mixer, old_wad
+        audio.engine.cache = old_cache
         if not was_init:
             pygame.mixer.quit()

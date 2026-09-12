@@ -180,7 +180,13 @@ def test_player_streams_chunks():
                 break
             time.sleep(0.02)
         assert chunk is not None
-        assert abs(len(chunk) - int(0.05 * 11025)) <= 2  # NOTE: slicing
+        # NOTE: 0.05 s at 22050, x2 upsample, stereo int16 frames.
+        expect = ((player.chunk_n - 1) * 2 + 1) * 4
+        assert len(chunk) == expect
+        import numpy as np
+        stereo = np.frombuffer(chunk, dtype="<i2").reshape(-1, 2)
+        assert stereo.shape[1] == 2  # NOTE: mono duplicated L/R
+        assert (stereo[:, 0] == stereo[:, 1]).all()
         player.set_volume(64)
         player.set_muted(True)
         player.stop()

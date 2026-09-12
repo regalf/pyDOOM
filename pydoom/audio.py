@@ -23,11 +23,14 @@ from pydoom import tables
 from pydoom.angles import point_to_angle2
 from pydoom.fixed import FRACUNIT
 
-SAMPLE_RATE = 11025
-# NOTE: DS data is UNSIGNED 8-bit (128 = silence); size +8 requests
-# AUDIO_U8. Signed (-8) turns silence into full-scale DC: harsh noise.
-MIXER_SIZE = 8
+SAMPLE_RATE = 44100  # mixer spec (chocolate: 44.1 kHz SFX)
+# NOTE: signed 16-bit stereo (chocolate i_sdlsound.c); DS lumps ride
+# up through upsample_sfx on load, like SDL's audio conversion.
+MIXER_SIZE = -16
+MIXER_CHANNELS = 2
 N_CHANNELS = 8
+SFX_RATE = 11025  # native DS lump rate
+OPL_RATE = 22050  # chip render rate (chocolate opl.c)
 CLIP_DIST = 1200  # map units, vanilla S_CLIPPING_DIST
 CLOSE_DIST = 160  # map units, vanilla S_CLOSE_DIST
 STEREO_SWING = 96  # vanilla S_STEREO_SWING
@@ -95,6 +98,27 @@ def decode_lump(data: bytes) -> bytes:
     return bytes(pcm)
 
 
+def upsample_sfx(pcm8: bytes) -> bytes:
+    """DS lump (11025 Hz mono u8) to mixer spec (44100 stereo s16).
+
+    Linear x4 in time (what SDL_ConvertAudioFormat does for
+    chocolate), unsigned 8-bit to signed 16-bit, mono duplicated.
+    """
+    import numpy as np
+    src = (np.frombuffer(bytes(pcm8), dtype=np.uint8).astype(np.float64)
+           - 128.0) * 256.0
+    n = len(src)
+    if n == 0:
+        return b""
+    if n == 1:
+        up = np.repeat(src, (SAMPLE_RATE // SFX_RATE))
+    else:
+        up = np.interp(np.arange((n - 1) * 4 + 1) / 4.0,
+                       np.arange(n), src)
+    s16 = np.clip(np.round(up), -32768, 32767).astype("<i2")
+    return np.stack([s16, s16], axis=1).tobytes()
+
+
 def attenuate(lx: int, ly: int, la_bam: int, sx: int,
               sy: int) -> tuple[float, float, float] | None:
     """Vanilla S_AdjustSoundParams: (vol01, left01, right01) or None
@@ -133,19 +157,19 @@ class SoundEngine:
     def init(self, wad, master: float = 1.0) -> bool:
         """Attach the WAD and bring up the mixer. False = silent mode.
 
-        NOTE: pygame.init() pre-opens the mixer at CD quality, which
-        would misread our 11025 Hz 8-bit mono lumps (4x chipmunk
-        bursts); enforce our spec whenever it mismatches.
+        NOTE: pygame.init() pre-opens whatever the desktop wants;
+        enforce CD quality whenever it mismatches.
         """
         self.wad = wad
         self.master = master
         if pygame is None:
             return False
         try:
-            want = (SAMPLE_RATE, MIXER_SIZE, 1)
+            want = (SAMPLE_RATE, MIXER_SIZE, MIXER_CHANNELS)
             if tuple(pygame.mixer.get_init() or ()) != want:
                 pygame.mixer.quit()
-                pygame.mixer.pre_init(SAMPLE_RATE, MIXER_SIZE, 1, 512)
+                pygame.mixer.pre_init(SAMPLE_RATE, MIXER_SIZE,
+                                      MIXER_CHANNELS, 512)
                 pygame.mixer.init()
             pygame.mixer.set_num_channels(N_CHANNELS)
         except Exception:
@@ -190,7 +214,7 @@ class SoundEngine:
         if self.mixer is not None and self.wad is not None:
             try:
                 pcm = decode_lump(self.wad.read_lump("DS" + name.upper()))
-                result = self.mixer.Sound(buffer=pcm)
+                result = self.mixer.Sound(buffer=upsample_sfx(pcm))
             except Exception:
                 result = None
         self.cache[name] = result
@@ -219,9 +243,10 @@ class SoundEngine:
             heard = attenuate(lx, ly, la, x, y)
             if heard is None:
                 return False
-            vol, _pan_l, _pan_r = heard  # NOTE: mono mixer, pan unused
-        vol *= self.master
-        if vol <= 0:
+            vol, left, right = heard  # NOTE: vanilla S_AdjustSoundParams
+        left = min(max(left * self.master, 0.0), 1.0)
+        right = min(max(right * self.master, 0.0), 1.0)
+        if left <= 0 and right <= 0:
             return False
         channels = [self.mixer.Channel(i) for i in range(N_CHANNELS)]
         while len(self.slots) < N_CHANNELS:
@@ -246,10 +271,8 @@ class SoundEngine:
                 return False  # NOTE: nothing kickable, sorry Charlie
         ch = channels[pick]
         self.slots[pick] = (name, priority, ch, origin)
-        # NOTE: single-arg volume: the mixer is mono, and pygame-ce
-        # ignores the two-arg (stereo) form on mono mixers entirely
-        # (channel stuck at 1.0: full blast until master hit 0).
-        ch.set_volume(vol)
+        # NOTE: stereo mixer, so the two-arg pan lands (S_AdjustSound).
+        ch.set_volume(left, right)
         ch.play(snd)
         return True
 

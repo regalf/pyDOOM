@@ -16,7 +16,8 @@ import threading
 verbose = False  # terminal chatter (viewer sets it from --debug)
 
 TICK_HZ = 140  # MUS delay units per second (DMX score clock)
-SAMPLE_RATE = 11025  # matches the SFX mixer (Sound Blaster did the same)
+SAMPLE_RATE = 22050  # chip render rate (chocolate opl.c); the pump
+# upsamples x2 to the 44100 mixer and duplicates mono to stereo.
 CHUNK_SEC = 0.25  # streaming slice (queue holds ~4 s against hitches)
 N_VOICES = 9  # OPL2, like vanilla DMX (no OPL3 second array)
 PERCUSSION_CH = 15  # MUS drum channel (MIDI 9 after mus2mid)
@@ -535,7 +536,7 @@ class NullBackend:
 
 
 class PyOplBackend:
-    """DOSBox OPL2 via pip PyOPL (lazy import, mono int16 at 11025)."""
+    """DOSBox OPL2 via pip PyOPL (lazy import, mono int16 at 22050)."""
 
     def __init__(self, rate: int = SAMPLE_RATE) -> None:
         import pyopl
@@ -618,7 +619,7 @@ class MusicPlayer:
         self._muted = bool(muted)
 
     def pump(self):
-        """One uint8 mono chunk, or None when the queue is dry."""
+        """One int16-stereo chunk, or None when the queue is dry."""
         try:
             chunk = self._out.get_nowait()
         except queue.Empty:
@@ -695,8 +696,13 @@ class MusicPlayer:
                 dc_x = sample
                 y[i] = dc_y
             self._dc_x, self._dc_y = dc_x, dc_y
-            chunk = ((y.astype(np.int32) >> 8) + 128)
-            chunk = chunk.clip(0, 255).astype(np.uint8)
+            # NOTE: linear x2 to the 44100 mixer, mono duplicated to
+            # stereo (the OPL2 chip has no pan, like chocolate's).
+            n = len(y)
+            up = np.interp(np.arange((n - 1) * 2 + 1) / 2.0,
+                           np.arange(n), y)
+            s16 = np.clip(np.round(up), -32768, 32767).astype("<i2")
+            chunk = np.stack([s16, s16], axis=1).tobytes()
             if self._muted:
-                chunk[:] = 128  # NOTE: song runs on, silently
-            self._out.put(chunk.tobytes())
+                chunk = bytes(len(chunk))  # NOTE: song runs on, silently
+            self._out.put(chunk)
