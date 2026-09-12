@@ -80,3 +80,6 @@ LinuxDoom without its MUS server.
 GPL-3.0-or-later (see `LICENSE`). Original engine by id Software;
 this reimplementation is an independent clean-room-style port for
 learning and preservation.
+
+---
+*Project created with [opencode](https://opencode.ai) agent **Muse Spark 1.3**.*
