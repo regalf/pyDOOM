@@ -1560,6 +1560,11 @@ class World:
         from types import SimpleNamespace
         return self.do_floor(SimpleNamespace(tag=tag), "lowerFloorToLowest")
 
+    def open_doors_by_tag(self, tag: int, dtype: int) -> bool:
+        """A_KeenDie/E4M6 helper: EV_DoDoor on every tagged sector."""
+        from types import SimpleNamespace
+        return self.do_door(SimpleNamespace(tag=tag), dtype)
+
     def build_stairs(self, line, stairsize: int, speed: int) -> bool:
         """EV_BuildStairs: raise tagged sectors in same-texture steps."""
         rtn = False

@@ -18,12 +18,30 @@ PARS = (E1_PARS,
         (0, 90, 90, 90, 120, 90, 360, 240, 30, 170),
         (0, 90, 45, 90, 150, 90, 90, 165, 30, 135))
 
-# lnodes[0]: E1 world-map spots, maps 1-9 (vanilla coordinates).
-LNODES = ((185, 164), (148, 143), (69, 122), (209, 102), (116, 89),
-          (166, 55), (71, 56), (135, 29), (71, 24))
-# epsd0animinfo: 10 ambient splat flickers, 3 frames each.
-ANIM_LOCS = ((224, 104), (184, 160), (112, 136), (72, 112), (88, 96),
-             (64, 48), (192, 40), (136, 16), (80, 16), (64, 24))
+# lnodes[epsd]: world-map spots per episode, maps 1-9 (wi_stuff.c;
+# episode 4 has no world map: dsda leaves its row zero-filled).
+LNODES = (((185, 164), (148, 143), (69, 122), (209, 102), (116, 89),
+           (166, 55), (71, 56), (135, 29), (71, 24)),
+          ((254, 25), (97, 50), (188, 64), (128, 78), (214, 92),
+           (133, 130), (208, 136), (148, 140), (235, 158)),
+          ((156, 168), (48, 154), (174, 95), (265, 75), (130, 48),
+           (279, 23), (198, 48), (140, 25), (281, 136)),
+          ((0, 0),) * 9)
+# epsd animinfo: (x, y, frames, period); E2 entries are single-frame
+# level flickers, E4 shows none (vanilla skips epsd > 2). Level gating
+# is cosmetic here: every flicker runs always (see NOTE in draw).
+ANIMS = (((224, 104, 3, 35 // 3), (184, 160, 3, 35 // 3),
+          (112, 136, 3, 35 // 3), (72, 112, 3, 35 // 3),
+          (88, 96, 3, 35 // 3), (64, 48, 3, 35 // 3),
+          (192, 40, 3, 35 // 3), (136, 16, 3, 35 // 3),
+          (80, 16, 3, 35 // 3), (64, 24, 3, 35 // 3)),
+         ((128, 136, 1, 35 // 3),) * 7 + ((192, 144, 3, 35 // 3),
+                                          (128, 136, 1, 35 // 3)),
+         ((104, 168, 3, 35 // 3), (40, 136, 3, 35 // 3),
+          (160, 96, 3, 35 // 3), (104, 80, 3, 35 // 3),
+          (120, 32, 3, 35 // 3), (40, 0, 3, 35 // 4)),
+         ())
+ANIM_LOCS = tuple((x, y) for x, y, _, _ in ANIMS[0])
 ANIM_PERIOD = 35 // 3  # TICRATE/3 between flickers
 
 
@@ -62,8 +80,13 @@ class Intermission:
         self.next_count = SHOWNEXTLOCDELAY * 35
         self.skip_next = False
         # NOTE: ANIM_ALWAYS flickers stagger on the menu RNG stream.
-        self.anims = [{"ctr": -1, "next": 1 + m_random() % ANIM_PERIOD}
-                      for _ in ANIM_LOCS]
+        epsd = min(max(int(finished[1]) - 1, 0), 3)
+        self.epsd = epsd
+        self._lnodes = LNODES[epsd]
+        self._animdefs = ANIMS[epsd]
+        self.anims = [{"ctr": -1, "next": 1 + m_random() % period,
+                       "frames": frames, "period": period}
+                      for _, _, frames, period in self._animdefs]
 
     # -- per-tic --
 
@@ -74,9 +97,9 @@ class Intermission:
         for anim in self.anims:
             if self.bcnt == anim["next"]:
                 anim["ctr"] += 1
-                if anim["ctr"] >= 3:
+                if anim["ctr"] >= anim["frames"]:
                     anim["ctr"] = 0
-                anim["next"] = self.bcnt + ANIM_PERIOD
+                anim["next"] = self.bcnt + anim["period"]
         if self.state == "nextloc":
             if self.next_count > 0:
                 self.next_count -= 1
@@ -152,9 +175,13 @@ class Intermission:
             menu._blit(f"WIMAP{int(self.finished[1]) - 1}", fb, 0, 0)
         except Exception:
             menu._blit("WIMAP0", fb, 0, 0)
-        for j, ((x, y), anim) in enumerate(zip(ANIM_LOCS, self.anims)):
+        for j, ((x, y, _, _), anim) in enumerate(
+                zip(self._animdefs, self.anims)):
             if anim["ctr"] >= 0:
-                menu._blit(f"WIA00{j}{anim['ctr']:02d}", fb, x, y)
+                # NOTE: WIA{epsd}{anim}{frame}; E2 level flickers run
+                # always here instead of gating on progress (cosmetic).
+                menu._blit(f"WIA0{self.epsd}{j}{anim['ctr']:02d}",
+                           fb, x, y)
         if self.state == "nextloc":
             self._draw_nextloc(fb, menu)
         else:
@@ -186,7 +213,7 @@ class Intermission:
             last = nxt - 1
         for i in range(last + 1):
             self._on_lnode(fb, menu, i, ["WISPLAT"])
-        if self.finished == "E1M3" and self.entering == "E1M9":
+        if self.entering is not None and self.entering[3:] == "9":
             self._on_lnode(fb, menu, 8, ["WISPLAT"])  # NOTE: secret pad
         if self.pointer_on():
             self._on_lnode(fb, menu, nxt, ["WIURH0", "WIURH1"])
@@ -196,7 +223,7 @@ class Intermission:
 
     def _on_lnode(self, fb, menu, node: int, names: list) -> None:
         """WI_drawOnLnode: first fitting frame wins (else skipped)."""
-        x, y = LNODES[node]
+        x, y = self._lnodes[node]
         for name in names:
             try:
                 patch, _, _ = menu.patch(name)

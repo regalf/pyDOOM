@@ -196,3 +196,83 @@ def test_next_map_registered_episodes():
     assert next_map("E3M6", True) == "E3M9"  # secret exit
     assert next_map("E3M9", False) == "E3M7"  # back from secret
     assert next_map("E3M8", False) is None  # episode complete
+
+
+DOOM_WAD_PATH = os.path.join(os.path.dirname(__file__), "..", "doom.wad")
+
+requires_doom_wad = pytest.mark.skipif(
+    not os.path.exists(DOOM_WAD_PATH), reason="doom.wad not found")
+
+
+def load_world_wad(marker, path):
+    register_combat_actions()  # idempotent
+    wad = WadFile(path)
+    game_map = Map.from_wad(wad, marker)
+    texman = TextureManager(wad)
+    texman.resolve_map(game_map)
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, texman)
+    ctx = AIContext(physics=phys, world=world, players=[],
+                    sector_index={id(s): i for i, s in
+                                  enumerate(game_map.sectors)})
+    ctx.mobjs = []
+    ctx.skyflatnum = None
+    return game_map, phys, index, world, ctx
+
+
+def _kill_boss(marker, boss_type, path):
+    game_map, phys, index, world, ctx = load_world_wad(marker, path)
+    mobjs = spawn_map(game_map, phys, index)
+    ctx.mobjs = mobjs
+    start = next(t for t in game_map.things if t.type == 1)
+    player = spawn_mobj(game_map, phys, index, start.x << 16,
+                        start.y << 16, 0, MT_INDEX["PLAYER"])
+    player.is_player = True
+    ctx.players = [player]
+    bosses = [mo for mo in mobjs if mo.type == MT_INDEX[boss_type]]
+    assert bosses  # the episode boss is on the map
+    for boss in bosses:
+        damage_mobj(boss, None, None, 100000, ctx)
+    for _ in range(400):  # NOTE: spider death alone runs ~140 tics
+        world.tick()
+        for mo in list(mobjs):
+            think_mobj(mo, phys, ctx)
+    return world
+
+
+@requires_doom_wad
+def test_bossdeath_exits_e2m8():
+    world = _kill_boss("E2M8", "CYBORG", DOOM_WAD_PATH)
+    assert world.exit_kind == "normal"  # NOTE: G_ExitLevel, no floor
+
+
+@requires_doom_wad
+def test_bossdeath_exits_e3m8():
+    world = _kill_boss("E3M8", "SPIDER", DOOM_WAD_PATH)
+    assert world.exit_kind == "normal"  # NOTE: G_ExitLevel, no floor
+
+
+@requires_wad
+def test_keendie_opens_tag666_once_last_keen_dies(monkeypatch):
+    from pydoom.info import MF_FLAGS
+    game_map, phys, index, world, ctx = load_world("E1M1")
+    ctx.mobjs = []
+    calls = []
+    monkeypatch.setattr(world, "open_doors_by_tag",
+                        lambda tag, dtype: calls.append((tag, dtype)))
+    keens = [spawn_mobj(game_map, phys, index, 0, 0, 0,
+                        MT_INDEX["KEEN"]) for _ in range(2)]
+    ctx.mobjs = keens
+    damage_mobj(keens[0], None, None, 100000, ctx)
+    for _ in range(120):
+        for mo in list(keens):
+            think_mobj(mo, phys, ctx)
+    assert calls == []  # NOTE: twin still lives: doors stay shut
+    assert not keens[0].flags & MF_FLAGS["MF_SOLID"]  # A_Fall ran
+    damage_mobj(keens[1], None, None, 100000, ctx)
+    for _ in range(120):
+        for mo in list(keens):
+            think_mobj(mo, phys, ctx)
+    assert len(calls) == 1 and calls[0][0] == 666  # doors swing open

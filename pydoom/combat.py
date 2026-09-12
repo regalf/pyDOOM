@@ -738,13 +738,20 @@ def a_bossdeath(actor, ctx) -> None:
     """A_BossDeath: episode boss effects (p_enemy.c).
 
     E1M8 barons drop the tag-666 floors (the exit chain continues on
-    foot); E2M8/E3M8 route out, re-mapped when those episodes land.
+    foot); E2M8 cyber / E3M8 spider exit the level outright
+    (G_ExitLevel, no floor); E4 arms arrive with Ultimate.
     """
     world = getattr(ctx, "world", None)
     game_map = getattr(world, "map", None)
     marker = getattr(game_map, "marker", "")
-    if not marker.startswith("E1M8") or actor.type != MT_INDEX["BRUISER"]:
-        # NOTE: E2 (cyber) / E3 (spider) arms arrive with their maps.
+    key = (marker, actor.type)
+    if key == ("E1M8", MT_INDEX["BRUISER"]):
+        effect = "floor666"
+    elif key in (("E2M8", MT_INDEX["CYBORG"]),
+                 ("E3M8", MT_INDEX["SPIDER"])):
+        effect = "exit"
+    else:
+        # NOTE: E4M6 (cyber door) / E4M8 (spider floor) land with retail.
         return
     players = getattr(ctx, "players", None) or []
     if not any(getattr(p, "health", 0) > 0 for p in players):
@@ -753,7 +760,23 @@ def a_bossdeath(actor, ctx) -> None:
         if mo is not actor and not mo.dead and mo.type == actor.type \
                 and mo.health > 0:
             return  # other boss not dead
-    world.lower_floors_by_tag(666)
+    if effect == "floor666":
+        world.lower_floors_by_tag(666)
+    else:
+        world.exit_kind = "normal"
+
+
+def a_keendie(actor, ctx) -> None:
+    """A_KeenDie (p_enemy.c): when every keen is dead, the tag-666
+    doors swing open (E4M2; harmless elsewhere, keens never spawn)."""
+    from pydoom.doors import DoorType
+    a_fall(actor, ctx)
+    for mo in getattr(ctx, "mobjs", None) or []:
+        if mo is not actor and mo.type == actor.type and mo.health > 0:
+            return  # other Keen not dead
+    world = getattr(ctx, "world", None)
+    if world is not None:
+        world.open_doors_by_tag(666, DoorType.OPEN)
 
 
 COMBAT_ACTIONS = {
@@ -771,6 +794,7 @@ COMBAT_ACTIONS = {
     "A_PlayerScream": a_playerscream,
     "A_Fall": a_fall,
     "A_BossDeath": a_bossdeath,
+    "A_KeenDie": a_keendie,
 }
 
 

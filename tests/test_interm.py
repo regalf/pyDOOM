@@ -96,3 +96,37 @@ def test_level_patch_sequential_episodes():
     assert level_patch("E2M1") == "WILV09"
     assert level_patch("E2M9") == "WILV17"
     assert level_patch("E3M1") == "WILV18"
+
+
+def test_episode_tables_e2_e3():
+    e2 = Intermission("E2M5", "E2M9", 0, 0, 0, 0, 0, 0, 0, 0)
+    assert e2.epsd == 1
+    assert e2._lnodes[0] == (254, 25)  # NOTE: wi_stuff.c lnodes[1]
+    assert len(e2.anims) == 9
+    assert all(a["frames"] == 1 for a in e2.anims[:7])  # single-frame
+    e3 = Intermission("E3M1", "E3M2", 0, 0, 0, 0, 0, 0, 0, 0)
+    assert e3.epsd == 2
+    assert e3._lnodes[0] == (156, 168)
+    assert len(e3.anims) == 6
+    run(e3, 500)  # anims cycle without index errors
+    assert all(0 <= a["ctr"] < a["frames"] for a in e3.anims)
+
+
+DOOM_WAD = os.path.join(os.path.dirname(__file__), "..", "doom.wad")
+
+requires_doom_wad = pytest.mark.skipif(
+    not os.path.exists(DOOM_WAD), reason="doom.wad not found")
+
+
+@requires_doom_wad
+def test_draw_e2_paints():
+    import numpy as np
+    from pydoom.menu import Menu, Settings
+    from pydoom.wad import WadFile
+    wad = WadFile(DOOM_WAD)
+    m = Menu(wad, Settings())
+    im = Intermission("E2M5", "E2M9", 4, 10, 2, 5, 1, 2, 35 * 60, 35 * 90)
+    run(im, 400)
+    fb = np.zeros((200, 320), dtype=np.uint8)
+    im.draw(fb, m)  # NOTE: WIMAP1 + WIA1 flickers exist in doom.wad
+    assert (fb != 0).sum() > 3000
