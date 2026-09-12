@@ -171,13 +171,17 @@ def main() -> int:
 
     def launch() -> None:
         sync_wad()
+        # NOTE: map and skill only matter in debug (direct boot);
+        # otherwise the game boots E1M1/normal and its menu decides.
+        picked_skill = SKILLS[skill_list.index] if flags["debug"] \
+            else "normal"
         start_map = map_list.selected() if flags["debug"] else maps[0]
         cfg.last_wad, cfg.last_skill = wad, SKILLS[skill_list.index]
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
         settings_save(os.path.join(ROOT, CONFIG_PATH), cfg)
         args = build_viewer_args(
-            wad, start_map, SKILLS[skill_list.index],
+            wad, start_map, picked_skill,
             flags["debug"], flags["fast"], flags["respawn"],
             flags["nomonsters"], flags["kinematic"])
         print("pyDOOM:", " ".join(args[1:]))
@@ -211,9 +215,17 @@ def main() -> int:
                 screen.blit(small.render("DEBUG MODE on.",
                                          True, (90, 90, 90)), (296, 114))
         else:
-            screen.blit(small.render("SKILL", True, (90, 90, 90)),
-                        (24, 78))
-            skill_list.draw(screen, font, 24, 96, 200, sfocus == 0)
+            if flags["debug"]:
+                screen.blit(small.render("SKILL", True, (90, 90, 90)),
+                            (24, 78))
+                skill_list.draw(screen, font, 24, 96, 200, sfocus == 0)
+            else:
+                screen.blit(small.render("SKILL list appears with",
+                                         True, (90, 90, 90)), (24, 96))
+                screen.blit(small.render("DEBUG MODE on (the game",
+                                         True, (90, 90, 90)), (24, 114))
+                screen.blit(small.render("menu picks it otherwise).",
+                                         True, (90, 90, 90)), (24, 132))
             screen.blit(small.render("FLAGS (enter toggles)", True,
                                      (90, 90, 90)), (296, 78))
             y0 = 96
@@ -268,12 +280,15 @@ def main() -> int:
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         launch()
                 else:
+                    if not flags["debug"]:
+                        sfocus = 1  # NOTE: skill hides without debug
                     if ev.key == pygame.K_UP:
                         (flag_list if sfocus else skill_list).move(-1)
                     elif ev.key == pygame.K_DOWN:
                         (flag_list if sfocus else skill_list).move(1)
                     elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                        sfocus = 1 - sfocus
+                        if flags["debug"]:
+                            sfocus = 1 - sfocus
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         if sfocus:
                             toggle_flag()
@@ -292,7 +307,7 @@ def main() -> int:
                     elif flags["debug"] and map_list.click(ev.pos):
                         focus = 1
                 else:
-                    if skill_list.click(ev.pos):
+                    if flags["debug"] and skill_list.click(ev.pos):
                         sfocus = 0
                     elif flag_list.click(ev.pos):
                         sfocus = 1
