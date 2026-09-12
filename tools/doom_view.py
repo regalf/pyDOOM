@@ -1653,7 +1653,9 @@ def main() -> int:
         elif gamestate == "wipe":
             melt_acc += dt * TICRATE  # NOTE: 35Hz wall-clock, like asset
             steps, melt_acc = int(melt_acc), melt_acc - int(melt_acc)
-            stepped = melt.tick(steps) if steps else fb
+            # NOTE: idle frames re-show the last melt step (vanilla
+            # keeps wipe_scr); re-rendering would flash the end scene.
+            stepped = melt.tick(steps) if steps else melt.frame
             if stepped is None:
                 gamestate = wipe_after
             else:

@@ -20,6 +20,7 @@ class MeltWipe:
     def __init__(self) -> None:
         self.old: np.ndarray | None = None
         self.new: np.ndarray | None = None
+        self.frame: np.ndarray | None = None  # last composed (shown idle)
         self.y = np.zeros(W, dtype=np.int32)
         self.done = True
 
@@ -39,6 +40,7 @@ class MeltWipe:
             elif ys[i] == -16:
                 ys[i] = -15
         self.y = ys
+        self.frame = self.old.copy()
         self.done = False
 
     def tick(self, steps: int = 1) -> np.ndarray | None:
@@ -55,11 +57,13 @@ class MeltWipe:
             self.y = np.minimum(self.y, H)
         if bool((self.y >= H).all()):
             self.done = True
+            self.frame = self.new.copy()
             return self.new.copy()
         pos = np.clip(self.y, 0, H)[None, :]
         rows = np.arange(H, dtype=np.int32)[:, None]
         # NOTE: new frame above the front, old frame sliding down
         # below it (rows r show old row r - y), like vanilla.
         old_idx = np.clip(rows - pos, 0, H - 1)
-        return np.where(rows < pos, self.new,
-                        self.old[old_idx, np.arange(W)[None, :]])
+        self.frame = np.where(rows < pos, self.new,
+                              self.old[old_idx, np.arange(W)[None, :]])
+        return self.frame

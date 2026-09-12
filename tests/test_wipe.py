@@ -59,3 +59,21 @@ def test_melt_slides_old_down_below_front():
     assert (first[:y, col] == 7).all()  # NOTE: new frame above
     below = first[y:, col]
     assert (below == np.arange(H - y, dtype=np.uint8)).all()
+
+
+def test_wipe_idle_frames_hold_last_step():
+    """Zero-step frames (60fps vs 35Hz melt) re-show the last melt
+    frame instead of flashing the end scene (flicker)."""
+    old = np.zeros((H, W), dtype=np.uint8)
+    new = np.full((H, W), 7, dtype=np.uint8)
+    wipe = MeltWipe()
+    wipe.start(old, new)
+    shown = []
+    for i in range(120):  # NOTE: driver pattern: step, hold, step...
+        cur = wipe.tick(1) if i % 2 == 0 else wipe.frame
+        if cur is None:
+            break
+        shown.append(int((cur == 7).sum()))
+    assert shown  # melted something
+    assert all(b >= a for a, b in zip(shown, shown[1:]))  # never jumps back
+    assert shown[-1] == H * W  # ends on the new frame
