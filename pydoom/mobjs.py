@@ -431,6 +431,14 @@ def xy_movement(mo: Mobj, physics, ctx=None) -> list:
     """
     crossed: list = []
     if not mo.momx and not mo.momy:
+        if mo.flags & _MF_SKULLFLY:
+            # NOTE: the skull slammed into something (p_mobj.c
+            # P_XYMovement): stop, drop back to spawn, and chase
+            # again from there instead of lunging in place.
+            from pydoom.info import MOBJ_TYPES
+            mo.flags &= ~_MF_SKULLFLY
+            mo.momz = 0
+            set_mobj_state(mo, MOBJ_TYPES[mo.type][1], ctx)
         return crossed
     if mo.momx > MAXMOVE:
         mo.momx = MAXMOVE

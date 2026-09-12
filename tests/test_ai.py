@@ -328,3 +328,27 @@ def test_floater_eases_toward_target_height():
     mo3.flags |= MF_FLAGS["MF_SKULLFLY"]
     _z_movement(mo3)
     assert mo3.z == 0  # charging skulls never ease
+
+
+@requires_wad
+def test_skullfly_slam_recovers_to_spawn(setup):
+    """A slammed skull (zero mom, SKULLFLY set) stops, clears the flag
+    and drops back to spawn, then chases again (p_mobj.c P_XYMovement)."""
+    from pydoom.info import MF_FLAGS, MOBJ_TYPES, STATE_INDEX
+    from pydoom.mobjs import xy_movement
+    game_map, phys, index, ctx = setup
+    player = spawn_mobj(game_map, phys, index, 500 << 16, 0, 0,
+                        MT_INDEX["PLAYER"])
+    ctx.players = [player]  # NOTE: A_Look needs a player, like in-game
+    skull = spawn_mobj(game_map, phys, index, 0, 0, 0,
+                       MT_INDEX["SKULL"])
+    skull.flags |= MF_FLAGS["MF_SKULLFLY"]
+    skull.momx = skull.momy = 0
+    skull.momz = 5 * 65536
+    assert xy_movement(skull, phys, ctx) == []
+    assert not skull.flags & MF_FLAGS["MF_SKULLFLY"]
+    assert skull.momz == 0
+    # NOTE: spawn entry runs A_Look, which sees the dummy and jumps
+    # straight to chase (S_SKULL_RUN1): recover, then re-engage.
+    assert skull.state in (STATE_INDEX["S_SKULL_STND"],
+                           STATE_INDEX["S_SKULL_RUN1"])
