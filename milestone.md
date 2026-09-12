@@ -142,3 +142,19 @@ fidelity project with a file format on top. Work happens on the branch;
 - [ ] A/B our DOSBox-OPL backend vs Nuked-OPL3 on identical register
       streams; switch backend if the difference is audible (music
       never affects demo sync — framebuffer checksums only).
+
+## H. Full OpenGL renderer (long term, 2–3 weeks)
+
+No hybrid presenter: one complete GL renderer behind a
+`video api = software/opengl` setting (default software), modeled
+on dsda's `gl_main`/`gl_preprocess`.
+
+- [ ] Static geometry preprocess once per map (walls/flats/sky),
+  dynamic sprites per frame; shaders for palette/colormap/fuzz/
+  lights from the existing `zlight`/`scalelight` tables.
+- [ ] Native resolution rendering (1080p with real detail) with
+  the software raster kept as reference.
+- [ ] Visual parity: GL readback vs software framebuffer on fixed
+  scenes (tolerance-based; sim/checksum tests stay on software).
+- [ ] Setting + auto-fallback to software (missing GL/dummy
+  video/headless CI never touch the GL path).
