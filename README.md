@@ -1,15 +1,15 @@
 # pyDOOM
 
 A **Python reimplementation of the DOOM engine** (based on
-[linuxdoom-1.10](https://github.com/id-Software/DOOM)), targeting the
-shareware episode: **E1M1–E1M9, completable end to end**, as faithfully
-as reasonable — with documented simplifications wherever the original
-would cost more than it gives.
+[linuxdoom-1.10](https://github.com/id-Software/DOOM)), targeting
+registered Doom 1: **E1M1–E3M9, completable end to end**, as
+faithfully as reasonable — with documented simplifications wherever
+the original would cost more than it gives.
 
 ![E1M1 hangar](docs/e1m1.png)
 
 ```sh
-pip install -r requirements.txt   # needs DOOM1.WAD next to the project root
+pip install -r requirements.txt   # needs DOOM1.WAD (or doom.wad) next to the project root
 python tools/doom_view.py         # title screen -> ESC -> New Game
 python tools/doom_view.py --debug # with developer keys
 ```

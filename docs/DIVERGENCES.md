@@ -4,21 +4,26 @@ pyDOOM aims at a faithful recreation of linuxdoom-1.10, but some
 corners are deliberately simplified where the original costs more
 than it gives. This file lists every known one, by area. Rules:
 
-- Everything **reachable in E1M1–E1M9 is implemented** — machine
-  checked: every linedef special (1,2,5,7,8,9,11,16,18,20,22,23,
-  26–28,31–34,35,36,46,48,51,62,63,70,76,82,86,88,90,91,97,98,103)
-  and every sector special (0,1,2,3,7,8,9,11,12,13,16) occurring in
-  the episode has a handler.
+- Everything **reachable in E1M1–E3M9 is implemented** — machine
+  checked on E1: every linedef special (1,2,5,7,8,9,11,16,18,20,22,
+  23,26–28,31–34,35,36,46,48,51,62,63,70,76,82,86,88,90,91,97,98,
+  103) and every sector special (0,1,2,3,7,8,9,11,12,13,16)
+  occurring in the episode has a handler (E2/E3 ride the same
+  families; their boss exits are tested on the real maps).
 - Each item below is also marked with a `NOTE:` comment at the exact
   code location.
 
-## Scope: shareware episode 1
+## Scope: registered Doom 1 (E1–E3)
 
-- Only `DOOM1.WAD` maps (E1M1–E1M9) load; `GAMEMODE` is `"shareware"`,
-  so plasma/BFG/SSG never spawn and are gated out of the CheckAmmo
-  fallback, and the Doom-2-only megasphere is refused on pickup.
-- No episodes 2–3 content: no E2/E3 monsters, skies, or MAPxy routing
-  (`flow.py` knows E1 only, plus the E1M3→E1M9 secret exit).
+- `doom.wad` (registered) boots by default with `DOOM1.WAD` shareware
+  fallback; mission detect (`pydoom/mission.py`, dsda `CheckIWAD`
+  lite) drives `GAMEMODE`, episode gating, warps and demo clamps.
+  `doom.wad` itself is gitignored (commercial IWAD, copyright):
+  registered-only tests skip without it.
+- E1–E3 load and play end to end: per-episode skies, music, pars,
+  flow (secret M9s, M9 returns, M8 victories), boss exits (E2M8
+  cyber / E3M8 spider), `A_KeenDie` (E4M2-ready), per-episode
+  intermission maps. Ultimate (E4) lands with its IWAD.
 - No multiplayer: `MF_NOTDMATCH` things always spawn, no frags,
   no deathmatch exits, no `-respawn` outside nightmare.
 
@@ -27,9 +32,7 @@ than it gives. This file lists every known one, by area. Rules:
 - The camera drives a player mobj directly (no separate physics
   body, hence no self-collision); `MF_NOCLIP` re-syncs floor/sector
   when clipping back in.
-- No momentum: movement sets position per tic (effectively permanent
-  `CF_NOMOMENTUM`), no acceleration/friction curve, no key rebinding,
-  no mouse-button or joystick setup.
+- No key rebinding, no mouse-button or joystick setup.
 - Input rides vanilla `ticcmd_t` packets at 35 Hz (`pydoom/ticcmd.py`:
   forward/side units, int16 angleturn with the key-turn ramp,
   `BT_ATTACK`/`BT_USE`/`BT_CHANGE` bits), applied by the vanilla
@@ -57,9 +60,11 @@ than it gives. This file lists every known one, by area. Rules:
 
 ## Monsters and AI
 
-- Full E1 roster with sight (`REJECT` + validator), sound propagation,
-  chase/attack/pain/death, infighting, boss death with tag 666,
-  nightmare respawn (~12 s, teleport fog, `reactiontime 18`).
+- Full Doom 1 roster with sight (`REJECT` + validator), sound
+  propagation, chase/attack/pain/death, infighting, per-episode
+  boss deaths (E1M8 floors, E2M8/E3M8 exits), nightmare respawn
+  (~12 s, teleport fog, `reactiontime 18`). Slammed skullfly
+  charges stop, drop to spawn and chase again, like vanilla.
 - Floaters (cacolings) keep their spawn height: `MF_FLOAT` height
   adjustment toward the target (vanilla `P_Move`) is skipped, and
   there is no gravity for `MF_NOGRAVITY` bodies.
@@ -75,9 +80,10 @@ than it gives. This file lists every known one, by area. Rules:
   clip/shotgun drops at half ammo, armor clearing even on fumes,
   telefrag (≥1000) going through godmode and invulnerability.
 - Chaingun barks through the pistol lump — that is vanilla (there is
-  no separate chaingun sound). Plasma/BFG fire fine but stay silent
-  and sprite-less: the shareware WAD has no such lumps and the
-  renderer/audio skip missing ones quietly.
+  no separate chaingun sound). Plasma/BFG fire fine; under the
+  shareware IWAD they stay silent and sprite-less (no such lumps;
+  the registered WAD has them and they play). Weapon pickups chime
+  `wpnup`, and the Doom-2-only megasphere is refused on pickup.
 
 ## Doors, platforms, ceilings, crushers
 
@@ -86,10 +92,10 @@ than it gives. This file lists every known one, by area. Rules:
 - Vanilla quirks preserved: `lowerAndCrush` (type 44) grinds without
   hurting (`crush` stays false in the original), grinding crushers
   slow to `CEILSPEED/8` (fast ones never do).
-- Not wired: in-stasis reactivation, crush-stop (145), gibbing
-  corpses and removing dropped items under a crusher (damage only),
-  switches 41/43/49 (stub message). Monster line triggers are the
-  vanilla subset (39, 97, 125, 126, 4, 10, 88).
+- Not wired: in-stasis reactivation, gibbing corpses and removing
+  dropped items under a crusher (damage only), switches 41/43/49
+  (stub message). Monster line triggers are the vanilla subset
+  (39, 97, 125, 126, 4, 10, 88).
 
 ## Pickups and player
 
@@ -108,27 +114,33 @@ than it gives. This file lists every known one, by area. Rules:
 
 ## Flow, exits, teleports
 
-- E1 routing with secret exit, `PST_REBORN` fresh-start warps,
-  `strip_for_next_level` carry, E1M8 burn-out exit sector.
-- Teleports refuse a blocked landing with no fog at all
-  (`P_TeleportMove`), telefrag first, back side shut, fog and
-  facing from the destination pad.
+- E1–E3 routing with secret exits, `PST_REBORN` fresh-start warps,
+  `strip_for_next_level` carry, E1M8 burn-out exit sector, direct
+  E2M8/E3M8 boss exits.
+- Walk-over and USE teleports (39/97/125/126) hop with the crossing
+  side (back side shut, W1 clears, monsters ride, 125/126 skip
+  players). Blocked landings refuse with no fog at all
+  (`P_TeleportMove`), telefrag first, fog and facing from the pad.
 
 ## Intermission and finale
 
-- Two vanilla screens over the `WIMAP0` world map: staged tally
-  (kills/items/secret climb +2/tic with pistol ticks and explosion
-  thumps, 1 s pauses, time/par +3, any key hurries) then the
-  entering map (taken-map splats, blinking YOU ARE HERE arrow,
-  4 s hold). Kill-less maps read 100% instead of faulting like
-  vanilla would, and any key (not just attack/use) hurries.
-- E1M8 melts to black with the `E1TEXT` payoff as an overlay;
-  any key returns to the title (vanilla types the text over a
-  flat, same words).
+- Two vanilla screens over the per-episode world map (`WIMAP{epsd}`,
+  per-episode spots and flickers): staged tally (kills/items/secret
+  climb +2/tic with pistol ticks and explosion thumps, 1 s pauses,
+  time/par +3, any key hurries) then the entering map (taken-map
+  splats, blinking YOU ARE HERE arrow, 4 s hold). Kill-less maps
+  read 100% instead of faulting like vanilla would, and any key
+  (not just attack/use) hurries. E2 level flickers run always
+  instead of gating on progress (cosmetic).
+- M8 exits melt to black with the episode payoff as an overlay
+  (`E1TEXT` today; E2/E3 texts, the E3 bunny scroll and the cast
+  call land with the finale phase); any key returns to the title
+  (vanilla types the text over a flat, same words).
 
 ## Menu
 
-- Main → Episode (shareware scolds on 2/3, vanilla-true) → Skill,
+- Main → Episode (mission-gated: shareware scolds past E1,
+  registered opens E1–E3, `M_EPI4` arrives with retail) → Skill,
   Options (messages, mouse sens, SFX/music volume), ReadThis!,
   Load/Save, Quit with the shareware death jingle.
 - Omitted until needed: graphic detail, screen size. (End Game
@@ -142,19 +154,17 @@ than it gives. This file lists every known one, by area. Rules:
 - Versioned pickle snapshots in `savegames/` (slot names included),
   not the vanilla binary format. Restoring rebuilds everything
   transient (blockmap index, thinkers clock, renderer) and remaps
-  sector links onto a freshly loaded map.
+  sector links onto a freshly loaded map, melting in like vanilla.
 
 ## Demos
 
-- Own input format (events plus movement intent, ticcmd spirit) at
-  fixed steps with framebuffer checksums — deterministic across
-  runs, verified record-vs-replay equal.
-- Vanilla demo compatibility (.lmp playback/record, title attract
-  loop with DEMO1-3) exists but is experimental and off by default
-  (`demos 1` in pydoom.cfg): streams consume fully and
-  deterministically, scripted runs exit within a tic of vanilla
-  with identical stats, but long IWAD demos still drift in
-  monster-combat phase and need more development.
+- Vanilla demo compatibility (.lmp playback/record, version 109
+  headers with per-mission episode clamp) plus the title attract
+  loop with DEMO1-3. Experimental and off by default (`demos 1`
+  in pydoom.cfg): streams consume fully and deterministically,
+  scripted runs exit within a tic of vanilla with identical stats,
+  but long IWAD demos still drift in monster-combat phase and need
+  more development.
 
 ## Cheats
 
@@ -168,9 +178,11 @@ than it gives. This file lists every known one, by area. Rules:
 
 ## Audio: SFX
 
-- 11025 Hz 8-bit mono mixer (vanilla spec), 8 channels with
+- 44100 Hz 16-bit stereo mixer (chocolate recipe), 8 channels with
   `sounds.c` priorities, same-origin restart, vanilla distance
-  attenuation and stereo pan, silent no-op without a mixer.
+  attenuation and real stereo pan (`STEREO_SWING`), silent no-op
+  without a mixer. DS lumps upsample ×4 and duplicate to stereo
+  on load.
 - Chainsaw idle approximates the `S_SAW` 4+4 cadence at 8 tics
   with tails ringing out first; menu/error sounds are vanilla
   (`pistol`/`pstop`/`swtchn`/`stnmov`/`oof`).
@@ -180,19 +192,22 @@ than it gives. This file lists every known one, by area. Rules:
 - MUS scores plus GENMIDI instruments drive 9 OPL2 voices with
   Chocolate-DMX logic (verified register-for-register), rendered
   event-exactly (short notes can never collapse into a chunk end)
-  through pip `PyOPL` (DOSBox synth) at mixer rate, streamed from
-  a worker thread with ~1 s of buffered chunks.
+  at 22050 Hz like chocolate's `opl.c`, through pip `PyOPL`
+  (DOSBox synth), streamed stereo (mono duplicated: OPL2 has no
+  pan) from a worker thread with ~4 s of buffered chunks.
 - A one-pole DC blocker stands in for the Sound Blaster's
   AC-coupling capacitor; mute keeps the song running silently;
   without PyOPL the game stays silent (like LinuxDoom without
-  its MUS server). OPL3 stereo, 44100 Hz rendering, and sampled
-  (FluidSynth-style) backends are explicit non-goals for now.
+  its MUS server). Sampled (FluidSynth-style) backends are an
+  explicit non-goal for now.
 
 ## Wipes, title, input
 
-- Melt only (the vanilla default); menu open/close cuts instantly,
-  like the original. Title is a static `TITLEPIC` (no demo loop
-  behind it yet); any key opens the menu.
+- Vanilla-faithful melt (random-walk curtain front on the menu
+  stream, 1px lag then accelerating to 8px/tic, old frame sliding
+  down, ~1.2 s in real-time tics); idle frames re-show the last
+  step so 60fps never flashes. Menu open/close cuts instantly,
+  like the original. Idle title falls into the IWAD demo loop.
 - Fixed bindings, fixed mouse look curve on a slider; the messages
   toggle hides all HUD text including cheat confirmations.
 - `P` (and Pause/Break, like vanilla) freezes the sim with the
