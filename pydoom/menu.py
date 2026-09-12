@@ -219,6 +219,19 @@ class Menu:
             self._font[ch] = self.patch(f"STCFN{code:03d}")
         return self._font[ch]
 
+    def draw_text(self, fb, text: str, x: int, y: int) -> int:
+        """HU_DrawTextLine: red STCFN string onto the index frame."""
+        for ch in text.upper():
+            if ch == " ":
+                x += 4  # NOTE: vanilla space advance
+                continue
+            got = self.glyph(ch)
+            if got is None:
+                continue
+            self._blit(f"STCFN{ord(ch):03d}", fb, x, y)
+            x += got[0].width
+        return x
+
     # -- per-tic --
 
     def open(self) -> None:

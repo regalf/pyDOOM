@@ -36,10 +36,12 @@ if len(sys.argv) > 1 and sys.argv[1] == "--viewer":
 
 SKILLS = ("baby", "easy", "normal", "hard", "nightmare")
 FALLBACK_WAD = "DOOM1.WAD"
-FLAGS = ("debug", "fast", "respawn", "nomonsters", "kinematic", "demos")
+FLAGS = ("debug", "fast", "respawn", "nomonsters", "kinematic", "demos",
+         "extra_hud")
 FLAG_LABELS = {"debug": "DEBUG MODE", "fast": "FAST",
                "respawn": "RESPAWN", "nomonsters": "NO MONSTERS",
-               "kinematic": "KINEMATIC", "demos": "DEMO COMPAT"}
+               "kinematic": "KINEMATIC", "demos": "DEMO COMPAT",
+               "extra_hud": "EXTRA HUD"}
 
 
 def find_wads(root: str = ROOT) -> list:
@@ -63,7 +65,8 @@ def maps_in(wad_name: str, root: str = ROOT) -> list:
 def build_viewer_args(wad: str, map_name: str, skill: str,
                       debug: bool = False, fast: bool = False,
                       respawn: bool = False, nomonsters: bool = False,
-                      kinematic: bool = False) -> list:
+                      kinematic: bool = False,
+                      extra_hud: bool = False) -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -84,6 +87,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--nomonsters")
     if kinematic:
         args.append("--kinematic")
+    if extra_hud:
+        args.append("--extra-hud")
     return args
 
 
@@ -175,7 +180,7 @@ def main() -> int:
         map_list.index = maps.index(cfg.last_map)
     skill_list = PickList([s.upper() for s in SKILLS], visible=5)
     skill_list.index = SKILLS.index(skill)
-    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=6)
+    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=7)
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
     sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
     launch_rect = pygame.Rect(24, 420 - 44, 180, 30)
@@ -208,7 +213,8 @@ def main() -> int:
         args = build_viewer_args(
             wad, start_map, picked_skill,
             flags["debug"], flags["fast"], flags["respawn"],
-            flags["nomonsters"], flags["kinematic"])
+            flags["nomonsters"], flags["kinematic"],
+            flags["extra_hud"])
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.

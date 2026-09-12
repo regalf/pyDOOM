@@ -184,6 +184,7 @@ def main() -> int:
     skill = "normal"
     fast = False
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
+    extra_hud = False  # --extra-hud: translucent readout block
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
     rec_demo_path = None  # --record-demo=FILE: vanilla-format .lmp
@@ -211,6 +212,8 @@ def main() -> int:
             checksum_path = a.split("=", 1)[1]
         elif a == "--debug":
             debug = True
+        elif a == "--extra-hud":
+            extra_hud = True
         elif a == "--kinematic":
             kinematic = True  # NOTE: legacy camera mover for A/B compare
         elif a.startswith("--skill="):
@@ -466,6 +469,10 @@ def main() -> int:
         # NOTE: classic bottom strip (covers the gun base, like vanilla).
         draw_status_bar(renderer, fb, ps, player_mo.health,
                         state.get("facelump", "STFST00"))
+        # NOTE: HUD messages ride the red STCFN font top-left (hu_stuff),
+        # above the readout block, like the original.
+        if message is not None and msettings.messages:
+            game_menu.draw_text(fb, message, 8, 8)
         return fb
 
     def build_snapshot(name: str) -> dict:
@@ -1678,27 +1685,33 @@ def main() -> int:
         screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)), (0, 0))
         if font is not None and gamestate in ("level", "menu", "wipe") \
                 and has_level:
-            hud = (f"{game_map.marker} x={cam.x:.0f} y={cam.y:.0f} "
-                   f"a={math.degrees(cam.angle) % 360:.0f} "
-                   f"{fps_ema:.0f}fps "
-                   f"{'noclip' if noclip else 'clip'} "
-                   f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
-                   f"{skill.upper()}{'+FAST' if fast else ''} "
-                   f"v{ver}")
-            if debug:
-                # NOTE: song-thread health for low-fps music reports.
-                ms = audio.music_status()
-                hud += (f" MUS:{ms.get('backend', '?')} "
-                        f"q{ms.get('queue', '?')} "
-                        f"p{ms.get('pumped', '?')}/"
-                        f"s{ms.get('starved', '?')}")
-                if not ms.get("alive", True) or ms.get("error"):
-                    hud += f" DEAD:{ms.get('error')}"
-            screen.blit(font.render(hud, True, (255, 255, 255)), (8, 8))
-            if message is not None and msettings.messages:
-                screen.blit(font.render(message, True, (255, 200, 100)),
-                            (8, 28))
-            if show_ai:
+            # NOTE: readout block (coords, AI, fps, version) shows with
+            # --extra-hud (or --debug, as before), translucent, below
+            # the red message line when one is up.
+            show_hud = extra_hud or debug
+            hy = 56 if (show_hud and message is not None
+                        and msettings.messages) else 8
+            if show_hud:
+                hud = (f"{game_map.marker} x={cam.x:.0f} y={cam.y:.0f} "
+                       f"a={math.degrees(cam.angle) % 360:.0f} "
+                       f"{fps_ema:.0f}fps "
+                       f"{'noclip' if noclip else 'clip'} "
+                       f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
+                       f"{skill.upper()}{'+FAST' if fast else ''} "
+                       f"v{ver}")
+                if debug:
+                    # NOTE: song-thread health for low-fps music reports.
+                    ms = audio.music_status()
+                    hud += (f" MUS:{ms.get('backend', '?')} "
+                            f"q{ms.get('queue', '?')} "
+                            f"p{ms.get('pumped', '?')}/"
+                            f"s{ms.get('starved', '?')}")
+                    if not ms.get("alive", True) or ms.get("error"):
+                        hud += f" DEAD:{ms.get('error')}"
+                hud_img = font.render(hud, True, (255, 255, 255))
+                hud_img.set_alpha(96)  # NOTE: ~38% ghost readout
+                screen.blit(hud_img, (8, hy))
+            if show_hud and (show_ai or extra_hud):
                 # Nearest living monster: live AI state for bug reports.
                 best, bestd = None, None
                 for mo in mobjs:
@@ -1717,8 +1730,9 @@ def main() -> int:
                         f"sight={'Y' if sight else 'N'} "
                         f"d={bestd // 65536} "
                         f"r={best.reactiontime} m={best.movecount}")
-                    screen.blit(font.render(ai_line, True, (100, 255, 100)),
-                                (8, 64))
+                    ai_img = font.render(ai_line, True, (100, 255, 100))
+                    ai_img.set_alpha(96)
+                    screen.blit(ai_img, (8, hy + 20))
             help_line = (
                 "WASD/arrows move+turn, mouse look, Shift run, E use, "
                 "1-7 weapons, TAB map, M sound/mark, P pause, F1 help, "

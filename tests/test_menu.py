@@ -250,3 +250,15 @@ def test_registered_episode_selects():
     assert m.key("enter") == []
     assert m.current == "skill"  # NOTE: no scold on registered
     assert m.episode == 1
+
+
+@requires_wad
+def test_draw_text_paints_red_message():
+    import numpy as np
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    m = Menu(wad, Settings())
+    fb = np.zeros((200, 320), dtype=np.uint8)
+    end = m.draw_text(fb, "YOU GOT THE SHOTGUN!", 8, 8)
+    assert end > 100  # NOTE: advanced across the whole line
+    assert (fb != 0).sum() > 200  # NOTE: red glyph pixels landed

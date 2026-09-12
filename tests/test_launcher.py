@@ -22,10 +22,10 @@ def test_build_viewer_args():
     assert args[3].endswith("DOOM1.WAD")
     assert args[4] == "--skill=normal"
     full = build_viewer_args("doom.wad", "E2M1", "hard", True, True,
-                             True, True, True)
+                             True, True, True, True)
     assert full[2] == "E2M1" and full[4] == "--skill=hard"
     for flag in ("--debug", "--fast", "--respawn", "--nomonsters",
-                 "--kinematic"):
+                 "--kinematic", "--extra-hud"):
         assert flag in full
 
 
