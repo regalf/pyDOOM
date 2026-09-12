@@ -37,8 +37,15 @@ from pydoom.player import (
 # real state durations (p_pspr.c), so held-fire rates match Doom.
 SWITCH_TICS = 10
 COOLDOWN = {WP_FIST: 22, WP_PISTOL: 19, WP_SHOTGUN: 44, WP_CHAINGUN: 4,
-            WP_MISSILE: 20, WP_PLASMA: 23, WP_BFG: 60, WP_CHAINSAW: 4,
+            WP_MISSILE: 20, WP_PLASMA: 23, WP_BFG: 60, WP_CHAINSAW: 8,
             WP_SSG: 44}
+# NOTE: held-trigger cycles (A_ReFire runs at the refire state's
+# ENTRY, skipping its tail: pistol 4+6+4, plasma 3, BFG 20+10+10,
+# fist 4+4+5+4, shotgun up to SGUN8; chaingun/missile/saw tails are
+# 0-tic so tap and held match, except the saw bites twice a cycle).
+HELD_COOLDOWN = {WP_FIST: 17, WP_PISTOL: 14, WP_SHOTGUN: 37,
+                 WP_CHAINGUN: 4, WP_MISSILE: 20, WP_PLASMA: 3,
+                 WP_BFG: 40, WP_CHAINSAW: 8, WP_SSG: 44}
 # NOTE: muzzle-flash lengths from the FLASH states (lights skipped).
 FLASH_TICS = {WP_FIST: 0, WP_PISTOL: 7, WP_SHOTGUN: 7, WP_CHAINGUN: 5,
               WP_MISSILE: 7, WP_PLASMA: 4, WP_BFG: 17, WP_CHAINSAW: 0,
@@ -61,21 +68,35 @@ ATTACK_BODY = {
     WP_MISSILE: "B" * 20,
     WP_PLASMA: "AAA" + "B" * 20,
     WP_BFG: "A" * 20 + "B" * 40,
-    WP_CHAINSAW: "AABB",
+    WP_CHAINSAW: "AAAABBBB",  # NOTE: two bites a cycle (SAW1+SAW2)
+    WP_SSG: "A" * 44,
+}
+# NOTE: held-trigger timelines (refire-entry tails cut, like above).
+HELD_BODY = {
+    WP_FIST: "BBBBCCCCDDDDDCCCC",
+    WP_PISTOL: "AAAABBBBBBCCCC",
+    WP_SHOTGUN: "AAAAAAAAAABBBBBCCCCCDDDDCCCCCBBBBBAAA",
+    WP_CHAINGUN: "AABB",
+    WP_MISSILE: "B" * 20,
+    WP_PLASMA: "AAA",
+    WP_BFG: "A" * 20 + "B" * 20,
+    WP_CHAINSAW: "AAAABBBB",
     WP_SSG: "A" * 44,
 }
 
 
-def attack_timeline(weapon: int, flip: int = 0) -> str:
+def attack_timeline(weapon: int, flip: int = 0,
+                    held: bool = False) -> str:
     """Body frames for one attack cycle (render picks by elapsed tic).
 
-    Chaingun/saw pulls alternate whole AAAA/BBBB blocks per pull:
-    each vanilla 4-tic pull shows a single frame (S_CHAIN1/S_CHAIN2,
-    S_SAW1/S_SAW2), so the base "AABB" entry only pins the length.
+    Chaingun pulls alternate whole AAAA/BBBB blocks per pull: each
+    vanilla 4-tic pull shows a single frame (S_CHAIN1/S_CHAIN2), so
+    the base "AABB" entries only pin the length.
     """
-    if weapon in (WP_CHAINGUN, WP_CHAINSAW):
+    table = HELD_BODY if held else ATTACK_BODY
+    if weapon == WP_CHAINGUN:
         return "BBBB" if flip else "AAAA"
-    return ATTACK_BODY[weapon]
+    return table[weapon]
 # (ammo type, rounds per shot); ammo < 0 means unarmed.
 COST = {WP_FIST: (-1, 0), WP_PISTOL: (AM_CLIP, 1), WP_SHOTGUN: (AM_SHELL, 1),
         WP_CHAINGUN: (AM_CLIP, 1), WP_MISSILE: (AM_MISL, 1),
@@ -257,12 +278,14 @@ FLASH_DELAY = {WP_MISSILE: 0, WP_BFG: 20}  # default: WINDUP[weapon]
 
 
 def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
-         ctx=None, queue=None) -> tuple:
+         ctx=None, queue=None, held: bool = False) -> tuple:
     """Trigger pull (P_FireWeapon). Returns (cooldown, flash_now).
 
     Cooldown gates the next pull (-1 holds: still switching, or just
-    auto-switched off a dry gun). Shots with windup land in
-    tick_pending(); flash_now asks the viewer for this tic's flash.
+    auto-switched off a dry gun). held chains the short refire-entry
+    cycle (vanilla A_ReFire skips the tail); taps run the full one.
+    Shots with windup land in tick_pending(); flash_now asks the
+    viewer for this tic's flash.
     """
     if ps.pendingweapon != ps.readyweapon:
         return -1, False
@@ -276,15 +299,23 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
     if ctx is not None:
         from pydoom.ai import noise_alert
         noise_alert(shooter, shooter, ctx)
+    cd = HELD_COOLDOWN[weapon] if held else COOLDOWN[weapon]
     windup = WINDUP[weapon]
+    if weapon == WP_CHAINSAW and queue is not None:
+        # NOTE: two bites a cycle (SAW1 now, SAW2 at +4).
+        _shoot(ps, weapon, shooter, physics, index, mobjs, skyflat,
+               accurate, ctx)
+        queue.append({"weapon": weapon, "shot": 4, "flash": 0,
+                      "accurate": accurate})
+        return cd, True
     if windup <= 0 or queue is None:
         _shoot(ps, weapon, shooter, physics, index, mobjs, skyflat,
                accurate, ctx)
-        return COOLDOWN[weapon], True
+        return cd, True
     queue.append({"weapon": weapon, "shot": windup,
                   "flash": FLASH_DELAY.get(weapon, windup),
                   "accurate": accurate})
-    return COOLDOWN[weapon], FLASH_DELAY.get(weapon, windup) <= 0
+    return cd, FLASH_DELAY.get(weapon, windup) <= 0
 
 
 def tick_pending(ps, shooter, physics, index, mobjs, skyflat, ctx,

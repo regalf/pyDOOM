@@ -457,7 +457,8 @@ def main() -> int:
             span = max(1, state.get("atk_span", 1))
             elapsed = span - (state["atk_until"] - state.get("tics", 0))
             timeline = weapons.attack_timeline(ps.readyweapon,
-                                               state.get("atkflip", 0))
+                                               state.get("atkflip", 0),
+                                               state.get("atkheld", False))
             pick = timeline[min(len(timeline) - 1, max(0, elapsed))]
             if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
                                          pick):
@@ -1313,16 +1314,19 @@ def main() -> int:
             if want_fire and not state["cooldown"] and player_mo.health > 0:
                 if kinematic or noclip:
                     player_mo.angle = cam.bam  # NOTE: legacy: camera leads
+                held_now = bool(state.get("refire"))  # NOTE: chained
+                # refire runs the short entry cycle (vanilla A_ReFire)
                 cd, flash_now = weapons.fire(
                     ps, player_mo, phys, index, mobjs,
                     renderer.skyflatnum, accurate=not state["refire"],
-                    ctx=ctx, queue=state["pending"])
+                    ctx=ctx, queue=state["pending"], held=held_now)
                 if cd >= 0:
                     state["cooldown"] = cd
                     body, flash = weapons.PSPRITES[ps.readyweapon]
                     state["atk_until"] = state.get("tics", 0) + cd
                     state["atk_span"] = max(1, cd)
-                    if ps.readyweapon in (WP_CHAINGUN, WP_CHAINSAW):
+                    state["atkheld"] = held_now
+                    if ps.readyweapon == WP_CHAINGUN:
                         # NOTE: vanilla shows one body frame per 4-tic
                         # pull, alternating A/B across pulls.
                         state["atkflip"] = 1 - state.get("atkflip", 0)

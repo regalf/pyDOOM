@@ -268,10 +268,50 @@ def test_flash_light_levels():
 
 def test_attack_timelines_match_vanilla_frames():
     """Body timelines run the vanilla state frames in order."""
-    from pydoom.player import WP_CHAINSAW, WP_PISTOL
+    from pydoom.player import WP_PISTOL
     assert weapons.ATTACK_BODY[WP_PISTOL] == \
         "AAAA" + "BBBBBB" + "CCCC" + "BBBBB"  # S_PISTOL1..4
     assert weapons.attack_timeline(WP_CHAINGUN, 0) == "AAAA"
     assert weapons.attack_timeline(WP_CHAINGUN, 1) == "BBBB"
-    assert weapons.attack_timeline(WP_CHAINSAW, 0) == "AAAA"
-    assert weapons.attack_timeline(WP_CHAINSAW, 1) == "BBBB"
+    # NOTE: saw bites twice a cycle (SAW1+SAW2), no alternation.
+    assert weapons.attack_timeline(WP_CHAINSAW, 0) == "AAAABBBB"
+    assert weapons.attack_timeline(WP_CHAINSAW, 1) == "AAAABBBB"
+    for weapon, cd in weapons.HELD_COOLDOWN.items():
+        assert len(weapons.attack_timeline(
+            weapon, 0, held=True)) == cd, weapon
+
+
+@requires_wad
+def test_held_fire_runs_refire_entry_cycles(setup):
+    """Held trigger skips the refire-state tail (vanilla A_ReFire)."""
+    from pydoom.player import AM_CELL, WP_BFG, WP_PLASMA
+    game_map, phys, index, ctx = setup
+    player, troop, ps, ctx, _ = make_range(setup)
+    ps.ammo = [400, 400, 400, 400]
+    player.angle = 0  # face east toward the trooper
+    for weapon, cd in ((WP_FIST, 17), (WP_PISTOL, 14),
+                       (WP_SHOTGUN, 37), (WP_PLASMA, 3),
+                       (WP_BFG, 40)):
+        ready_weapon(ps, weapon)
+        got, _ = weapons.fire(ps, player, phys, index, ctx.mobjs,
+                              None, True, ctx, [], held=True)
+        assert got == cd, weapon
+
+
+@requires_wad
+def test_held_saw_bites_twice_a_cycle(setup):
+    """Saw cycle is 8 tics with bites at +0/+4 (SAW1+SAW2)."""
+    game_map, phys, index, ctx = setup
+    player, troop, ps, ctx, _ = make_range(setup, dist_units=30)
+    ready_weapon(ps, WP_CHAINSAW)
+    player.angle = 0  # face east toward the trooper
+    queue = []
+    cd, _ = weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                         True, ctx, queue, held=True)
+    assert cd == 8
+    assert len(queue) == 1  # NOTE: second bite rides the windup
+    hp_after_first = troop.health
+    for _ in range(5):
+        weapons.tick_pending(ps, player, phys, index, ctx.mobjs, None,
+                             ctx, queue)
+    assert not queue and troop.health < hp_after_first
