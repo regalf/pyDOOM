@@ -26,6 +26,7 @@ DOOM.WAD
 
 # detached viewer log (launcher)
 /pydoom-viewer.log
+/test.json
 
 # PyInstaller output (the .spec is source, the build is not)
 dist/

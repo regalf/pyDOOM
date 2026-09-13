@@ -1314,13 +1314,11 @@ def main() -> int:
             cd_now = state["cooldown"]
             if not want_fire:
                 state["atkheld"] = False  # NOTE: released: chain over
+            elif ps.pendingweapon != ps.readyweapon:
+                state["atkheld"] = False  # NOTE: switch aborts the chain
             atkheld = bool(state.get("atkheld"))
-            # NOTE: a chained cycle is already short, so its refire
-            # sits at 0; a fresh cycle re-pulls at REFIRE_AT instead.
-            refire_at = 0 if atkheld else weapons.REFIRE_AT.get(
-                ps.readyweapon, 0)
-            chained = (cd_now == 0 and atkheld) or \
-                (refire_at > 0 and cd_now == refire_at)
+            chained = weapons.chained_pull(cd_now, atkheld,
+                                           ps.readyweapon)
             if want_fire and player_mo.health > 0 \
                     and (cd_now == 0 or chained):
                 if kinematic or noclip:
@@ -1624,11 +1622,6 @@ def main() -> int:
             # NOTE: leveltime closes the tic (vanilla P_Ticker): specials
             # think last, so doors/lights/crush see post-move bodies.
             state["tics"] = state.get("tics", 0) + 1
-            if os.environ.get("PYDOOM_SHOTLOG"):  # TEMP measurement
-                with open(os.environ["PYDOOM_SHOTLOG"], "a") as _f:
-                    _ps = state["ps"]
-                    _f.write(f"{state['tics']} {_ps.ammo[0]} "
-                             f"{_ps.readyweapon} {state['cooldown']}\n")
             # Door thinkers, buttons, crush checks (blocker = player).
             # NOTE: vanilla P_ChangeSector sees every body overlapping
             # the moving sector, not just the center point: sample the

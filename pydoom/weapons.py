@@ -50,6 +50,19 @@ HELD_COOLDOWN = {WP_FIST: 17, WP_PISTOL: 14, WP_SHOTGUN: 37,
 # (the refire-entry tic: FULL - SHORT). A fresh pull lands on 0 and
 # runs the whole tail; a pull here chains the short cycle instead.
 REFIRE_AT = {w: COOLDOWN[w] - HELD_COOLDOWN[w] for w in COOLDOWN}
+
+
+def chained_pull(cd_now: int, atkheld: bool, weapon: int) -> bool:
+    """True when a held trigger re-pulls on this tic (vanilla A_ReFire).
+
+    A fresh cycle re-pulls at REFIRE_AT (its refire-state entry);
+    a chained cycle is already short, so its refire sits at 0.
+    A fresh pull lands on 0 with atkheld False and runs the full tail.
+    """
+    if cd_now == 0 and atkheld:
+        return True
+    refire_at = 0 if atkheld else REFIRE_AT.get(weapon, 0)
+    return refire_at > 0 and cd_now == refire_at
 # NOTE: muzzle-flash lengths from the FLASH states (lights skipped).
 FLASH_TICS = {WP_FIST: 0, WP_PISTOL: 7, WP_SHOTGUN: 7, WP_CHAINGUN: 5,
               WP_MISSILE: 7, WP_PLASMA: 4, WP_BFG: 17, WP_CHAINSAW: 0,

@@ -315,3 +315,68 @@ def test_held_saw_bites_twice_a_cycle(setup):
         weapons.tick_pending(ps, player, phys, index, ctx.mobjs, None,
                              ctx, queue)
     assert not queue and troop.health < hp_after_first
+
+
+def test_refire_at_is_full_minus_short():
+    """Positional refire sits at the refire-state entry (FULL - SHORT)."""
+    assert weapons.REFIRE_AT[WP_PISTOL] == 5  # 19 - 14 (S_PISTOL4 tail)
+    assert weapons.REFIRE_AT[WP_FIST] == 5  # 22 - 17 (S_PUNCH5 tail)
+    assert weapons.REFIRE_AT[WP_SHOTGUN] == 7  # 44 - 37 (S_SGUN9 tail)
+    assert weapons.REFIRE_AT[WP_PLASMA] == 20  # 23 - 3 (S_PLASMA2 tail)
+    assert weapons.REFIRE_AT[WP_BFG] == 20  # 60 - 40 (S_BFG4 tail)
+    for w in (WP_CHAINGUN, WP_MISSILE, WP_CHAINSAW):
+        assert weapons.REFIRE_AT[w] == 0  # 0-tic refire states
+    for w, full in weapons.COOLDOWN.items():
+        assert weapons.REFIRE_AT[w] == full - weapons.HELD_COOLDOWN[w]
+
+
+def test_chained_pull_is_positional():
+    """Fresh cycles re-pull at REFIRE_AT, chained ones at 0, taps never."""
+    assert not weapons.chained_pull(0, False, WP_PISTOL)  # fresh tap: full
+    assert weapons.chained_pull(5, False, WP_PISTOL)  # refire entry: short
+    assert not weapons.chained_pull(6, False, WP_PISTOL)
+    assert weapons.chained_pull(0, True, WP_PISTOL)  # chained refire at 0
+    assert not weapons.chained_pull(5, True, WP_PISTOL)
+    assert not weapons.chained_pull(0, False, WP_CHAINGUN)  # 0-tic: no early
+    assert weapons.chained_pull(0, True, WP_CHAINGUN)
+
+
+def _replay_intervals(weapon, want_fire, maxtics=120):
+    """Mirror of the viewer tic block (decrement, chained_pull, fire cd)."""
+    cooldown, atkheld, shots = 0, False, []
+    for tic in range(maxtics):
+        if cooldown:
+            cooldown -= 1
+        want = want_fire(tic)
+        if not want:
+            atkheld = False
+        chained = weapons.chained_pull(cooldown, atkheld, weapon)
+        if want and (cooldown == 0 or chained):
+            held_now = chained
+            cooldown = (weapons.HELD_COOLDOWN if held_now
+                        else weapons.COOLDOWN)[weapon]
+            atkheld = held_now
+            shots.append(tic)
+    return shots
+
+
+def test_held_pistol_first_interval_is_short():
+    """Held trigger chains at the entry: first gap 14, then steady 14."""
+    shots = _replay_intervals(WP_PISTOL, lambda _tic: True)
+    gaps = [b - a for a, b in zip(shots, shots[1:])]
+    assert gaps[0] == 14  # first held interval skips the tail too
+    assert set(gaps) == {14}
+
+
+def test_tapped_pistol_runs_full_tail():
+    """Single taps fire once each with the full 19-tic tail between."""
+    shots = _replay_intervals(WP_PISTOL, lambda tic: tic in (0, 30))
+    assert shots == [0, 30]
+
+
+def test_held_plasma_runs_three_tic_loop():
+    """Plasma chains at 20 with a 3-tic short cycle once held."""
+    shots = _replay_intervals(WP_PLASMA, lambda _tic: True)
+    gaps = [b - a for a, b in zip(shots, shots[1:])]
+    assert gaps[0] == 3
+    assert set(gaps) == {3}
