@@ -62,6 +62,35 @@ def maps_in(wad_name: str, root: str = ROOT) -> list:
         return ["E1M1"]
 
 
+def accept_wad_drop(path: str, root: str = ROOT) -> tuple:
+    """File a dropped WAD next to the launcher (unit tested, no GUI).
+
+    Returns (name, note): name selects the list entry, note reports.
+    Non-.WAD files and bad magic are ignored, existing entries are
+    never overwritten, drops from the launcher dir just select.
+    """
+    name = os.path.basename(path or "")
+    if not name.lower().endswith(".wad") or not os.path.isfile(path):
+        return None, f"ignored {name or path}: not a .WAD"
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) not in (b"IWAD", b"PWAD"):
+                return None, f"ignored {name}: not a WAD file"
+    except OSError:
+        return None, f"ignored {name}: unreadable"
+    dest = os.path.join(root, name)
+    if os.path.abspath(path) == os.path.abspath(dest):
+        return name, f"{name} selected"
+    if os.path.exists(dest):
+        return name, f"{name} already listed"
+    try:
+        import shutil
+        shutil.copy2(path, dest)
+    except OSError as exc:
+        return None, f"copy failed: {exc}"
+    return name, f"{name} added"
+
+
 def build_viewer_args(wad: str, map_name: str, skill: str,
                       debug: bool = False, fast: bool = False,
                       respawn: bool = False, nomonsters: bool = False,
@@ -199,6 +228,20 @@ def main() -> int:
             map_list.index = 0
             map_list.top = 0
 
+    def rescan_wads(select: str | None = None) -> None:
+        """Re-read the launcher dir after a drop; keep or take selection."""
+        nonlocal wad, wads, maps
+        wads = find_wads()
+        wad_list.items = wads
+        if select in wads:
+            wad_list.index = wads.index(select)
+        else:
+            wad_list.index = min(wad_list.index, max(len(wads) - 1, 0))
+        wad_list.top = 0
+        sync_wad()
+
+    note = ""  # NOTE: last drop result, under the IWAD list
+
     def launch() -> None:
         nonlocal running
         sync_wad()
@@ -247,6 +290,14 @@ def main() -> int:
             screen.blit(small.render("IWAD", True, (90, 90, 90)),
                         (24, 78))
             wad_list.draw(screen, font, 24, 96, 240, focus == 0)
+            hint_y = (wad_list.rect.bottom + 6 if wad_list.rect is not None
+                      else 246)
+            screen.blit(small.render("(or drag and drop the .WAD)",
+                                     True, (90, 90, 90)), (24, hint_y))
+            if note:
+                screen.blit(small.render(note[:40], True, (150, 150,
+                                                             150)),
+                            (24, hint_y + 18))
             if flags["debug"]:
                 screen.blit(small.render("MAP (debug)", True, (90, 90,
                                                                 90)),
@@ -299,6 +350,12 @@ def main() -> int:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+            elif ev.type == getattr(pygame, "DROPFILE", None):
+                # NOTE: a dropped *.WAD lands next to the launcher and
+                # selects itself (SDL sends one event per file).
+                picked, note = accept_wad_drop(getattr(ev, "file", ""))
+                if picked is not None:
+                    rescan_wads(picked)
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
                     running = False
