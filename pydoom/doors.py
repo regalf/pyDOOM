@@ -554,10 +554,14 @@ class FloorMover:
     dead: bool = False
 
     def think(self, world: "World") -> None:
-        """T_MoveFloor (sounds removed)."""
+        """T_MoveFloor: grind while running, stop ping on arrival."""
+        from pydoom import audio
         res = move_plane(self.sector, self.speed, self.floordestheight,
                          self.crush, 0, self.direction, world.blocker,
                          world.grind)
+        if not world.time & 7:
+            audio.play("stnmov", self.sector.soundorg[0],
+                       self.sector.soundorg[1], self.sector)
         if res == PlaneResult.PASTDEST:
             if self.direction == -1 and self.type == "lowerAndChange":
                 self.sector.special = self.newspecial
@@ -565,6 +569,8 @@ class FloorMover:
             if self.direction == 1 and self.type == "donutRaise":
                 self.sector.special = self.newspecial
                 self.sector.floorpic = self.texture
+            audio.play("pstop", self.sector.soundorg[0],
+                       self.sector.soundorg[1], self.sector)
             self.sector.specialdata = None
             self.dead = True
 
@@ -649,33 +655,48 @@ class Plat:
     dead: bool = False
 
     def think(self, world: "World") -> None:
-        """T_PlatRaise (sounds removed)."""
+        """T_PlatRaise: start/stop pings and the raise-change grind."""
+        from pydoom import audio
+        sec = self.sector
         if self.status == "up":
-            res = move_plane(self.sector, self.speed, self.high,
+            res = move_plane(sec, self.speed, self.high,
                              self.crush, 0, 1, world.blocker, world.grind)
+            if self.type in ("raiseAndChange",
+                             "raiseToNearestAndChange") \
+                    and not world.time & 7:
+                audio.play("stnmov", sec.soundorg[0], sec.soundorg[1],
+                           sec)
             if res == PlaneResult.CRUSHED and not self.crush:
                 self.count = self.wait
                 self.status = "down"
+                audio.play("pstart", sec.soundorg[0], sec.soundorg[1],
+                           sec)
             elif res == PlaneResult.PASTDEST:
                 self.count = self.wait
                 self.status = "waiting"
+                audio.play("pstop", sec.soundorg[0], sec.soundorg[1],
+                           sec)
                 if self.type in ("blazeDWUS", "downWaitUpStay",
                                  "raiseAndChange",
                                  "raiseToNearestAndChange"):
                     world.remove_plat(self)
         elif self.status == "down":
-            res = move_plane(self.sector, self.speed, self.low,
+            res = move_plane(sec, self.speed, self.low,
                              False, 0, -1, world.blocker, world.grind)
             if res == PlaneResult.PASTDEST:
                 self.count = self.wait
                 self.status = "waiting"
+                audio.play("pstop", sec.soundorg[0], sec.soundorg[1],
+                           sec)
         elif self.status == "waiting":
             self.count -= 1
             if self.count == 0:
-                if self.sector.floorheight == self.low:
+                if sec.floorheight == self.low:
                     self.status = "up"
                 else:
                     self.status = "down"
+                audio.play("pstart", sec.soundorg[0], sec.soundorg[1],
+                           sec)
         # in_stasis: thinker parked, does nothing.
 
 
@@ -726,11 +747,6 @@ class World:
                 side.textureoffset += FRACUNIT  # EFFECT FIRSTCOL SCROLL +
         for thinker in list(self.thinkers):
             thinker.think(self)
-        for t in self.thinkers:
-            if t.dead and isinstance(t, Plat) and t.sector is not None:
-                from pydoom import audio
-                audio.play("pstop", t.sector.soundorg[0],
-                           t.sector.soundorg[1], t.sector)
         self.thinkers = [t for t in self.thinkers if not t.dead]
         for button in self.buttons:
             if button.btimer:
@@ -971,7 +987,10 @@ class World:
             sec.specialdata = plat
             self.activeplats.append(plat)
             from pydoom import audio
-            audio.play("stnmov", sec.soundorg[0], sec.soundorg[1], sec)
+            audio.play("stnmov" if ptype in ("raiseAndChange",
+                                             "raiseToNearestAndChange")
+                       else "pstart",
+                       sec.soundorg[0], sec.soundorg[1], sec)
             if len(self.activeplats) > MAXPLATS:
                 raise OverflowError("P_AddActivePlat: no more plats!")
             if ptype in ("raiseToNearestAndChange", "raiseAndChange"):

@@ -415,3 +415,76 @@ def test_w1_lights_off_e2m5():
         assert sec.lightlevel <= 255
         assert all(sec.lightlevel <= n.lightlevel
                    for n in world._neighbors(sec))  # dimmest wins
+
+
+def _mover_sounds(monkeypatch):
+    """Capture audio.play names (vanilla mover voices)."""
+    from pydoom import audio as audio_mod
+    sounds = []
+    monkeypatch.setattr(audio_mod, "play",
+                        lambda n, *a: sounds.append(n) or False)
+    return sounds
+
+
+@requires_wad
+def test_lift_dwus_pings_start_stops(setup, monkeypatch):
+    """E1M1 lift: pstart down, pstop at the bottom, pstart up, pstop
+    at the top (p_plats.c T_PlatRaise)."""
+    sounds = _mover_sounds(monkeypatch)
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    line = next(li for li in game_map.lines if li.special == 88)
+    assert world.cross_special_line(line, True) is None
+    assert sounds == ["pstart"]
+    for _ in range(1200):
+        world.tick()
+        if not movers(world):
+            break
+    assert not movers(world)
+    stops = [s for s in sounds if s == "pstop"]
+    starts = [s for s in sounds if s == "pstart"]
+    assert len(starts) == 2 and len(stops) == 2  # down/up legs pinged
+    assert sounds.index("pstop") > 0
+    assert sounds[-1] == "pstop"  # parked at the top
+
+
+@requires_wad
+def test_bridge_raise_grinds_then_stops(setup, monkeypatch):
+    """E1M5 bridge (W1-22): stnmov grind while rising, pstop on top."""
+    sounds = _mover_sounds(monkeypatch)
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M5")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    line = next(li for li in game_map.lines if li.special == 22)
+    assert world.cross_special_line(line, True) is None
+    for _ in range(600):
+        world.tick()
+        if not movers(world):
+            break
+    assert not movers(world)
+    assert sounds[0] == "stnmov"  # EV_DoPlat raise-change voice
+    assert sounds.count("stnmov") > 2  # 8-tic grind on the way up
+    assert sounds[-1] == "pstop"  # bridge seated
+
+
+@requires_wad
+def test_stairs_grind_e1m3(setup, monkeypatch):
+    """E1M3 exit stairs (W1-8): floor thinkers grind, then stop."""
+    sounds = _mover_sounds(monkeypatch)
+    wad, texman = setup
+    game_map = Map.from_wad(wad, "E1M3")
+    texman.resolve_map(game_map)
+    world = World(game_map, texman)
+    line = game_map.lines[967]
+    assert line.special == 8
+    assert world.cross_special_line(line, True) is None
+    for _ in range(1200):
+        world.tick()
+        if not movers(world):
+            break
+    assert not movers(world)
+    assert "stnmov" in sounds  # T_MoveFloor grind covers stairs too
+    assert "pstop" in sounds  # every step pings on arrival
