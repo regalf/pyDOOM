@@ -112,10 +112,11 @@ def draw_status_bar(renderer, fb, ps, health: int,
     _draw_number(renderer, fb, ps.armorpoints, ARMOR_X, ARMOR_Y, "STTNUM")
     _blit(renderer, fb, "STTPRCNT", ARMOR_X, ARMOR_Y)
     _blit(renderer, fb, face, FACE_X, FACE_Y)
-    for i in range(6):  # NOTE: arms 2-7 light up when owned.
-        if ps.weapons & (1 << (i + 1)):
-            _blit(renderer, fb, f"STGNUM{i + 2}",
-                  ARMS_X + (i % 3) * ARMS_DX, ARMS_Y + (i // 3) * ARMS_DY)
+    for i in range(6):  # NOTE: vanilla multicon: STGNUM gray when
+        # missing, STYSNUM yellow when owned (st_stuff arms[i][2]).
+        owned = bool(ps.weapons & (1 << (i + 1)))
+        _blit(renderer, fb, f"STYSNUM{i + 2}" if owned else f"STGNUM{i + 2}",
+              ARMS_X + (i % 3) * ARMS_DX, ARMS_Y + (i // 3) * ARMS_DY)
     for slot, (card, skull, num) in enumerate(
             ((KEY_BLUE, KEY_BSKULL, 0), (KEY_YELLOW, KEY_YSKULL, 1),
              (KEY_RED, KEY_RSKULL, 2))):

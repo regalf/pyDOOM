@@ -469,13 +469,17 @@ class Menu:
                            else "M_MSGOFF", fb, mdef.x + 175, y)
             if item.kind == "slider":
                 val, top = self._slider_value(item.action)
-                self._thermo(fb, mdef.x + self._patch_w(item.patch) + 8,
-                             y + 2, val, top)
+                self._thermo(fb, mdef.x, y + LINEHEIGHT, val, top)
             if i == mdef.last_on:
                 skull = "M_SKULL1" if self.which_skull == 0 else "M_SKULL2"
                 self._blit(skull, fb, mdef.x + SKULL_XOFF,
                            y + SKULL_YOFF)
             y += LINEHEIGHT
+            if item.kind == "slider":
+                # NOTE: vanilla M_DrawOptions/M_DrawSound put the thermo
+                # bar in the gap row below the label (m_menu.c), so a
+                # slider row costs two line heights.
+                y += LINEHEIGHT
 
     def _slider_value(self, action: str) -> tuple:
         s = self.settings
@@ -501,8 +505,8 @@ class Menu:
 
     def _thermo(self, fb, x: int, y: int, val: int, top: int,
                 slots: int = 10) -> None:
-        """M_DrawThermo: caps plus lit/unlit boxes (layout simplified:
-        the bar sits right of the label, not below it)."""
+        """M_DrawThermo: caps plus lit/unlit boxes (vanilla puts the bar
+        in the row below the label, m_menu.c)."""
         fill = round(val / top * slots) if top else 0
         cx = x + self._blit("M_THERML", fb, x, y)
         for i in range(slots):
