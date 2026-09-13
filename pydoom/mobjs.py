@@ -287,6 +287,7 @@ def set_mobj_state(mo: Mobj, state: int, ctx=None) -> bool:
     """
     while True:
         if state == 0:  # S_NULL
+            mo.state = 0  # NOTE: vanilla parks S_NULL before RemoveMobj
             mo.dead = True
             return False
         sprite, frame, tics, _next, action = STATES[state]
@@ -350,6 +351,31 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
         # monsters never reach this branch (their states tick down).
         _maybe_respawn(mo, physics, ctx)
     return crossed
+
+
+def sweep_dead(mobjs, index, mi: int) -> bool:
+    """Drop one finished thinker (the P_RunThinkers removal walk).
+
+    Spent non-corpses (puffs/blood/missiles/fog, picked-up items)
+    always leave; anything parked at S_NULL leaves too (vanilla
+    P_RemoveMobj: exploded barrels keep no hitbox). Live -1-tic
+    corpses stay for crush/respawn/render. True when mobjs[mi] was
+    removed (caller holds the index, like the viewer loop).
+    """
+    mo = mobjs[mi]
+    if not mo.dead:
+        return False
+    if mo.flags & _MF_CORPSE and mo.state != 0:
+        return False
+    del mobjs[mi]
+    if index is not None:
+        index.unlink(mo)
+    if mo.sector is not None:
+        try:
+            mo.sector.thinglist.remove(mo)
+        except ValueError:
+            pass
+    return True
 
 
 def _maybe_respawn(mo: Mobj, physics, ctx) -> None:

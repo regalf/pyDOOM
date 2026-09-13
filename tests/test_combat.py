@@ -135,6 +135,33 @@ def test_barrel_chain_hurts_bystander(setup):
 
 
 @requires_wad
+def test_exploded_barrel_leaves_no_hitbox(setup):
+    """S_NULL barrels sweep out (vanilla P_RemoveMobj): solid through
+    the blast, then no phantom blocker (think_mobj + sweep_dead)."""
+    from pydoom.mobjs import sweep_dead, think_mobj
+    game_map, phys, index, ctx = setup
+    barrel = spawn_mobj(game_map, phys, index, 900 << 16, -3500 << 16, 0,
+                        MT_INDEX["BARREL"])
+    mobjs = [barrel]
+    damage_mobj(barrel, None, None, 100, ctx)
+    for _ in range(60):  # BEXP chain runs out to S_NULL
+        think_mobj(barrel, phys, ctx)
+        if barrel.dead:
+            break
+    assert barrel.dead and barrel.state == 0
+    assert barrel.flags & _MF_CORPSE  # vanilla still flags the corpse...
+    assert barrel.flags & _MF_SOLID  # ...solid through the explosion...
+    walker = spawn_mobj(game_map, phys, index, 860 << 16, -3500 << 16, 0,
+                        MT_INDEX["PLAYER"])
+    spot = (900 << 16, -3500 << 16)
+    assert not phys.check_position(walker, *spot).ok  # stub blocks
+    assert sweep_dead(mobjs, index, 0)  # ...but S_NULL sweeps it
+    assert mobjs == []
+    assert barrel not in barrel.sector.thinglist
+    assert phys.check_position(walker, *spot).ok  # pad walkable again
+
+
+@requires_wad
 def test_player_death_clears_solid(setup):
     game_map, phys, index, ctx = setup
     _, player, ctx, _ = make_duel(setup)

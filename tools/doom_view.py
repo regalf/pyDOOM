@@ -51,6 +51,7 @@ from pydoom.info import MF_FLAGS as _MF_FLAGS
 from pydoom.mapdata import Map
 from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map
 from pydoom.mobjs import level_totals, set_mobj_state, think_mobj
+from pydoom.mobjs import sweep_dead
 from pydoom.mobjs import xy_movement
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Physics
@@ -1582,20 +1583,10 @@ def main() -> int:
                 for line, side in crossed_mo:
                     world.cross_special_line(line, mo.is_player, mo,
                                              phys, mobjs, side)
-                if mo.dead and not (mo.flags & combat._MF_CORPSE):
-                    # NOTE: spent puffs/blood/missiles/fog and picked-up
-                    # items leave (vanilla idles their S_NULL thinkers;
-                    # dropping them is behavior-neutral and saves the
-                    # think loop). Corpses stay for crush/respawn/render.
-                    del mobjs[_mi]
-                    if index is not None:
-                        index.unlink(mo)
-                    if mo.sector is not None:
-                        try:
-                            mo.sector.thinglist.remove(mo)
-                        except ValueError:
-                            pass
-                else:
+                if not sweep_dead(mobjs, index, _mi):
+                    # NOTE: live -1-tic corpses stay for crush/respawn/
+                    # render; everything swept (puffs, missiles, fog,
+                    # S_NULL barrels) is behavior-neutral to drop.
                     _mi += 1
             if world.exit_kind:
                 cur = game_map.marker
