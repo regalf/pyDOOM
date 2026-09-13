@@ -380,3 +380,44 @@ def test_held_plasma_runs_three_tic_loop():
     gaps = [b - a for a, b in zip(shots, shots[1:])]
     assert gaps[0] == 3
     assert set(gaps) == {3}
+
+
+@requires_wad
+def test_saw_lunge_only_on_hit(setup):
+    """A_Saw lunges (JUSTATTACKED) on a hit, never on a miss.
+
+    Vanilla returns early on sawful (no turn, no flag); the viewer
+    turns that flag into the next tic's forward lunge.
+    """
+    from pydoom.fixed import FRACUNIT
+    from pydoom.info import MF_FLAGS
+    from pydoom.mobjs import refresh_sector
+    game_map, phys, index, ctx = setup
+    player, troop, ps, ctx, _ = make_range(setup, dist_units=200)
+    ready_weapon(ps, WP_CHAINSAW)
+    player.angle = 0  # trooper far out of the 65-unit saw range
+    weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                 True, ctx, [], held=True)
+    assert not (player.flags & MF_FLAGS["MF_JUSTATTACKED"])  # sawful: stay
+    # NOTE: drag the same trooper into range (one pair only, so the
+    # saw can never catch a second body standing on the shooter).
+    index.unlink(troop)
+    troop.x = player.x + 30 * FRACUNIT
+    troop.y = player.y
+    index.link(troop)
+    refresh_sector(troop, phys)
+    troop.z = troop.floorz
+    hits = 0
+    for _ in range(10):
+        if troop.health <= 0:
+            break
+        player.flags &= ~MF_FLAGS["MF_JUSTATTACKED"]
+        hp = troop.health
+        weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                     True, ctx, [], held=True)
+        if troop.health < hp:
+            hits += 1
+            assert player.flags & MF_FLAGS["MF_JUSTATTACKED"]  # sawhit
+        else:
+            assert not (player.flags & MF_FLAGS["MF_JUSTATTACKED"])
+    assert hits > 0  # the saw connected at least once

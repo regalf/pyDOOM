@@ -198,9 +198,6 @@ def _melee(ps, shooter, physics, index, mobjs, skyflat, ctx,
     from pydoom.ai import MELEERANGE
     from pydoom.info import MF_FLAGS
     attack_range = MELEERANGE + (65536 if saw else 0)
-    if saw:
-        # NOTE: A_Saw lunges (P_PlayerThink overrides the next cmd).
-        shooter.flags |= MF_FLAGS["MF_JUSTATTACKED"]
     # NOTE: vanilla draws damage first, then the SubRandom spread
     # (A_Punch/A_Saw): same count, but the values must land in order.
     damage = ((p_random() % 10) + 1) * 2
@@ -216,6 +213,11 @@ def _melee(ps, shooter, physics, index, mobjs, skyflat, ctx,
         from pydoom.angles import point_to_angle2
         shooter.angle = point_to_angle2(shooter.x, shooter.y,
                                         hit.x, hit.y) & 0xFFFFFFFF
+        if saw:
+            # NOTE: the forward lunge (P_PlayerThink overrides the next
+            # cmd) only lands on a hit: A_Saw returns early on a miss
+            # (sawful), with no turn and no JUSTATTACKED.
+            shooter.flags |= MF_FLAGS["MF_JUSTATTACKED"]
     # NOTE: vanilla never re-aims the shooter here (manual chainsaw
     # tracking); mo.target may mirror vanilla state but stays unread.
 
