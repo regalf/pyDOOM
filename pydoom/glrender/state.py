@@ -80,6 +80,12 @@ def try_init(width: int, height: int, want: str,
     raises. pygame.init() must have run before this call.
     """
     import pygame
+    if want != OPENGL:
+        # NOTE: short-circuit before the _have_gl() probe: asking for
+        # software must never import GL bindings (keeps headless runs
+        # and the sim reference import-clean).
+        return pygame.display.set_mode((width, height)), None, \
+            SOFTWARE, f"requested {want!r}"
     effective, reason = resolve_api(want, None, frames_opt, timedemo,
                                     _have_gl())
     if effective == SOFTWARE:
