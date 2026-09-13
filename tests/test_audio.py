@@ -176,7 +176,16 @@ def test_init_enforces_lump_spec():
     eng = SoundEngine()
     pygame.mixer.quit()
     pygame.mixer.pre_init(22050, -8, 1, 512)
-    pygame.mixer.init()
+    try:
+        pygame.mixer.init()
+    except pygame.error:
+        # NOTE: headless CI has no sound card; the dummy driver still
+        # opens at the requested spec, so the enforcement below holds.
+        os.environ["SDL_AUDIODRIVER"] = "dummy"
+        try:
+            pygame.mixer.init()
+        except pygame.error:
+            pytest.skip("no mixer available")
     assert tuple(pygame.mixer.get_init()) != (44100, -16, 2)
     assert eng.init(WadFile(WAD_PATH)) is True
     assert tuple(pygame.mixer.get_init()) == (44100, -16, 2)
