@@ -1742,8 +1742,7 @@ def main() -> int:
                        f"{fps_ema:.0f}fps "
                        f"{'noclip' if noclip else 'clip'} "
                        f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
-                       f"{skill.upper()}{'+FAST' if fast else ''} "
-                       f"v{ver}")
+                       f"{skill.upper()}{'+FAST' if fast else ''}")
                 if debug:
                     # NOTE: song-thread health for low-fps music reports.
                     ms = audio.music_status()
@@ -1800,7 +1799,13 @@ def main() -> int:
             sub = font.render("ANY KEY: TITLE",
                               True, (255, 255, 255))
             screen.blit(sub, (WIN_W // 2 - sub.get_width() // 2,
-                               WIN_H // 2 + 130))
+                              WIN_H // 2 + 130))
+        if font is not None:
+            # NOTE: build tag, always on top-right (~38% ghost): every
+            # screenshot names its code, no flags needed for bug reports.
+            ver_img = font.render(f"v{ver}", True, (255, 255, 255))
+            ver_img.set_alpha(96)
+            screen.blit(ver_img, (WIN_W - 8 - ver_img.get_width(), 8))
         pygame.display.flip()
         frames += 1
         if frames_opt is not None and frames >= frames_opt:
