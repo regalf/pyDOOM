@@ -34,7 +34,9 @@ ARMOR_X, ARMOR_Y = 221, 171
 KEY_X = 239
 KEY_Y = (171, 181, 191)
 MINI_X, MAX_X = 288, 314
-MINI_Y = {AM_CLIP: 173, AM_SHELL: 179, AM_CELL: 185, AM_MISL: 191}
+# NOTE: right-column rows run top-down BULL/SHEL/ROKT/CELL (st_stuff):
+# rockets sit above cells, like the STBAR labels.
+MINI_Y = {AM_CLIP: 173, AM_SHELL: 179, AM_MISL: 185, AM_CELL: 191}
 
 
 import numpy as np
