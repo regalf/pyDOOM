@@ -76,14 +76,21 @@ Once per map load (not per frame; invalidated on level change):
   top/mid/bottom region per seg, honoring `ML_DONTPEGTOP`/
   `ML_DONTPEGBOTTOM` and the vanilla midtexture column offset rule.
   Vertices in fixed-point world space + texture column parameter.
-- **Plane polygons.** Per sector, floor and ceiling polygons; sectors
-  whose flat is `F_SKY1` (`Renderer.skyflatnum`) get no plane texture
-  and instead tag the top (or "hole") for the sky pass.
-- **Per-vertex light ramp.** Reuse `zlight`/`scalelight` tables:
-  compute the lightlevel→distance curve once per sector/lightlevel
-  (mirroring `_init_scalelight`) and store interpolation keys on each
-  quad so the vertex stage grades distance lighting like the software
-  `_render_seg_loop` does per column.
+- **Plane polygons.** BSP-leaf convex polygons (clip the vertex
+  bbox down the node tree with exact Fractions; children[0] keeps
+  the RIGHT side per point_on_side, on-line vertices join both
+  children watertight), fan-triangulated per subsector sector. The
+  engine's own partition tiles the map, so pillars, islands,
+  disjoint parts, stub-wall mouths and E3M8's overlapping sectors
+  need no special cases (loop-walking from linedefs was tried and
+  abandoned: id's maps are not edge-closed per sector). Leaf tiling
+  is asserted (areas sum to the bbox); leaf attribution is
+  cross-checked against the renderer's BSP walk (on-line points may
+  pick either neighbor: shared edge).
+- **Per-vertex light ramp.** Walls store the scalelight base
+  (sector>>4 + N/S tweak); planes the zlight base (sector>>4, sky
+  forces 0 like _find_plane). Distance grading happens shader-side
+  via fragment depth (no interpolation keys needed).
 - **Textures into atlases.** Using `TextureManager`: wall textures as
   `GL_R8` palette-index textures in a `GL_TEXTURE_2D_ARRAY` array of
   arrays; flats identically; keep pixel data *indices* (no PLAYPAL).

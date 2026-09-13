@@ -21,13 +21,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from fractions import Fraction
 
 import numpy as np
 
 from pydoom.mapdata import (
     ML_DONTPEGBOTTOM,
     ML_DONTPEGTOP,
+    NF_SUBSECTOR,
     Map,
+    Sector,
 )
 from pydoom.renderer import LIGHTLEVELS, LIGHTSEGSHIFT
 from pydoom.textures import TextureManager, texture_height_fixed
@@ -191,4 +194,199 @@ def build_walls(game_map: Map, texman: TextureManager,
     return out
 
 
-__all__ = ["TIERS", "StaticGeometry", "WallQuad", "build_walls"]
+__all__ = [
+    "SURFACES",
+    "TIERS",
+    "PlaneGeometry",
+    "PlaneTri",
+    "StaticGeometry",
+    "WallQuad",
+    "build_planes",
+    "build_walls",
+]
+
+
+# -- sector floors/ceilings/sky (gl_preprocess plane analog) --
+
+SURFACES = ("floor", "ceiling", "sky")
+
+
+@dataclass
+class PlaneTri:
+    """One floor/ceiling/sky triangle (absolute world Z; uv in flat
+    units, i.e. world/64, so a REPEAT sampler lands on vanilla texels).
+
+    NOTE: v carries vanilla's mirrored Y (R_MapPlane negates viewy:
+    flat row = (-yworld) mod 64). Sky tris tag the ceiling hole the
+    Phase 3 sky surface fills (fullbright, u from the view angle).
+    """
+
+    sector: int
+    surface: str  # one of SURFACES
+    flat: int  # flatnum, -1 for sky
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    x3: float = 0.0
+    y3: float = 0.0
+    z: float = 0.0
+    light: int = 0  # sector lightlevel>>4 clamped (sky forces 0,
+    # like _find_plane; distance grading is shader-side via depth)
+
+
+@dataclass
+class PlaneGeometry:
+    """Triangulated floors/ceilings/sky of one map (non-indexed:
+    fans share few verts, dedup buys nothing)."""
+
+    tris: list[PlaneTri] = field(default_factory=list)
+
+    def to_arrays(self) -> dict:
+        n = len(self.tris)
+        pos = np.zeros((n * 3, 3), dtype=np.float32)
+        uv = np.zeros((n * 3, 2), dtype=np.float32)
+        flat = np.zeros((n * 3,), dtype=np.int32)
+        light = np.zeros((n * 3,), dtype=np.float32)
+        for t, tri in enumerate(self.tris):
+            b = t * 3
+            pos[b + 0] = (tri.x1, tri.y1, tri.z)
+            pos[b + 1] = (tri.x2, tri.y2, tri.z)
+            pos[b + 2] = (tri.x3, tri.y3, tri.z)
+            uv[b + 0] = (tri.x1 / 64.0, -tri.y1 / 64.0)
+            uv[b + 1] = (tri.x2 / 64.0, -tri.y2 / 64.0)
+            uv[b + 2] = (tri.x3 / 64.0, -tri.y3 / 64.0)
+            flat[b:b + 3] = tri.flat
+            light[b:b + 3] = tri.light
+        return {"positions": pos, "uv": uv, "flat": flat,
+                "light": light}
+
+
+def _leaf_polys(game_map: Map) -> dict:
+    """BSP-leaf convex polygons (exact Fractions).
+
+    Starts from the map vertex bbox and clips down the node tree;
+    children[0] keeps the RIGHT side of the partition direction
+    (front, matching point_on_side up to on-line points, which land
+    in BOTH children so shared edges stay watertight). Leaves tile
+    the bbox exactly (asserted): this is the engine's own space
+    partition, so hacky sectors (E3M8 overlaps, stub-wall mouths,
+    pillars, islands) need no special cases at all.
+    """
+    if not game_map.vertexes or not game_map.nodes:
+        return {}
+    xs = [v.x for v in game_map.vertexes]
+    ys = [v.y for v in game_map.vertexes]
+    lo_x, hi_x, lo_y, hi_y = min(xs), max(xs), min(ys), max(ys)
+    bbox = [(Fraction(lo_x), Fraction(lo_y)),
+            (Fraction(hi_x), Fraction(lo_y)),
+            (Fraction(hi_x), Fraction(hi_y)),
+            (Fraction(lo_x), Fraction(hi_y))]
+    out: dict = {}
+
+    def clip(poly: list, bx: int, by: int,
+             dx: int, dy: int) -> tuple:
+        """Sutherland-Hodgman both sides (on-line vertices join both
+        children: shared leaf edges stay bit-identical)."""
+        front, back = [], []
+        n = len(poly)
+        for i in range(n):
+            cx, cy = poly[i]
+            nx, ny = poly[(i + 1) % n]
+            sc = dx * (cy - by) - dy * (cx - bx)
+            sn = dx * (ny - by) - dy * (nx - bx)
+            if sc <= 0:
+                front.append((cx, cy))
+            if sc >= 0:
+                back.append((cx, cy))
+            if sc * sn < 0:
+                t = Fraction(sc, sc - sn)
+                ix, iy = cx + (nx - cx) * t, cy + (ny - cy) * t
+                front.append((ix, iy))
+                back.append((ix, iy))
+        return front, back
+
+    def rec(idx: int, poly: list) -> None:
+        if idx & NF_SUBSECTOR:
+            out[idx & ~NF_SUBSECTOR] = poly
+            return
+        node = game_map.nodes[idx]
+        front, back = clip(poly, node.x, node.y, node.dx, node.dy)
+        rec(node.children[0], front)
+        rec(node.children[1], back)
+
+    rec(len(game_map.nodes) - 1, bbox)
+    # NOTE: leaves must tile the bbox exactly (no gaps/overlaps in
+    # the walk); area2-style unsigned sum on both sides.
+    total = Fraction(0)
+    for poly in out.values():
+        total += abs(sum((b[0] - a[0]) * (b[1] + a[1])
+                         for a, b in zip(poly, poly[1:] + poly[:1])))
+    assert total == Fraction(hi_x - lo_x) * (hi_y - lo_y) * 2, \
+        (total, lo_x, hi_x, lo_y, hi_y)
+    return out
+
+
+def _area2(loop: list) -> int:
+    """Twice the signed area (exact integer math, y-up: positive is
+    clockwise, i.e. our interior-right outer loops; holes negative).
+
+    NOTE: this is the negated shoelace (sum (x2-x1)(y2+y1)), so the
+    ear clipper below re-negates when comparing against cross()."""
+    return sum((x2 - x1) * (y2 + y1)
+               for (x1, y1), (x2, y2)
+               in zip(loop, loop[1:] + loop[:1]))
+
+
+def _surface_tris(si: int, sector: Sector, skyflat: int,
+                  p1: tuple, p2: tuple, p3: tuple) -> list:
+    """Floor tri plus ceiling (or sky-tagged) tri for one triangle."""
+    light = min(max(sector.lightlevel >> 4, 0), 15)
+    fl = [(p[0] / 65536.0, p[1] / 65536.0) for p in (p1, p2, p3)]
+    out = [PlaneTri(sector=si, surface="floor", flat=sector.floorpic,
+                    x1=fl[0][0], y1=fl[0][1], x2=fl[1][0],
+                    y2=fl[1][1], x3=fl[2][0], y3=fl[2][1],
+                    z=sector.floorheight / 65536.0, light=light)]
+    if sector.ceilingpic == skyflat or sector.floorpic == skyflat:
+        # NOTE: vanilla draws any sky visplane (floor or ceiling)
+        # through the sky column drawer, fullbright.
+        out.append(PlaneTri(sector=si, surface="sky", flat=-1,
+                            x1=fl[0][0], y1=fl[0][1], x2=fl[1][0],
+                            y2=fl[1][1], x3=fl[2][0], y3=fl[2][1],
+                            z=sector.ceilingheight / 65536.0,
+                            light=0))
+    else:
+        out.append(PlaneTri(sector=si, surface="ceiling",
+                            flat=sector.ceilingpic,
+                            x1=fl[0][0], y1=fl[0][1], x2=fl[1][0],
+                            y2=fl[1][1], x3=fl[2][0], y3=fl[2][1],
+                            z=sector.ceilingheight / 65536.0,
+                            light=light))
+    return out
+
+
+def build_planes(game_map: Map, skyflat: int) -> PlaneGeometry:
+    """Floor/ceiling/sky triangles for every sector: fan each BSP
+    leaf polygon (convex by construction, collinear fan tris skipped
+    exactly) and tag it with its subsector's sector.
+
+    Leaves tile the map, so pillars, islands, disjoint parts and
+    overlapping oddities all land correctly with no loop walking,
+    no winding rules and no gap heuristics."""
+    out = PlaneGeometry()
+    sector_index = {id(s): i for i, s in enumerate(game_map.sectors)}
+    for leaf, poly in _leaf_polys(game_map).items():
+        if len(poly) < 3:
+            continue  # NOTE: degenerate sliver leaf, no pixels
+        sector = game_map.subsectors[leaf].sector
+        assert sector is not None
+        si = sector_index[id(sector)]
+        p0 = poly[0]
+        for i in range(1, len(poly) - 1):
+            a, b, c = p0, poly[i], poly[i + 1]
+            if (b[0] - a[0]) * (c[1] - a[1]) == \
+                    (b[1] - a[1]) * (c[0] - a[0]):
+                continue  # NOTE: collinear fan tri, no pixels
+            out.tris.extend(_surface_tris(si, sector, skyflat,
+                                          a, b, c))
+    return out
