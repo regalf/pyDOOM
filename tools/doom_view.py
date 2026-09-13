@@ -240,6 +240,12 @@ def main() -> int:
     wad_path = args[1] if len(args) > 1 else default_wad
     msettings = menu.Settings()
     menu.settings_load(menu.CONFIG_PATH, msettings)
+    # NOTE: wanted renderer backend (CLI overrides pydoom.cfg); the
+    # effective one lands after the window dance (try_init below).
+    want_api = video_cli if video_cli is not None else msettings.video_api
+    if want_api not in menu.VIDEO_APIS:
+        print(f"video: unknown api {want_api!r}, using software")
+        want_api = "software"
     # NOTE: vanilla demo compat (.lmp playback/record, attract loop)
     # is experimental and off by default; enable with `demos 1` in
     # pydoom.cfg (PYDOOM_DEMOS=1 covers the automated test harness).
@@ -307,6 +313,60 @@ def main() -> int:
     renderer = Renderer(wad, texman)
     maps = wad.list_maps()
 
+    gl_info = None  # GL version string when the opengl path is live
+    gl_live = False  # set after the window dance (try_init below)
+    gl_res = None  # GlResources for the current map (or None)
+
+    def refresh_gl_resources(game_map) -> None:
+        """(Re)build GPU resources for game_map (milestone H).
+
+        Opengl path only: software, headless, timedemo and --frames
+        runs never enter (gl_live False). Never raises: any failure
+        drops back to software presentation mid-session.
+        """
+        nonlocal gl_res
+        if gl_res is not None:
+            gl_res.delete()
+            gl_res = None
+        if not gl_live or gl_info is None:
+            return
+        try:
+            import time
+
+            from pydoom.glrender import light as gllight
+            from pydoom.glrender import preprocess as glpre
+            from pydoom.glrender import textures as gltex
+            from pydoom.glrender import upload as glup
+            t0 = time.time()
+            walls = glpre.build_walls(game_map, texman,
+                                      renderer.skyflatnum)
+            planes = glpre.build_planes(game_map,
+                                        renderer.skyflatnum)
+            wtex = gltex.build_wall_textures(
+                texman,
+                set(gltex.wall_texnums_used(walls))
+                | {renderer.skytexture})
+            ftex = gltex.build_flat_textures(
+                texman, gltex.flatnums_used(planes))
+            cmap = gllight.colormap_lut(bytes(
+                wad.cache_lump("COLORMAP")))
+            pal = gllight.palette_lut(bytes(
+                wad.read_lump("PLAYPAL")))
+            gl_res = glup.GlResources.create(walls, planes, wtex,
+                                             ftex, cmap, pal)
+            dt = (time.time() - t0) * 1000
+            if gl_res is None:
+                print("gl resources: upload failed "
+                      "(software-presented)")
+            else:
+                print(f"gl resources: {len(walls.quads)} quads, "
+                      f"{len(planes.tris)} tris, "
+                      f"{len(wtex.order)} walltex, "
+                      f"{len(ftex.order)} flats in {dt:.0f}ms")
+        except Exception as exc:  # noqa: BLE001 - GL never breaks play
+            print(f"gl resources: {exc} (software-presented)")
+            gl_res = None
+
     def load_map(marker: str, keep_ps=None, keep_hp: int | None = None):
         game_map = Map.from_wad(wad, marker)
         # NOTE: g_game.c picks SKY1/2/3/4 per episode at P_SetupLevel.
@@ -316,6 +376,7 @@ def main() -> int:
         except Exception:
             pass
         texman.resolve_map(game_map)
+        refresh_gl_resources(game_map)
         phys = Physics(game_map)
         # Live mobjs (statues until AI lands); physics sees them.
         index = ThingIndex(game_map)
@@ -630,15 +691,14 @@ def main() -> int:
     pygame.init()
     # NOTE: milestone H phase 0: backend selection lives in
     # glrender.state; any failure falls back to software, never raises.
-    want_api = video_cli if video_cli is not None else msettings.video_api
-    if want_api not in menu.VIDEO_APIS:
-        print(f"video: unknown api {want_api!r}, using software")
-        want_api = "software"
+    # gl_info is the GL version string on the live opengl path.
     from pydoom.glrender import state as glstate
-    # NOTE: _gl_ctx is None on software; phase 3 draws through it.
-    screen, _gl_ctx, video_api, video_why = glstate.try_init(
+    screen, gl_info, video_api, video_why = glstate.try_init(
         WIN_W, WIN_H, want_api, frames_opt, timedemo)
     print(f"video: {video_api} ({video_why})")
+    gl_live = video_api == "opengl" and gl_info is not None
+    if gl_live:
+        refresh_gl_resources(game_map)  # NOTE: boot map loaded above
     pygame.display.set_caption(f"pydoom - {game_map.marker}")
     try:
         audio.init(wad)  # silent no-op when the mixer is missing

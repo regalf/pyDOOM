@@ -1,0 +1,201 @@
+"""GL resource upload (milestone H, phase 1, upload slice).
+
+Moves the CPU-side preprocess output to the GPU: wall/plane VBOs
+(+ wall IBO reordered by texture), per-texture wall images, the
+stacked flat array, and the colormap/palette LUTs. No drawing yet
+(shaders land in Phase 2); this proves the context path end to end
+and pins GPU byte-exactness via readback tests.
+
+Module import never touches GL (OpenGL imports live inside
+create()): headless CI and the software path stay import-clean.
+Every GL failure returns None instead of raising out of the viewer.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+
+__all__ = ["GlResources", "plan_wall_batches"]
+
+
+def plan_wall_batches(quads) -> tuple:
+    """Reorder wall indices by texture (deterministic: texnums sorted).
+
+    Returns (index uint32 array, batches [(texnum, start, count)]):
+    each batch draws one texture binding's index range, covering
+    every quad exactly once. Pure logic, headless-testable.
+    """
+    by_tex: dict = {}
+    for q, quad in enumerate(quads):
+        by_tex.setdefault(quad.texnum, []).append(q)
+    index = np.zeros(len(quads) * 6, dtype=np.uint32)
+    batches = []
+    pos = 0
+    for texnum in sorted(by_tex):
+        start = pos
+        for q in by_tex[texnum]:
+            b = q * 4
+            index[pos:pos + 6] = (b, b + 1, b + 2, b, b + 2, b + 3)
+            pos += 6
+        batches.append((texnum, start, pos - start))
+    return index, batches
+
+
+@dataclass
+class GlResources:
+    """Live GL objects for one map (context must be current)."""
+
+    wall_vbo: int = 0
+    wall_ibo: int = 0
+    wall_batches: list = field(default_factory=list)
+    wall_textures: dict = field(default_factory=dict)  # texnum -> id
+    plane_vbo: int = 0
+    plane_count: int = 0
+    flat_array: int = 0
+    flat_layers: dict = field(default_factory=dict)  # flatnum -> layer
+    colormap_tex: int = 0
+    palette_tex: int = 0
+
+    @classmethod
+    def create(cls, wall_geo, plane_geo, wall_tex, flat_tex,
+               colormap: bytes, palette: bytes):
+        """Upload everything; None (with best-effort cleanup) on any
+        GL failure. wall_tex/flat_tex are WallTextureSet /
+        FlatTextureSet; colormap/palette the light.py LUT bytes."""
+        from OpenGL import GL
+        created = cls()
+        try:
+            GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+            cls._upload_walls(created, wall_geo, wall_tex)
+            cls._upload_planes(created, plane_geo, flat_tex)
+            created.colormap_tex = cls._upload_lut(
+                colormap, 256, 32, GL.GL_R8, GL.GL_RED)
+            created.palette_tex = cls._upload_lut(
+                palette, 256, 1, GL.GL_RGB8, GL.GL_RGB)
+        except Exception:  # noqa: BLE001 - any GL failure falls back
+            created.delete()
+            return None
+        return created
+
+    @staticmethod
+    def _new_buffer(data: np.ndarray, target: int) -> int:
+        from OpenGL import GL
+        buf = GL.glGenBuffers(1)
+        GL.glBindBuffer(target, buf)
+        GL.glBufferData(target, data.nbytes, data, GL.GL_STATIC_DRAW)
+        GL.glBindBuffer(target, 0)
+        return int(buf)
+
+    @classmethod
+    def _upload_walls(cls, created, wall_geo, wall_tex) -> None:
+        from OpenGL import GL
+        arr = wall_geo.to_arrays()
+        n = len(arr["positions"])
+        inter = np.zeros((n, 6), dtype=np.float32)
+        inter[:, 0:3] = arr["positions"]
+        inter[:, 3] = arr["u"]
+        inter[:, 4] = arr["texbase"]
+        inter[:, 5] = arr["light"]
+        created.wall_vbo = cls._new_buffer(
+            np.ascontiguousarray(inter),
+            GL.GL_ARRAY_BUFFER)
+        index, batches = plan_wall_batches(wall_geo.quads)
+        created.wall_ibo = cls._new_buffer(index,
+                                           GL.GL_ELEMENT_ARRAY_BUFFER)
+        created.wall_batches = batches
+        for texnum, blob, (w, h) in zip(wall_tex.order,
+                                        wall_tex.blobs,
+                                        wall_tex.sizes):
+            tex = GL.glGenTextures(1)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RG8, w, h, 0,
+                            GL.GL_RG, GL.GL_UNSIGNED_BYTE, blob)
+            created.wall_textures[texnum] = int(tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+
+    @classmethod
+    def _upload_planes(cls, created, plane_geo, flat_tex) -> None:
+        from OpenGL import GL
+        arr = plane_geo.to_arrays()
+        n = len(arr["positions"])
+        inter = np.zeros((n, 7), dtype=np.float32)
+        inter[:, 0:3] = arr["positions"]
+        inter[:, 3:5] = arr["uv"]
+        inter[:, 5] = arr["flat"].astype(np.float32)
+        inter[:, 6] = arr["light"]
+        created.plane_vbo = cls._new_buffer(
+            np.ascontiguousarray(inter),
+            GL.GL_ARRAY_BUFFER)
+        created.plane_count = n
+        layers = len(flat_tex.order)
+        if layers:
+            tex = GL.glGenTextures(1)
+            GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, tex)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                               GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                               GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                               GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                               GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+            GL.glTexImage3D(GL.GL_TEXTURE_2D_ARRAY, 0, GL.GL_R8,
+                            64, 64, layers, 0,
+                            GL.GL_RED, GL.GL_UNSIGNED_BYTE,
+                            flat_tex.blob)
+            GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, 0)
+            created.flat_array = int(tex)
+            created.flat_layers = dict(flat_tex.index_of)
+
+    @staticmethod
+    def _upload_lut(blob: bytes, w: int, h: int, internal: int,
+                    fmt: int) -> int:
+        from OpenGL import GL
+        tex = GL.glGenTextures(1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER,
+                           GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER,
+                           GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S,
+                           GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T,
+                           GL.GL_CLAMP_TO_EDGE)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, internal, w, h, 0, fmt,
+                        GL.GL_UNSIGNED_BYTE, blob)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+        return int(tex)
+
+    def delete(self) -> None:
+        """Free everything (best-effort: a dead context must not
+        raise out of level transitions)."""
+        try:
+            from OpenGL import GL
+            ids = [self.wall_vbo, self.wall_ibo, self.plane_vbo]
+            GL.glDeleteBuffers(3, [i for i in ids if i])
+            tids = (list(self.wall_textures.values())
+                    + [self.flat_array, self.colormap_tex,
+                       self.palette_tex])
+            tids = [t for t in tids if t]
+            if tids:
+                GL.glDeleteTextures(len(tids), tids)
+        except Exception:  # noqa: BLE001, S110 - dead context frees
+            pass  # nothing (teardown must never raise either)
+        finally:
+            self.wall_vbo = self.wall_ibo = self.plane_vbo = 0
+            self.wall_batches = []
+            self.wall_textures = {}
+            self.plane_count = 0
+            self.flat_array = 0
+            self.flat_layers = {}
+            self.colormap_tex = self.palette_tex = 0
