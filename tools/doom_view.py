@@ -193,6 +193,7 @@ def main() -> int:
     nomonsters = False  # demo header / vanilla -nomonsters spawn filter
     respawn = False  # --respawn: monsters return (any skill, like vanilla)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
+    video_cli = None  # --video-api=software|opengl (overrides pydoom.cfg)
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
@@ -227,6 +228,8 @@ def main() -> int:
             respawn = True
         elif a == "--nomonsters":
             nomonsters = True  # NOTE: vanilla -nomonsters spawn filter
+        elif a.startswith("--video-api="):
+            video_cli = a.split("=", 1)[1].lower()
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
@@ -625,7 +628,17 @@ def main() -> int:
                 gamestate = "wipe"
 
     pygame.init()
-    screen = pygame.display.set_mode((WIN_W, WIN_H))
+    # NOTE: milestone H phase 0: backend selection lives in
+    # glrender.state; any failure falls back to software, never raises.
+    want_api = video_cli if video_cli is not None else msettings.video_api
+    if want_api not in menu.VIDEO_APIS:
+        print(f"video: unknown api {want_api!r}, using software")
+        want_api = "software"
+    from pydoom.glrender import state as glstate
+    # NOTE: _gl_ctx is None on software; phase 3 draws through it.
+    screen, _gl_ctx, video_api, video_why = glstate.try_init(
+        WIN_W, WIN_H, want_api, frames_opt, timedemo)
+    print(f"video: {video_api} ({video_why})")
     pygame.display.set_caption(f"pydoom - {game_map.marker}")
     try:
         audio.init(wad)  # silent no-op when the mixer is missing
