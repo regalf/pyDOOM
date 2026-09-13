@@ -330,6 +330,11 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
     if ctx is not None:
         from pydoom.ai import noise_alert
         noise_alert(shooter, shooter, ctx)
+    from pydoom import audio
+    if weapon == WP_BFG:
+        # NOTE: A_BFGsound runs on S_BFG1 (the pull), 20 tics before
+        # the flash and 30 before the shot, on every pull held or not.
+        audio.play("bfg", shooter.x, shooter.y, shooter)
     cd = HELD_COOLDOWN[weapon] if held else COOLDOWN[weapon]
     windup = WINDUP[weapon]
     if weapon == WP_CHAINSAW and queue is not None:
@@ -403,10 +408,12 @@ def _shoot(ps, weapon, shooter, physics, index, mobjs, skyflat,
         spawn_player_missile(shooter, MT_INDEX["ROCKET"], physics, index,
                              mobjs)
     elif weapon == WP_PLASMA:
-        # NOTE: shareware has no plasma lump; feel free to hear nothing.
+        # NOTE: A_FirePlasma barks every shot, tap or 3-tic chain alike
+        # (silent under shareware: no DSPLASMA lump, like the sprites).
         # NOTE: vanilla picks flashstate+(P_Random()&1) before spawning
         # (A_FirePlasma): the draw counts even though the flash sprite
         # rides our own psprite clock.
+        audio.play("plasma", shooter.x, shooter.y, shooter)
         _flash = p_random() & 1
         spawn_player_missile(shooter, MT_INDEX["PLASMA"], physics, index,
                              mobjs)

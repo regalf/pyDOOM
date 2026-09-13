@@ -434,3 +434,26 @@ def test_saw_lunge_only_on_hit(setup):
         else:
             assert not (player.flags & MF_FLAGS["MF_JUSTATTACKED"])
     assert hits > 0  # the saw connected at least once
+
+
+@requires_wad
+def test_plasma_barks_and_bfg_charges(setup, monkeypatch):
+    """A_FirePlasma barks every shot; A_BFGsound runs at the pull."""
+    from pydoom import audio as audio_mod
+    game_map, phys, index, ctx = setup
+    player, troop, ps, ctx, _ = make_range(setup)
+    sounds = []
+    monkeypatch.setattr(audio_mod, "play",
+                        lambda n, *a: sounds.append(n) or False)
+    ready_weapon(ps, WP_PLASMA)
+    ps.ammo[AM_CELL] = 10
+    fire_all(ps, player, phys, index, ctx.mobjs, None, True, ctx)
+    assert "plasma" in sounds  # every bolt, tap or held chain
+    ready_weapon(ps, WP_BFG)
+    ps.ammo[AM_CELL] = 300
+    queue = []
+    cd, _flash = weapons.fire(ps, player, phys, index, ctx.mobjs, None,
+                              True, ctx, queue)
+    assert cd == weapons.COOLDOWN[WP_BFG]
+    assert "bfg" in sounds  # charge at the pull, shot still queued
+    assert len(queue) == 1  # 30-tic windup pending

@@ -38,6 +38,7 @@ STEREO_SWING = 96  # vanilla S_STEREO_SWING
 # NOTE: (priority, link-singleton) from sounds.c for the sounds we use.
 SFX = {
     "pistol": (64, False), "shotgn": (64, False), "rlaunc": (64, False),
+    "plasma": (64, False), "bfg": (64, False),
     "firsht": (70, False), "claw": (70, False),
     "doropn": (100, False), "dorcls": (100, False),
     "stnmov": (119, False), "pstop": (100, False),
