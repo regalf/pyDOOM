@@ -463,8 +463,20 @@ def main() -> int:
             if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
                                          pick):
                 renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+        elif ps.pendingweapon != ps.readyweapon:
+            # NOTE: lower/raise states show each gun's own up/down
+            # frame (all A, saw C: S_SAWUP/S_SAWDOWN run on frame 2).
+            shown = (ps.pendingweapon if travel >= 0.5
+                     else ps.readyweapon)
+            rest = "C" if shown == WP_CHAINSAW else "A"
+            renderer.draw_psprite(fb, body, bobx, boby + yoff, rest)
         else:
-            renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+            # NOTE: ready guns hold frame A, except the idling saw
+            # (S_SAW/S_SAWB alternate C/D every 4 tics, blade up).
+            renderer.draw_psprite(
+                fb, body, bobx, boby + yoff,
+                weapons.idle_frame(ps.readyweapon,
+                                   state.get("tics", 0)))
         if firing and flash is not None:
             renderer.draw_psprite(fb, flash, bobx, boby + yoff)
         # NOTE: classic bottom strip (covers the gun base, like vanilla).

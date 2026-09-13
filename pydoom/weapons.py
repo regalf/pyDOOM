@@ -114,6 +114,18 @@ def attack_timeline(weapon: int, flip: int = 0,
     if weapon == WP_CHAINGUN:
         return "BBBB" if flip else "AAAA"
     return table[weapon]
+
+
+def idle_frame(weapon: int, tics: int) -> str:
+    """Ready-state body frame (vanilla psprite ready states).
+
+    Only the saw animates at rest: S_SAW/S_SAWB alternate C/D every
+    4 tics (blade up, bobbing). Every other ready state (S_PISTOL,
+    S_SGUN, S_CHAIN, S_MISSILE, S_PLASMA, S_BFG, S_PUNCH) holds A.
+    """
+    if weapon == WP_CHAINSAW:
+        return "D" if (tics // 4) & 1 else "C"
+    return "A"
 # (ammo type, rounds per shot); ammo < 0 means unarmed.
 COST = {WP_FIST: (-1, 0), WP_PISTOL: (AM_CLIP, 1), WP_SHOTGUN: (AM_SHELL, 1),
         WP_CHAINGUN: (AM_CLIP, 1), WP_MISSILE: (AM_MISL, 1),

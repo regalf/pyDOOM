@@ -382,6 +382,19 @@ def test_held_plasma_runs_three_tic_loop():
     assert set(gaps) == {3}
 
 
+def test_saw_idle_alternates_two_frames():
+    """Ready saw bobs C/D every 4 tics (S_SAW/S_SAWB); rest hold A."""
+    assert [weapons.idle_frame(WP_CHAINSAW, t) for t in range(4)] == \
+        ["C"] * 4
+    assert [weapons.idle_frame(WP_CHAINSAW, t) for t in range(4, 8)] == \
+        ["D"] * 4
+    assert [weapons.idle_frame(WP_CHAINSAW, t) for t in range(8, 12)] == \
+        ["C"] * 4
+    for weapon in (WP_FIST, WP_PISTOL, WP_SHOTGUN, WP_CHAINGUN,
+                   WP_MISSILE, WP_PLASMA, WP_BFG):
+        assert {weapons.idle_frame(weapon, t) for t in range(16)} == {"A"}
+
+
 @requires_wad
 def test_saw_lunge_only_on_hit(setup):
     """A_Saw lunges (JUSTATTACKED) on a hit, never on a miss.
