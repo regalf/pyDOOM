@@ -165,7 +165,8 @@ def main() -> int:
 
     pygame.init()
     screen = pygame.display.set_mode((560, 420))
-    pygame.display.set_caption("pyDOOM launcher")
+    from pydoom.version import get_version
+    pygame.display.set_caption(f"pyDOOM launcher v{get_version(ROOT)}")
     font = pygame.font.SysFont("monospace", 18)
     big = pygame.font.SysFont("monospace", 26, bold=True)
     small = pygame.font.SysFont("monospace", 14)

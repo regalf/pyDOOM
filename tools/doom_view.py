@@ -24,7 +24,6 @@ weapons or thing collision yet.
 import math
 import os
 import random
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -290,13 +289,10 @@ def main() -> int:
     if demo_header is not None:  # NOTE: mission clamps the demo map
         map_name = demo_header.marker(game_mission)
     texman = TextureManager(wad)
-    try:  # NOTE: build tag in the HUD, so screenshots name their code.
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ver = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True,
-            text=True, cwd=root, timeout=5).stdout.strip() or "nogit"
-    except Exception:
-        ver = "nogit"
+    # NOTE: build tag in the HUD, so screenshots name their code.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from pydoom.version import get_version
+    ver = get_version(root)
     palette_lut = np.array(load_playpal(wad.read_lump("PLAYPAL")),
                            dtype=np.uint8)
     # NOTE: damage/bonus/suit flash palettes (ST_doPaletteStuff).

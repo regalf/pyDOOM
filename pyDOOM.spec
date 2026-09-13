@@ -18,7 +18,7 @@ a = Analysis(
     ['pyDOOM.py'],
     pathex=[],
     binaries=[],
-    datas=[('DOOM1.WAD', '.')],
+    datas=[('DOOM1.WAD', '.'), ('VERSION', '.')],
     hiddenimports=['tools.doom_view'],
     hookspath=[],
     hooksconfig={},
