@@ -25,6 +25,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      SDL_AUDIODRIVER: dummy
+      SDL_VIDEODRIVER: dummy
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

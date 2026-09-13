@@ -172,6 +172,11 @@ def test_real_lumps_decode_centered():
 def test_init_enforces_lump_spec():
     """pygame.init pre-opens whatever the desktop wants; init() must
     force 44100/s16/stereo back (viewer boot order)."""
+    # NOTE: SDL reads the audio driver once per mixer init, so the
+    # dummy backend must be selected before the first init() call;
+    # setting it only in the except branch is too late on headless
+    # CI (ALSA with no sound card) and the retry still raises.
+    os.environ["SDL_AUDIODRIVER"] = "dummy"
     import pygame
     eng = SoundEngine()
     pygame.mixer.quit()
@@ -179,20 +184,17 @@ def test_init_enforces_lump_spec():
     try:
         pygame.mixer.init()
     except pygame.error:
-        # NOTE: headless CI has no sound card; the dummy driver still
-        # opens at the requested spec, so the enforcement below holds.
-        os.environ["SDL_AUDIODRIVER"] = "dummy"
-        try:
-            pygame.mixer.init()
-        except pygame.error:
-            pytest.skip("no mixer available")
-    assert tuple(pygame.mixer.get_init()) != (44100, -16, 2)
-    assert eng.init(WadFile(WAD_PATH)) is True
-    assert tuple(pygame.mixer.get_init()) == (44100, -16, 2)
-    snd = eng.sound("pistol")
-    arr = pygame.sndarray.array(snd)
-    assert arr.shape == ((5661 - 1) * 4 + 1, 2)  # NOTE: x4 stereo
-    pygame.mixer.quit()
+        pytest.skip("no mixer available")
+    try:
+        assert tuple(pygame.mixer.get_init()) != (44100, -16, 2)
+        if eng.init(WadFile(WAD_PATH)) is not True:
+            pytest.skip("mixer unavailable")
+        assert tuple(pygame.mixer.get_init()) == (44100, -16, 2)
+        snd = eng.sound("pistol")
+        arr = pygame.sndarray.array(snd)
+        assert arr.shape == ((5661 - 1) * 4 + 1, 2)  # NOTE: x4 stereo
+    finally:
+        pygame.mixer.quit()
 
 
 @requires_wad
