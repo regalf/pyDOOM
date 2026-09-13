@@ -12,8 +12,6 @@ tests and silent machines play identically, minus the noise.
 
 from __future__ import annotations
 
-import math
-
 try:
     import pygame
 except ImportError:  # pragma: no cover - silent fallback below
@@ -21,7 +19,6 @@ except ImportError:  # pragma: no cover - silent fallback below
 
 from pydoom import tables
 from pydoom.angles import point_to_angle2
-from pydoom.fixed import FRACUNIT
 
 SAMPLE_RATE = 44100  # mixer spec (chocolate: 44.1 kHz SFX)
 # NOTE: signed 16-bit stereo (chocolate i_sdlsound.c); DS lumps ride

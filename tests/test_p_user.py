@@ -30,7 +30,6 @@ def make_mo(**kw):
 
 
 def test_thrust_uses_fine_tables():
-    from pydoom.fixed import FRACUNIT
     mo = make_mo()
     p_user.thrust(mo, 0, 50 * 2048)  # facing east, full run forward
     idx = (0 >> ANGLETOFINESHIFT) & FINEMASK

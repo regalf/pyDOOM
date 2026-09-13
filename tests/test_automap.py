@@ -13,7 +13,7 @@ from pydoom.automap import (
     load_playpal_from_wad,
     thing_degrees_to_bam,
 )
-from pydoom.fixed import FRACBITS, FRACUNIT
+from pydoom.fixed import FRACBITS
 from pydoom.mapdata import Line, Map, MapThing, Vertex
 from pydoom.wad import WadFile
 

@@ -232,7 +232,7 @@ def test_degenerate_song_terminates():
 def test_pyopl_backend_tolerates_tiny_fills():
     """Thread-crash regression: sub-2-sample segments (tight events)
     clamp to PyOPL's minimum instead of raising in the worker."""
-    pyopl = pytest.importorskip("pyopl")
+    pytest.importorskip("pyopl")  # NOTE: skip when the synth is missing
     from pydoom.oplmusic import PyOplBackend
     back = PyOplBackend()
     assert len(back.render(1)) == 1

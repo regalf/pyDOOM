@@ -133,14 +133,11 @@ def test_corpse_rides_lift_down(setup):
     assert corpse.health <= 0 and corpse.z == sec.floorheight
     top = sec.floorheight
     assert world.do_plat(line, "downWaitUpStay", 0)
-    lagged = False
     for _ in range(120):
         world.tick()
         think_mobj(corpse, phys, ctx)
         assert corpse.z <= top  # never hovers above the start height
-        if corpse.z != sec.floorheight:
-            lagged = True  # mid-fall gravity lag is fine...
-    assert sec.floorheight < top  # ...but the lift really moved
+    assert sec.floorheight < top  # the lift really moved underneath
     for _ in range(60):
         world.tick()
         think_mobj(corpse, phys, ctx)

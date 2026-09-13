@@ -27,7 +27,7 @@ from pydoom import tables
 from pydoom.player import PW_INVULN, CF_GODMODE, WP_CHAINSAW
 from pydoom.angles import point_to_angle2
 from pydoom.fixed import FRACBITS, FRACUNIT, c_div, fixed_div, fixed_mul
-from pydoom.info import MF_FLAGS, MOBJ_TYPES, MT_INDEX, MT_NAMES, STATE_INDEX
+from pydoom.info import MF_FLAGS, MOBJ_TYPES, MT_INDEX, MT_NAMES
 from pydoom.mapdata import ML_TWOSIDED
 from pydoom.m_random import p_random
 

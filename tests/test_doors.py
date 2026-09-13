@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from pydoom.doors import BUTTONTIME, DoorType, World, move_plane
+from pydoom.doors import BUTTONTIME, World, move_plane
 from pydoom.fixed import FRACUNIT
 from pydoom.mapdata import Map
 from pydoom.physics import Mover, Physics, point_on_line_side
@@ -112,7 +112,6 @@ def test_switch_flips_texture_and_opens(setup):
     for marker in wad.list_maps():
         game_map = Map.from_wad(wad, marker)
         texman.resolve_map(game_map)
-        phys = Physics(game_map)
         world = World(game_map, texman)
         for line in game_map.lines:
             if line.special not in (29, 103):
@@ -197,7 +196,6 @@ def test_move_plane_crushes_threshold_blocker():
 
 @requires_wad
 def test_light_thinkers_spawn_and_clear(setup):
-    from pydoom.doors import FireFlicker, GlowLight, LightFlash, StrobeFlash
     wad, texman, _ = setup
     game_map = Map.from_wad(wad, "E1M1")
     texman.resolve_map(game_map)
@@ -279,7 +277,7 @@ def test_ceiling_crusher_bounces_and_hurts(setup):
     phys.things = index
     world = World(game_map, texman)
     sec = next(s for s in game_map.sectors if s.tag)
-    top0, tag0 = sec.ceilingheight, sec.tag
+    top0 = sec.ceilingheight
     mobjs: list = []
     world.grind = lambda s, c: grind_sector(world, s, c, mobjs, phys, None)
     # NOTE: a live victim inside the crusher sector (bbox center).
@@ -362,7 +360,6 @@ def test_ceiling_raise_to_highest_parks(setup):
     """raiseToHighest climbs to the tallest neighbor, then exits."""
     from types import SimpleNamespace
     _, texman, game_map = setup
-    phys = Physics(game_map)
     world = World(game_map, texman)
     sec = next(s for s in game_map.sectors
                if world.find_highest_ceiling(s) > s.ceilingheight)
@@ -398,7 +395,6 @@ def test_walk_triggers_wire_ceilings(setup):
     assert _WALK_RETRIGGER[73] == ("ceiling", "crushAndRaise")
     assert _WALK_RETRIGGER[77] == ("ceiling", "fastCrushAndRaise")
     _, texman, game_map = setup
-    phys = Physics(game_map)
     world = World(game_map, texman)
     sec = next(s for s in game_map.sectors if s.tag)
     top0 = sec.ceilingheight

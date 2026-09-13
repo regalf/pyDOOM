@@ -29,7 +29,6 @@ from dataclasses import dataclass, field
 from pydoom import tables
 from pydoom.angles import point_on_side, point_to_angle2
 from pydoom.fixed import (
-    ANG90,
     ANG180,
     FRACBITS,
     FRACUNIT,

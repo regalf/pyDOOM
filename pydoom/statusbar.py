@@ -20,8 +20,6 @@ from pydoom.player import (
     KEY_YELLOW,
     KEY_YSKULL,
     WEAPON_AMMO,
-    WP_CHAINSAW,
-    WP_FIST,
 )
 
 ST_Y = 168

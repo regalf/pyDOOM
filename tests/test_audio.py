@@ -6,7 +6,6 @@ import pytest
 
 from pydoom import audio
 from pydoom.audio import SoundEngine, attenuate, decode_lump
-from pydoom.fixed import FRACUNIT
 from pydoom.wad import WadFile
 
 WAD_PATH = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
@@ -182,7 +181,6 @@ def test_init_enforces_lump_spec():
     assert eng.init(WadFile(WAD_PATH)) is True
     assert tuple(pygame.mixer.get_init()) == (44100, -16, 2)
     snd = eng.sound("pistol")
-    import numpy as np
     arr = pygame.sndarray.array(snd)
     assert arr.shape == ((5661 - 1) * 4 + 1, 2)  # NOTE: x4 stereo
     pygame.mixer.quit()

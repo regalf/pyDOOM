@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from pydoom.menu import SKILLS, Menu, Settings
+from pydoom.menu import Menu, Settings
 
 WAD_PATH = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
 

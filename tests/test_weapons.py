@@ -284,7 +284,7 @@ def test_attack_timelines_match_vanilla_frames():
 @requires_wad
 def test_held_fire_runs_refire_entry_cycles(setup):
     """Held trigger skips the refire-state tail (vanilla A_ReFire)."""
-    from pydoom.player import AM_CELL, WP_BFG, WP_PLASMA
+    from pydoom.player import WP_BFG, WP_PLASMA
     game_map, phys, index, ctx = setup
     player, troop, ps, ctx, _ = make_range(setup)
     ps.ammo = [400, 400, 400, 400]

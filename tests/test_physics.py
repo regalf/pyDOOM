@@ -53,7 +53,6 @@ def test_start_position_is_open(setup):
 @requires_wad
 def test_walls_block_on_all_sides(setup):
     _, ph = setup
-    step = 8 << 16
     mo, _ = walk_until_blocked(ph, 1056 << 16, -3616 << 16, -1, 0)
     assert (mo.x >> 16, mo.y >> 16) == (960, -3616)  # west pillar face
     mo, _ = walk_until_blocked(ph, 1056 << 16, -3616 << 16, 0, -1)

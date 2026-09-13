@@ -130,7 +130,6 @@ def mus_to_mid(data: bytes) -> bytes:
     out += bytes((TPQN >> 8, TPQN & 0xFF))
     track = bytearray()
     chan_map = [-1] * 16
-    velocities = [127] * 16
     pending = 0
 
     def alloc(mus_channel: int) -> int:

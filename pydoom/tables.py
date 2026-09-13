@@ -9,8 +9,6 @@ bit-exact, including whatever rounding the id generator used.
 
 from __future__ import annotations
 
-from pydoom.fixed import fixed_mul
-
 __all__ = [
     "FINEANGLES",
     "FINEMASK",

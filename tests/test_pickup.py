@@ -8,20 +8,16 @@ from pydoom.ai import AIContext
 from pydoom.combat import damage_mobj, kill_mobj, register_combat_actions
 from pydoom.info import MF_FLAGS, MT_INDEX
 from pydoom.mapdata import Map
-from pydoom.mobjs import ThingIndex, refresh_sector, spawn_mobj, think_mobj
+from pydoom.mobjs import ThingIndex, refresh_sector, spawn_mobj
 from pydoom.physics import Physics
 from pydoom.pickup import collect_touched, touch_special_thing
 from pydoom.player import (
-    AM_CELL,
     AM_CLIP,
-    AM_MISL,
     AM_SHELL,
     KEY_BLUE,
     KEY_RED,
-    MAXHEALTH,
     PW_INVULN,
     PlayerState,
-    WP_CHAINGUN,
     WP_SHOTGUN,
 )
 from pydoom.wad import WadFile
@@ -213,7 +209,6 @@ def test_locked_door_needs_key():
     from pydoom.textures import TextureManager
     wad = WadFile(WAD_PATH)
     game_map = Map.from_wad(wad, "E1M2")
-    phys = Physics(game_map)
     world = World(game_map, TextureManager(wad))
     line = game_map.lines[527]
     assert line.special == 28  # red manual door
@@ -296,7 +291,7 @@ def test_berserk_arms_fists(setup):
 
 @requires_wad
 def test_dry_ammo_pickup_arms_matching_gun(setup):
-    from pydoom.player import WP_CHAINGUN, WP_FIST, WP_PISTOL
+    from pydoom.player import WP_CHAINGUN, WP_FIST
     game_map, phys, index, ctx = setup
     player, ps, ctx, _ = make_player(setup)
     ps.weapons |= 1 << WP_CHAINGUN

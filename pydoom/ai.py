@@ -25,8 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pydoom.angles import point_to_angle2
-from pydoom.fixed import ANG90, ANG180, ANG270, fixed_div
-from pydoom.info import MF_FLAGS, MT_INDEX
+from pydoom.fixed import ANG90, ANG270, fixed_div
+from pydoom.info import MF_FLAGS
 from pydoom.mapdata import ML_SOUNDBLOCK, ML_TWOSIDED
 from pydoom.m_random import p_random
 from pydoom.physics import aprox_distance, intercept_vector

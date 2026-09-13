@@ -107,7 +107,6 @@ def main() -> None:
     mt_section = info_h.split("} mobjtype_t;")[0].rsplit("typedef enum", 1)[-1]
     mt_names = parse_enum(mt_section, "NUMMOBJTYPES", "MT_")
     assert mt_names and mt_names[0] == "MT_PLAYER", mt_names[:3]
-    mt_index = {name: i for i, name in enumerate(mt_names)}
     mf = parse_mf_values(p_mobj_h)
     assert "MF_SHADOW" in mf and "MF_TRANSLATION" in mf
 
@@ -165,7 +164,6 @@ def main() -> None:
                      xdeathstate, raisestate, painchance, mass, damage))
     assert len(mobj) == len(mt_names), (len(mobj), len(mt_names))
 
-    mf_names = sorted(mf)
     lines = [
         '"""Spawn/render/simulation data tables (info.h / info.c / p_mobj.h).',
         "",

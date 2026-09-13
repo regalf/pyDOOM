@@ -16,8 +16,6 @@ from pydoom.info import MT_INDEX
 from pydoom.mapdata import Map
 from pydoom.mobjs import (
     ThingIndex,
-    set_mobj_state,
-    spawn_map,
     spawn_mobj,
     think_mobj,
 )
@@ -118,7 +116,7 @@ def test_frozen_ai_stays_statue(setup):
     game_map, phys, index, ctx = setup
     ctx.ai_frozen = True
     try:
-        pmo = make_player(setup)
+        make_player(setup)  # NOTE: spawn kept, only the handle was dead
         mo = spawn_mobj(game_map, phys, index, 900 << 16, -3500 << 16, 0,
                         MT_INDEX["TROOP"])
         x0, y0 = mo.x, mo.y
@@ -334,7 +332,7 @@ def test_floater_eases_toward_target_height():
 def test_skullfly_slam_recovers_to_spawn(setup):
     """A slammed skull (zero mom, SKULLFLY set) stops, clears the flag
     and drops back to spawn, then chases again (p_mobj.c P_XYMovement)."""
-    from pydoom.info import MF_FLAGS, MOBJ_TYPES, STATE_INDEX
+    from pydoom.info import MF_FLAGS, STATE_INDEX
     from pydoom.mobjs import xy_movement
     game_map, phys, index, ctx = setup
     player = spawn_mobj(game_map, phys, index, 500 << 16, 0, 0,

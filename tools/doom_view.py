@@ -26,7 +26,6 @@ import os
 import random
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -50,7 +49,7 @@ from pydoom.doors import World
 from pydoom.info import MT_INDEX, MT_NAMES, STATE_INDEX
 from pydoom.info import MF_FLAGS as _MF_FLAGS
 from pydoom.mapdata import Map
-from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map, spawn_mobj
+from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map
 from pydoom.mobjs import level_totals, set_mobj_state, think_mobj
 from pydoom.mobjs import xy_movement
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index

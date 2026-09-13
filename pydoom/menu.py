@@ -6,7 +6,7 @@ a placeholder until the savegame milestone lands; detail/screensize
 are omitted (fixed renderer); End Game waits for a title state.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pydoom.textures import decode_patch
 

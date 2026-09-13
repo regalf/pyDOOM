@@ -5,10 +5,10 @@ import os
 
 import pytest
 
-from pydoom.doors import BUTTONTIME, World
+from pydoom.doors import World
 from pydoom.fixed import FRACUNIT
 from pydoom.mapdata import Map
-from pydoom.physics import Mover, Physics, point_on_line_side
+from pydoom.physics import Mover, Physics
 from pydoom.textures import TextureManager
 from pydoom.wad import WadFile
 

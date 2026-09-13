@@ -11,7 +11,7 @@ from pydoom.doors import World
 from pydoom.flow import next_map
 from pydoom.info import MF_FLAGS, MT_INDEX
 from pydoom.mapdata import Map
-from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map, spawn_mobj
+from pydoom.mobjs import ThingIndex, spawn_map, spawn_mobj
 from pydoom.mobjs import think_mobj
 from pydoom.physics import Physics
 from pydoom.player import PlayerState

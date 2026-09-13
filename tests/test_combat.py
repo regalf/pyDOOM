@@ -10,16 +10,13 @@ from pydoom.combat import (
     fire_pistol,
     kill_mobj,
     line_attack,
-    radius_attack,
     register_combat_actions,
     spawn_missile,
 )
 from pydoom.info import MF_FLAGS, MOBJ_TYPES, MT_INDEX
 from pydoom.mapdata import Map
 from pydoom.mobjs import (
-    ThingIndex,
     refresh_sector,
-    set_mobj_state,
     spawn_map,
     spawn_mobj,
     think_mobj,

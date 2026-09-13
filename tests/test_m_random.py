@@ -5,7 +5,6 @@ import re
 
 import pytest
 
-from pydoom import m_random
 from pydoom.m_random import _RNDTABLE, clear_random, m_random as menu_rand
 from pydoom.m_random import p_random
 
