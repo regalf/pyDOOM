@@ -111,3 +111,90 @@ def test_held_saw_attack_has_no_idle_gap():
         timeline = weapons.attack_timeline(WP_CHAINSAW, 0, atkheld)
         picks.append(timeline[min(len(timeline) - 1, max(0, elapsed))])
     assert "".join(picks) == "AAAABBBB" * 5  # full down-cycles, no skip
+
+
+@requires_wad
+def test_release_plays_refire_tail():
+    """Mirror of the viewer tic block: releasing a held burst plays
+    out the refire-state tail (vanilla S_PISTOL4/S_PLASMA2 dwell on
+    release) instead of snapping to idle: the last attacking frames
+    are the FULL tail, then idle holds."""
+    from pydoom import weapons
+    from pydoom.ai import AIContext
+    from pydoom.combat import register_combat_actions
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, spawn_mobj
+    from pydoom.physics import Physics
+    from pydoom.player import PlayerState, WP_PISTOL, WP_PLASMA
+    register_combat_actions()  # idempotent
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    ctx = AIContext(physics=phys)
+    ctx.mobjs = []
+    ctx.skyflatnum = None
+    player = spawn_mobj(game_map, phys, index, 900 << 16, -3500 << 16, 0,
+                        MT_INDEX["PLAYER"])
+    player.is_player = True
+    player.z = player.floorz
+
+    def replay(weapon, hold, release):
+        ps = PlayerState()
+        ps.weapons |= 1 << weapon
+        ps.readyweapon = ps.pendingweapon = weapon
+        ps.ammo[:] = [400, 400, 400, 400]
+        st = {"cooldown": 0, "refire": False, "atkheld": False,
+              "atk_until": 0, "atk_span": 1, "tics": 0, "pending": []}
+        picks, c_at_release = [], None
+        for n in range(hold + release):
+            want = n < hold
+            if st["cooldown"]:
+                st["cooldown"] -= 1
+            weapons.tick_pending(ps, player, phys, index, ctx.mobjs,
+                                 None, ctx, st["pending"])
+            cd_now = st["cooldown"]
+            edge = (not want) and bool(st["refire"])
+            chained_cycle = bool(st["atkheld"])
+            if not want:
+                st["atkheld"] = False
+                if c_at_release is None:
+                    c_at_release = cd_now  # cycle remainder at release
+            chained = weapons.chained_pull(cd_now, bool(st["atkheld"]),
+                                           weapon)
+            if want and (cd_now == 0 or chained):
+                cd, _flash = weapons.fire(
+                    ps, player, phys, index, ctx.mobjs, None, True,
+                    ctx, st["pending"], held=chained)
+                if cd >= 0:
+                    st["cooldown"] = cd
+                    st["atk_until"] = st["tics"] + cd + 1
+                    st["atk_span"] = max(1, cd)
+                    st["atkheld"] = chained
+            if edge and chained_cycle:
+                tail = weapons.REFIRE_AT.get(weapon, 0)
+                if tail:
+                    st["atk_until"] += tail
+                    st["atk_span"] += tail
+            st["refire"] = want
+            st["tics"] += 1
+            if st["tics"] < st["atk_until"]:
+                span = max(1, st["atk_span"])
+                elapsed = span - (st["atk_until"] - st["tics"])
+                timeline = weapons.attack_timeline(
+                    weapon, 0, bool(st["atkheld"]))
+                picks.append(timeline[min(len(timeline) - 1,
+                                          max(0, elapsed))])
+            else:
+                picks.append("-")
+        return picks[hold:], c_at_release
+
+    post, c0 = replay(WP_PISTOL, 40, 40)
+    body = "".join(post).rstrip("-")
+    assert body[-5:] == "BBBBB"  # PISTOL4 tail settles back up
+    assert len(body) == c0 + 5  # remainder + tail, phase-preserved
+    assert set(post[len(body):]) == {"-"}  # then idle holds
+    post, _c0 = replay(WP_PLASMA, 40, 40)
+    body = "".join(post).rstrip("-")
+    assert body[-20:] == "B" * 20  # PLASMA2 tail, like a tap

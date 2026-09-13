@@ -1324,6 +1324,8 @@ def main() -> int:
                         state.get("tics", 0)
                         + weapons.FLASH_TICS[ps.readyweapon])
             cd_now = state["cooldown"]
+            edge_release = (not want_fire) and bool(state.get("refire"))
+            chained_cycle = bool(state.get("atkheld"))
             if not want_fire:
                 state["atkheld"] = False  # NOTE: released: chain over
             elif ps.pendingweapon != ps.readyweapon:
@@ -1364,6 +1366,18 @@ def main() -> int:
                             + weapons.FLASH_TICS[ps.readyweapon])
                 # NOTE: cd < 0 means still switching or just auto-switched
                 # off a dry gun (vanilla never clicks empty).
+            if edge_release and chained_cycle and player_mo.health > 0 \
+                    and ps.pendingweapon == ps.readyweapon:
+                # NOTE: vanilla plays out the refire-state tail on
+                # release (S_PISTOL4/S_PLASMA2/..., the B frames a tap
+                # always shows) instead of snapping to idle: extend the
+                # cycle by REFIRE_AT tics, phase-preserved (span grows
+                # too, so the FULL tail reads to its last frame). Taps
+                # and 0-tail guns (chaingun/missile/saw) no-op here.
+                tail = weapons.REFIRE_AT.get(ps.readyweapon, 0)
+                if tail:
+                    state["atk_until"] = state.get("atk_until", 0) + tail
+                    state["atk_span"] = state.get("atk_span", 1) + tail
             state["refire"] = want_fire
             if (cmd.buttons & ticcmd.BT_CHANGE
                     and ps.playerstate == p_user.PST_LIVE):
