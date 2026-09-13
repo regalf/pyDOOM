@@ -7,4 +7,7 @@ pytest
 PyOPL
 # GL renderer backend (milestone H, optional: without it the viewer
 # auto-falls back to the software raster, like headless CI does).
-moderngl
+# Stable PyPI releases (not the 4.x alphas); _accelerate is an
+# optional C speed-up, the pure-Python core is all the code needs.
+PyOpenGL==3.1.10
+PyOpenGL_accelerate==3.1.10

@@ -29,7 +29,7 @@ SFX_MAX, MUS_MAX, SENS_MAX = 15, 15, 8
 
 # NOTE: renderer backend (milestone H): software is the reference raster,
 # opengl is the native-res GL port (auto-falls back to software when the
-# GL context cannot come up: missing moderngl, dummy video, headless).
+# GL context cannot come up: missing PyOpenGL, dummy video, headless).
 VIDEO_APIS = ("software", "opengl")
 
 

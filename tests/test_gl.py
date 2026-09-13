@@ -14,42 +14,42 @@ from pydoom.glrender.state import OPENGL, SOFTWARE, resolve_api
 
 
 def test_software_request_stays_software():
-    eff, _ = resolve_api("software", have_moderngl=True)
+    eff, _ = resolve_api("software", have_gl=True)
     assert eff == SOFTWARE
 
 
 def test_unknown_request_stays_software():
-    eff, _ = resolve_api("vulkan", have_moderngl=True)
+    eff, _ = resolve_api("vulkan", have_gl=True)
     assert eff == SOFTWARE
 
 
-def test_opengl_needs_moderngl():
+def test_opengl_needs_pyopengl():
     eff, why = resolve_api("opengl", sdl_video="x11",
-                           have_moderngl=False)
-    assert eff == SOFTWARE and "moderngl" in why
+                           have_gl=False)
+    assert eff == SOFTWARE and "PyOpenGL" in why
 
 
 def test_opengl_falls_back_on_dummy_video():
     eff, why = resolve_api("opengl", sdl_video="dummy",
-                           have_moderngl=True)
+                           have_gl=True)
     assert eff == SOFTWARE and "dummy" in why
 
 
 def test_opengl_falls_back_on_frames_smoke():
     eff, why = resolve_api("opengl", sdl_video="x11", frames_opt=30,
-                           have_moderngl=True)
+                           have_gl=True)
     assert eff == SOFTWARE and "frames" in why
 
 
 def test_opengl_falls_back_on_timedemo():
     eff, _ = resolve_api("opengl", sdl_video="x11", timedemo=True,
-                         have_moderngl=True)
+                         have_gl=True)
     assert eff == SOFTWARE
 
 
 def test_opengl_passes_when_available():
     eff, _ = resolve_api("opengl", sdl_video="x11",
-                         have_moderngl=True)
+                         have_gl=True)
     assert eff == OPENGL
 
 

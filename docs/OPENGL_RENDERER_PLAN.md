@@ -15,7 +15,7 @@ Python (per-vertex Python calls).
 - **Sim is off-limits.** Every checksum/demo/RNG test stays on the
   software path (`tools/doom_view.py` already only *presents* a
   framebuffer; GL replaces presentation, never the sim).
-- **Headless-safe.** Missing/moderngl-less install, dummy SDL video
+- **Headless-safe.** Missing/PyOpenGL-less install, dummy SDL video
   (CI), context-creation failure, and `--frames` smoke runs must never
   touch the GL path: auto-fallback to software, silently.
 - **Reference parity gate.** GL must be *compared*, tolerance-based,
@@ -54,15 +54,18 @@ then reproduces vanilla instead of approximating per-surface.
   key, CLI flag `--video-api`, launcher option (`pyDOOM.py`).
 - New package `pydoom/glrender/`: `state.py`, `textures.py`,
   `preprocess.py`, `draw.py`, `light.py`, `present.py`.
-- `glrender/state.py:try_init()` → context or `None`; conditions that
-  force software: no `moderngl`, `SDL_VIDEODRIVER=dummy`, `--frames`,
-  `--video-api=software`, context error. All failures log once, never
-  raise out of the viewer.
+- `glrender/state.py:try_init()` → GL version string or `None`;
+  conditions that force software: no `PyOpenGL`,
+  `SDL_VIDEODRIVER=dummy`, `--frames`, `--video-api=software`,
+  context error. All failures log once, never raise out of the viewer.
 - `tools/doom_view.py`: window creation becomes `software` (current
-  `pygame` path) vs `opengl` (`pygame.OPENGL|DOUBLEBUF` + `moderngl
-  .create_context()`); on GL init failure recreate the software window.
-- `requirements.txt` + `pyDOOM.spec`: add `moderngl`. CI stays on
-  software (Phase 5 adds an optional llvmpipe smoke job).
+  `pygame` path) vs `opengl` (`pygame.OPENGL|DOUBLEBUF`, the window
+  owns the context and PyOpenGL only verifies `GL_VERSION`); on GL
+  init failure recreate the software window.
+- `requirements.txt` + `pyDOOM.spec`: add `PyOpenGL==3.1.10` stable
+  plus `PyOpenGL_accelerate==3.1.10` (optional C speed-up, never
+  required). CI stays on software (Phase 5 adds an optional llvmpipe
+  smoke job).
 
 ### Phase 1 — static geometry preprocess (gl_preprocess.c analog)
 
@@ -151,7 +154,7 @@ Once per map load (not per frame; invalidated on level change):
   parallax edges, distance-light ramp near columns). Enforced by
   regression on, e.g., E1M1 start + a scripted camera walk.
 - Fallback unit tests: `--video-api=opengl` under dummy SDL and with
-  `moderngl` import blocked ⇒ software path, exit code/--frames
+  `OpenGL` import blocked ⇒ software path, exit code/--frames
   unaffected.
 - CI: the normal job stays software-only. Optional separate job uses
   `xvfb + llvmpipe` to exercise the GL path (`libgl1-mesa-dri`) with
