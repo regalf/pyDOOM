@@ -115,8 +115,22 @@ def apply_god(ps, player_mo) -> str:
 
 
 def _full_loadout(ps, with_keys: bool) -> None:
-    ps.weapons = (1 << 9) - 1  # fist thru ssg, plasma/BFG included
+    # NOTE: you can't own weapons that aren't in the game (m_cheat.c
+    # Boom rule): no SSG outside commercial, no plasma/BFG (nor their
+    # cells) under shareware, where the lumps don't exist. GAMEMODE is
+    # read late: the viewer rebinds it per IWAD after import.
+    from pydoom.player import AM_CELL, GAMEMODE, WP_BFG, WP_PLASMA, WP_SSG
+    shareware = GAMEMODE == "shareware"
+    commercial = GAMEMODE == "commercial"
+    for weapon in range(9):  # fist thru ssg
+        if weapon == WP_SSG and not commercial:
+            continue
+        if weapon in (WP_PLASMA, WP_BFG) and shareware:
+            continue
+        ps.weapons |= 1 << weapon
     for i in range(len(ps.ammo)):
+        if i == AM_CELL and shareware:
+            continue
         ps.ammo[i] = ps.maxammo[i]
     ps.armorpoints = IDKFA_ARMOR
     ps.armortype = IDKFA_CLASS

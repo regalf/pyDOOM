@@ -83,15 +83,40 @@ def test_god_toggles_and_heals():
 
 
 def test_kfa_loadout_with_keys_fa_without():
+    from pydoom.player import AM_CELL, WP_BFG, WP_PLASMA, WP_SSG
     yes, no = PlayerState(), PlayerState()
     apply_kfa(yes)
     apply_fa(no)
     for ps in (yes, no):
-        assert ps.weapons == (1 << 9) - 1
-        assert ps.ammo == ps.maxammo
+        # NOTE: shareware (test default): no SSG/plasma/BFG, no cells.
+        assert not ps.weapons & (1 << WP_SSG)
+        assert not ps.weapons & ((1 << WP_PLASMA) | (1 << WP_BFG))
+        assert ps.weapons & (1 << WP_CHAINSAW)
+        assert ps.ammo[AM_CELL] == 0
+        for i, (got, want) in enumerate(zip(ps.ammo, ps.maxammo)):
+            if i != AM_CELL:
+                assert got == want
         assert (ps.armorpoints, ps.armortype) == (200, 2)
     assert yes.keys & (KEY_BLUE | KEY_YELLOW | KEY_RED)
     assert no.keys == 0
+
+
+def test_kfa_registered_grants_plasma_bfg_but_no_ssg(monkeypatch):
+    """Registered Doom 1: plasma/BFG + cells, still no Doom-2 SSG."""
+    from pydoom.player import AM_CELL, WP_BFG, WP_PLASMA, WP_SSG
+    monkeypatch.setattr("pydoom.player.GAMEMODE", "registered")
+    ps = PlayerState()
+    apply_kfa(ps)
+    assert ps.weapons & ((1 << WP_PLASMA) | (1 << WP_BFG))
+    assert not ps.weapons & (1 << WP_SSG)
+    assert ps.ammo[AM_CELL] == ps.maxammo[AM_CELL] == 300
+
+
+def test_windup_covers_every_cooldown_weapon():
+    """Every fireable slot has a windup: stray SSG ownership (old
+    saves) can never KeyError the trigger pull."""
+    from pydoom import weapons
+    assert set(weapons.WINDUP) >= set(weapons.COOLDOWN)
 
 
 def test_choppers_raises_chainsaw():

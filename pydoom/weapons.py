@@ -300,9 +300,12 @@ def _bfg_spray(ball, shooter, physics, index, mobjs, skyflat, ctx) -> None:
 
 # NOTE: P_FireWeapon->fire-action windup in tics (vanilla psprite
 # states): the shot lands W tics after the trigger pull, while noise
-# alerts at the pull. Chaingun/plasma/saw fire on entry (+0).
+# alerts at the pull. Chaingun/plasma/saw fire on entry (+0). SSG is
+# Doom-2-only (S_DSGUN1 runs 3): carried so stray ownership (old saves)
+# can't KeyError the trigger, but it never fires in Doom 1 maps.
 WINDUP = {WP_FIST: 4, WP_PISTOL: 4, WP_SHOTGUN: 3, WP_CHAINGUN: 0,
-          WP_MISSILE: 8, WP_PLASMA: 0, WP_BFG: 30, WP_CHAINSAW: 0}
+          WP_MISSILE: 8, WP_PLASMA: 0, WP_BFG: 30, WP_CHAINSAW: 0,
+          WP_SSG: 3}
 # NOTE: muzzle-flash delay (A_GunFlash on S_MISSILE1 fires at the pull,
 # BFG flash on S_BFG2 at +20); every other flash rides its shot.
 FLASH_DELAY = {WP_MISSILE: 0, WP_BFG: 20}  # default: WINDUP[weapon]
