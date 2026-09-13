@@ -10,6 +10,9 @@ than it gives. This file lists every known one, by area. Rules:
   103) and every sector special (0,1,2,3,7,8,9,11,12,13,16)
   occurring in the episode has a handler (E2/E3 ride the same
   families; their boss exits are tested on the real maps).
+  Walk/switch roles follow `p_spec.c`/`p_switch.c` exactly: 22 is
+  W1-only (E1M5/E1M7 bridge, USE does nothing), plus W1
+  30/37/56/59/104, WR 89/95 and SR-42 close out of the E2/E3 set.
 - Each item below is also marked with a `NOTE:` comment at the exact
   code location.
 

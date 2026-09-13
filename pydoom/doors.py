@@ -144,6 +144,7 @@ _MANUAL_DOORS = frozenset({1, 26, 27, 28, 31, 32, 33, 34, 117, 118})
 # actions are supported; anything else reports "not yet".
 _SWITCH_DOORS = {
     29: (DoorType.NORMAL, False), 50: (DoorType.CLOSE, False),
+    42: (DoorType.CLOSE, True),
     61: (DoorType.OPEN, True), 63: (DoorType.NORMAL, True),
     99: (DoorType.OPEN, False), 133: (DoorType.BLAZEOPEN, False),
     103: (DoorType.OPEN, False), 111: (DoorType.BLAZERAISE, False),
@@ -165,11 +166,12 @@ _SWITCH_FLOORS = {
     132: ("raiseFloorTurbo", True),
 }
 # S1 plat switches and SR plat buttons: (plat type, amount, use_again).
+# NOTE: 22 is W1 (walk-once bridge), not a switch: vanilla USE on it
+# does nothing (p_switch.c has no case 22), the walk in does the lift.
 _SWITCH_PLATS = {
     14: ("raiseAndChange", 32, False), 15: ("raiseAndChange", 24, False),
     20: ("raiseToNearestAndChange", 0, False),
-    21: ("downWaitUpStay", 0, False), 22: ("raiseToNearestAndChange", 0,
-                                            False),
+    21: ("downWaitUpStay", 0, False),
     122: ("blazeDWUS", 0, False),
     62: ("downWaitUpStay", 0, True), 66: ("raiseAndChange", 24, True),
     67: ("raiseAndChange", 32, True),
@@ -195,6 +197,10 @@ _WALK_ONCE = {
     38: ("floor", "lowerFloorToLowest"), 36: ("floor", "turboLower"),
     58: ("floor", "raiseFloor24"), 119: ("floor", "raiseFloorToNearest"),
     130: ("floor", "raiseFloorTurbo"),
+    22: ("plat", ("raiseToNearestAndChange", 0)),
+    30: ("floor", "raiseToTexture"), 37: ("floor", "lowerAndChange"),
+    56: ("floor", "raiseFloorCrush"), 59: ("floor", "raiseFloor24AndChange"),
+    104: ("lightsOff", None),
     6: ("ceiling", "fastCrushAndRaise"),
     25: ("ceiling", "crushAndRaise"), 40: ("ceiling", "raiseToHighest"),
     44: ("ceiling", "lowerAndCrush"), 57: ("ceilingStop", None),
@@ -209,6 +215,8 @@ _WALK_RETRIGGER = {
     107: ("door", DoorType.BLAZECLOSE),
     88: ("plat", ("downWaitUpStay", 0)),
     120: ("plat", ("blazeDWUS", 0)),
+    89: ("platStop", None),
+    95: ("plat", ("raiseToNearestAndChange", 0)),
     87: ("plat", ("perpetualRaise", 0)),
     82: ("floor", "lowerFloorToLowest"), 83: ("floor", "lowerFloor"),
     91: ("floor", "raiseFloor"), 92: ("floor", "raiseFloor24"),
@@ -1027,6 +1035,12 @@ class World:
         for sec in self.find_sectors_from_tag(line.tag):
             sec.lightlevel = bright
 
+    def turn_tag_lights_off(self, line) -> None:
+        """EV_TurnTagLightsOff (W1-104): tagged sectors drop to the
+        dimmest of themselves and their neighbors (p_lights.c)."""
+        for sec in self.find_sectors_from_tag(line.tag):
+            sec.lightlevel = self.find_min_light(sec, sec.lightlevel)
+
     def do_ceiling(self, line, ctype: str) -> bool:
         """EV_DoCeiling (p_ceilng.c): crushers bounce, lowerers park,
         raisers exit at top. lowerAndCrush grinds without hurting
@@ -1396,8 +1410,12 @@ class World:
         elif kind == "plat":
             ptype, amount = arg
             self.do_plat(line, ptype, amount)
+        elif kind == "platStop":
+            self.stop_plat(line)
         elif kind == "light":
             self.light_turn_on(line, arg)
+        elif kind == "lightsOff":
+            self.turn_tag_lights_off(line)
         elif kind == "exit":
             self.exit_kind = "normal"
             return None

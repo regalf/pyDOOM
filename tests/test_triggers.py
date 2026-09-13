@@ -18,6 +18,12 @@ requires_wad = pytest.mark.skipif(
     not os.path.exists(WAD_PATH), reason="DOOM1.WAD not found"
 )
 
+REG_WAD_PATH = os.path.join(os.path.dirname(__file__), "..", "doom.wad")
+
+requires_reg = pytest.mark.skipif(
+    not os.path.exists(REG_WAD_PATH), reason="doom.wad not found"
+)
+
 def movers(world):
     """Door/floor/plat movers, excluding ambient light thinkers."""
     from pydoom.doors import FloorMover, Plat, VerticalDoor
@@ -164,15 +170,30 @@ def test_stop_parked_plat(setup):
 
 
 @requires_wad
-def test_s1_plat_22_raises(setup):
+def test_w1_bridge_22_raises_walkover(setup):
+    """E1M5 bridge: W1-22 lifts the tag-6 floor to the next highest."""
     wad, texman = setup
     game_map = Map.from_wad(wad, "E1M5")
     texman.resolve_map(game_map)
     world = World(game_map, texman)
     line = next(li for li in game_map.lines if li.special == 22)
+    # NOTE: vanilla USE on 22 does nothing (p_switch.c has no case 22).
     assert world.use_special_line(line, 0, True) is None
-    assert line.special == 0  # one-shot switch spent
-    assert movers(world)  # a lift is moving
+    assert line.special == 22
+    assert not movers(world)
+    # ...but walking over it raises the bridge (p_spec.c W1 case 22).
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0  # W1 clears
+    assert len(movers(world)) == 1
+    sec = world.find_sectors_from_tag(6)[0]
+    want = world.find_next_highest_floor(sec, -24 * FRACUNIT)
+    for _ in range(600):
+        world.tick()
+        if not movers(world):
+            break
+    assert not movers(world)  # raise-and-stay finished
+    assert sec.floorheight == want  # bridge up at the far ledge
+    assert sec.specialdata is None
 
 
 @requires_wad
@@ -273,3 +294,124 @@ def test_fall_makes_corpses_walkable(setup):
                        MT_INDEX["POSSESSED"])
     ok, _ = phys.try_move(other, body.x, body.y)
     assert ok  # the living walk straight over the dead
+
+
+def _reg_world(marker):
+    """Fresh registered-wad world (E2/E3 specials live in doom.wad)."""
+    wad = WadFile(REG_WAD_PATH)
+    texman = TextureManager(wad)
+    game_map = Map.from_wad(wad, marker)
+    texman.resolve_map(game_map)
+    return World(game_map, texman), game_map
+
+
+def test_walk_tables_cover_e1_e3_gaps():
+    """Dispatch tables pin the vanilla W1/WR/SR numbers by role."""
+    from pydoom.doors import _SWITCH_DOORS, _SWITCH_PLATS, _WALK_ONCE
+    from pydoom.doors import _WALK_RETRIGGER
+    from pydoom.doors import DoorType
+    assert _WALK_ONCE[22] == ("plat", ("raiseToNearestAndChange", 0))
+    assert _WALK_ONCE[30] == ("floor", "raiseToTexture")
+    assert _WALK_ONCE[37] == ("floor", "lowerAndChange")
+    assert _WALK_ONCE[56] == ("floor", "raiseFloorCrush")
+    assert _WALK_ONCE[59] == ("floor", "raiseFloor24AndChange")
+    assert _WALK_ONCE[104] == ("lightsOff", None)
+    assert _WALK_RETRIGGER[89] == ("platStop", None)
+    assert _WALK_RETRIGGER[95] == ("plat", ("raiseToNearestAndChange", 0))
+    assert _SWITCH_DOORS[42] == (DoorType.CLOSE, True)
+    assert 22 not in _SWITCH_PLATS  # W1 only: USE does nothing
+
+
+@requires_reg
+def test_w1_raise_to_texture_e2m2():
+    world, game_map = _reg_world("E2M2")
+    line = next(li for li in game_map.lines if li.special == 30)
+    secs = world.find_sectors_from_tag(line.tag)
+    floors = [s.floorheight for s in secs]
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0  # W1 clears
+    assert len(movers(world)) == len(secs)
+    for _ in range(1200):
+        world.tick()
+        if not movers(world):
+            break
+    assert not movers(world)
+    for sec, before in zip(secs, floors):
+        assert sec.floorheight > before  # shortest-texture lift ran
+
+
+@requires_reg
+def test_w1_raise24_and_change_e2m2():
+    world, game_map = _reg_world("E2M2")
+    line = next(li for li in game_map.lines
+                if li.special == 59 and li.tag == 19)
+    sec = world.find_sectors_from_tag(19)[0]
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0
+    for _ in range(600):
+        world.tick()
+        if not movers(world):
+            break
+    assert sec.floorheight == 40 * FRACUNIT + 24 * FRACUNIT
+
+
+@requires_reg
+def test_w1_lower_and_change_e2m1():
+    world, game_map = _reg_world("E2M1")
+    line = next(li for li in game_map.lines
+                if li.special == 37 and li.tag == 1)
+    sec = world.find_sectors_from_tag(1)[0]
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0
+    assert movers(world)
+    for _ in range(1200):
+        world.tick()
+        if not movers(world):
+            break
+    assert sec.floorheight < -64 * FRACUNIT  # dropped to the lowest
+
+
+@requires_reg
+def test_w1_raise_crush_e2m4():
+    from pydoom.doors import FloorMover
+    world, game_map = _reg_world("E2M4")
+    line = next(li for li in game_map.lines if li.special == 56)
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0
+    crushing = [t for t in movers(world) if isinstance(t, FloorMover)]
+    assert crushing and all(t.crush for t in crushing)
+
+
+@requires_reg
+def test_wr_stop_parks_plat_e2m2():
+    world, game_map = _reg_world("E2M2")
+    line = next(li for li in game_map.lines if li.special == 89)
+    world.do_plat(line, "downWaitUpStay", 0)  # lift running on that tag
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 89  # WR retriggers
+    assert world.activeplats
+    assert all(p.status == "in_stasis" for p in world.activeplats
+               if p.tag == line.tag)
+
+
+@requires_reg
+def test_sr_close_door_e3m1():
+    from pydoom.doors import VerticalDoor
+    world, game_map = _reg_world("E3M1")
+    line = next(li for li in game_map.lines if li.special == 42)
+    assert world.use_special_line(line, 0, True) is None
+    assert any(isinstance(t, VerticalDoor) for t in world.thinkers)
+
+
+@requires_reg
+def test_w1_lights_off_e2m5():
+    world, game_map = _reg_world("E2M5")
+    line = next(li for li in game_map.lines if li.special == 104)
+    secs = world.find_sectors_from_tag(line.tag)
+    assert secs and all(s.lightlevel == 255 for s in secs)
+    assert world.cross_special_line(line, True) is None
+    assert line.special == 0
+    for sec in secs:
+        assert sec.lightlevel <= 255
+        assert all(sec.lightlevel <= n.lightlevel
+                   for n in world._neighbors(sec))  # dimmest wins
