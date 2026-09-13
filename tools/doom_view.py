@@ -1343,7 +1343,15 @@ def main() -> int:
                 if cd >= 0:
                     state["cooldown"] = cd
                     body, flash = weapons.PSPRITES[ps.readyweapon]
-                    state["atk_until"] = state.get("tics", 0) + cd
+                    # NOTE: +1 covers the refire tic itself: the chained
+                    # pull lands at entry T+cd (decrement runs first),
+                    # while renders already read tics==T+cd, so plain
+                    # T+cd leaves one idle tic per cycle (vanilla chains
+                    # inside the 0-tic refire state, no gap). Rendered
+                    # attack tics then equal cd, and the timeline runs
+                    # from index 0 instead of skipping its first frame
+                    # (span stays cd: elapsed = tics-T-1 runs 0..cd-1).
+                    state["atk_until"] = state.get("tics", 0) + cd + 1
                     state["atk_span"] = max(1, cd)
                     state["atkheld"] = held_now
                     if ps.readyweapon == WP_CHAINGUN:
