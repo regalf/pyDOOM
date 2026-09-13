@@ -353,6 +353,22 @@ def think_mobj(mo: Mobj, physics, ctx=None) -> list:
     return crossed
 
 
+def tick_mobj_state(mo, ctx=None) -> None:
+    """Run one thinker state clock without moving (P_MobjThinker lite).
+
+    The live player body moves in the viewer player block, so only
+    its states advance here: pain frames still reach S_PLAY_PAIN2's
+    A_Pain (the "oof" rides the state machine, like vanilla), and
+    -1-tic idles are left alone. No nightmare branch: that belongs
+    to dead thinkers (think_mobj).
+    """
+    if mo.tics != -1:
+        mo.tics -= 1
+        if not mo.tics:
+            _sprite, _frame, _tics, nextstate, _action = STATES[mo.state]
+            set_mobj_state(mo, nextstate, ctx)
+
+
 def sweep_dead(mobjs, index, mi: int) -> bool:
     """Drop one finished thinker (the P_RunThinkers removal walk).
 

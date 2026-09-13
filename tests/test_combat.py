@@ -162,6 +162,39 @@ def test_exploded_barrel_leaves_no_hitbox(setup):
 
 
 @requires_wad
+def test_player_pain_plays_oof(setup, monkeypatch):
+    """Hurting the live player runs S_PLAY_PAIN2's A_Pain (vanilla oof).
+
+    The live body never runs think_mobj (camera-driven); the viewer
+    only ticks its states via tick_mobj_state, which must still reach
+    the pain action. Sector slime rides this same damage path.
+    """
+    from pydoom import audio as audio_mod
+    from pydoom.info import STATE_INDEX
+    from pydoom.mobjs import tick_mobj_state
+    game_map, phys, index, ctx = setup
+    player = spawn_mobj(game_map, phys, index, 900 << 16, -3500 << 16, 0,
+                        MT_INDEX["PLAYER"])
+    player.is_player = True
+    player.z = player.floorz
+    sounds = []
+    monkeypatch.setattr(audio_mod, "play",
+                        lambda n, *a: sounds.append(n) or False)
+    for _ in range(3):  # painchance 255: flakes only on a 255 roll
+        damage_mobj(player, None, None, 10, ctx)
+        if player.state == STATE_INDEX["S_PLAY_PAIN"]:
+            break
+    assert player.state == STATE_INDEX["S_PLAY_PAIN"]
+    for _ in range(4):  # PAIN frames run out, PAIN2 barks on entry...
+        tick_mobj_state(player, ctx)
+    assert player.state == STATE_INDEX["S_PLAY_PAIN2"]
+    assert "plpain" in sounds
+    for _ in range(4):  # ...then the body returns to play
+        tick_mobj_state(player, ctx)
+    assert player.state == STATE_INDEX["S_PLAY"]
+
+
+@requires_wad
 def test_player_death_clears_solid(setup):
     game_map, phys, index, ctx = setup
     _, player, ctx, _ = make_duel(setup)

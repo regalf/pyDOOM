@@ -51,7 +51,7 @@ from pydoom.info import MF_FLAGS as _MF_FLAGS
 from pydoom.mapdata import Map
 from pydoom.mobjs import ThingIndex, refresh_sector, spawn_map
 from pydoom.mobjs import level_totals, set_mobj_state, think_mobj
-from pydoom.mobjs import sweep_dead
+from pydoom.mobjs import sweep_dead, tick_mobj_state
 from pydoom.mobjs import xy_movement
 from pydoom.palette import NUM_PALETTES, load_playpal, load_playpal_index
 from pydoom.physics import MF_NOCLIP, Physics
@@ -1575,8 +1575,11 @@ def main() -> int:
                 mo = mobjs[_mi]
                 if mo is player_mo and ps.playerstate == p_user.PST_LIVE:
                     # NOTE: the live body moves in the player block
-                    # above (camera-driven); it never thinks here. The
-                    # corpse does (death states, scream, slide, crush).
+                    # above (camera-driven); it never thinks here. Only
+                    # its state clock runs (pain frames still reach
+                    # S_PLAY_PAIN2's A_Pain, like vanilla). The corpse
+                    # does (death states, scream, slide, crush).
+                    tick_mobj_state(mo, ctx)
                     _mi += 1
                     continue
                 crossed_mo = think_mobj(mo, phys, ctx)
