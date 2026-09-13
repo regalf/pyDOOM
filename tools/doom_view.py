@@ -1760,8 +1760,9 @@ def main() -> int:
                 hud_img = font.render(hud, True, (255, 255, 255))
                 hud_img.set_alpha(96)  # NOTE: ~38% ghost readout
                 screen.blit(hud_img, (8, hy))
-            if show_hud and (show_ai or extra_hud):
-                # Nearest living monster: live AI state for bug reports.
+            if show_hud and show_ai:
+                # NOTE: nearest-monster AI readout, X only (--debug):
+                # --extra-hud keeps just the white coords line above.
                 best, bestd = None, None
                 for mo in mobjs:
                     if (mo is player_mo or mo.dead or mo.health <= 0
