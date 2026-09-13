@@ -158,3 +158,33 @@ on dsda's `gl_main`/`gl_preprocess`.
   scenes (tolerance-based; sim/checksum tests stay on software).
 - [ ] Setting + auto-fallback to software (missing GL/dummy
   video/headless CI never touch the GL path).
+
+## I. Doom 2 support (not started — we are not working on this)
+
+Parking lot for a decent commercial-support pass: Doom 1 behavior
+stays pinned bit for bit while the Doom-2-only deltas land behind
+a mission profile. Single canonical tables everywhere; only the
+slices that actually differ switch per game (no duplicated sets).
+
+- [ ] Mission profile in `pydoom/mission.py`: `detect()` learns the
+  commercial IWAD (MAPxx lump count), the launcher lists it, and
+  the two inline `GAMEMODE` branches (ammo-fallback order in
+  `check_ammo`, cheat grants in `_full_loadout`) move into the
+  profile with parametrized tests. Doom 1 runs byte-identical.
+- [ ] Real SSG behind the profile: 20-pellet `A_FireShotgun2`
+  spread, `S_DSGUN` state durations, `DSDBOPN`/`DSDBCLS` foley,
+  chaingun-style key `3` preference already in place; shareware/
+  registered keep the never-fires placeholder path.
+- [ ] MAP01–MAP30 flow (secret MAP31/32 routing, exit/secret-exit
+  lines, par times, skies `SKY1`–`SKY3`, `WIMAP` single-campaign
+  intermission, MAP30 finale) through `flow.py`/`interm.py`.
+- [ ] Doom 2 bestiary from `info.c`: chaingunner, hell knight,
+  mancubus, revenant (homing tracers), arachnotron, pain elemental
+  (21-lost-soul cap), arch-vile (attack windup + resurrect), wolf-SS
+  where mapped — states, sprites, sounds, `A_*` actions, boss
+  hooks (MAP07 tag-666/667 drops, MAP30 Icon of Sin).
+- [ ] Line-special audit across MAP01–MAP32 vs the dispatcher,
+  filling Doom-2-only gaps the same way 22/30/37/42/56/59/89/95/104
+  landed for E1–E3 (table entries + map tests on the real maps).
+- [ ] Commercial demo compat (version-109 headers without episode,
+  multi-map streams, attract loop) on top of the E/F machinery.
