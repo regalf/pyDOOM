@@ -164,7 +164,7 @@ def test_backpack_doubles_and_feeds(setup):
     player, ps, ctx, _ = make_player(setup)
     picked, msg = touch_special_thing(make_item(setup, 8), player, ps, ctx)
     assert picked and ps.backpack
-    assert ps.maxammo == [400, 100, 100, 600]
+    assert ps.maxammo == [400, 100, 600, 100]  # cells 600, rockets 100
     assert ps.ammo[AM_CLIP] == 60  # 50 + 10 welcome clips
     assert msg == "PICKED UP A BACKPACK FULL OF AMMO!"
 

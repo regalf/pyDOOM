@@ -15,7 +15,8 @@ from pydoom.ticcmd import Ticcmd
 # Ammo types (ammotype_t order).
 AM_CLIP, AM_SHELL, AM_CELL, AM_MISL = 0, 1, 2, 3
 AMMO_NAMES = ("clip", "shell", "cell", "rocket")
-MAX_AMMO = [200, 50, 50, 300]
+# NOTE: maxammo[] order (p_inter.c): cells carry 300, rockets only 50.
+MAX_AMMO = [200, 50, 300, 50]
 # Clip size per ammo type (clipammo[]): box/ammo pickups scale by this.
 CLIP_AMMO = [10, 4, 20, 1]
 

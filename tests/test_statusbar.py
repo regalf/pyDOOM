@@ -5,6 +5,7 @@ from pydoom.player import (
     AM_CLIP,
     AM_MISL,
     AM_SHELL,
+    MAX_AMMO,
     WEAPON_AMMO,
     WP_BFG,
     WP_MISSILE,
@@ -26,3 +27,12 @@ def test_big_readout_follows_weapon_ammo():
     assert WEAPON_AMMO[WP_MISSILE] == AM_MISL
     assert WEAPON_AMMO[WP_PLASMA] == AM_CELL
     assert WEAPON_AMMO[WP_BFG] == AM_CELL
+
+
+def test_max_ammo_cells_300_rockets_50():
+    """maxammo[] order (p_inter.c): idkfa/give grants 300 cells and
+    50 rockets, so plasma lasts ~25 s held, not ~4 s."""
+    assert MAX_AMMO[AM_CLIP] == 200
+    assert MAX_AMMO[AM_SHELL] == 50
+    assert MAX_AMMO[AM_CELL] == 300
+    assert MAX_AMMO[AM_MISL] == 50
