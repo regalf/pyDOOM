@@ -8,8 +8,15 @@ Run:   ./dist/pyDOOM/pyDOOM
 Ships DOOM1.WAD (freely distributable shareware, under _internal/);
 drop a full doom.wad next to it to unlock E1-E3 (never bundle it:
 commercial IWAD, copyright). numba/PyOPL are optional: without
-them the game runs the pure-python raster in silence.
+them the game runs the pure-python raster in silence. PyOpenGL is
+optional the same way (software fallback); PyOpenGL_accelerate must
+ride along when present or GL calls silently drop to pure Python:
+its .so modules load late-bound (OpenGL_accelerate/__init__ imports
+nothing), so plain hiddenimports would miss them — hence
+collect_submodules for both packages below.
 """
+
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
@@ -19,7 +26,9 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('DOOM1.WAD', '.'), ('VERSION', '.')],
-    hiddenimports=['tools.doom_view', 'OpenGL', 'OpenGL_accelerate'],
+    hiddenimports=(['tools.doom_view']
+                   + collect_submodules('OpenGL')
+                   + collect_submodules('OpenGL_accelerate')),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
