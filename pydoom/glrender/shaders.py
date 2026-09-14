@@ -103,9 +103,14 @@ void main() {
         vec2 f = vWorld - uViewPos;
         float dist = max(length(f), 1e-6);
         vec2 fdir = f / dist;
+        // NOTE: front-unit normals point back at the viewer, so den
+        // is NEGATIVE on visible faces (f runs into the wall while
+        // the normal runs out of it); den >= 0 means a backface or
+        // a silhouette edge, which keeps the brightest entry (the
+        // software never draws those: the BSP culls them).
         float den = dot(f, vNormal) * dot(fdir, uViewDir);
         int li = 47;
-        if (den > 0.0)
+        if (den < 0.0)
             li = clamp(int(160.0 * dot(fdir, vNormal) / den * 16.0),
                        0, 47);
         // NOTE: base lightnum from the sector-light texture (dynamic

@@ -123,7 +123,15 @@ Once per map load (not per frame; invalidated on level change):
 - **Depth / draw order**: depth buffer for plane+wall boundary (with a
   small epsilon for wall/floor abutment, the classic prBoom GL
   problem), painter-order for two-sided masked mids and sprites from
-  `project_mobjs`.
+  `project_mobjs`. Wall quads wind CCW from the front, so the wall
+  pass enables backface culling (partner-seg backs the BSP never
+  draws would otherwise z-fight their coplanar fronts with a wrong
+  light row); planes/sprites/sky stay double-sided. The wall
+  distance guard keys on `den < 0` (front-unit normals point back
+  at the viewer, so visible faces have negative den); the inverted
+  guard rendered every far frontal wall full-bright (near walls
+  survived by the 47 clamp, which is why start-room parity passed).
+  Regression: `test_parity_far_walls` (nukage-pool camera).
 
 ### Phase 3 — dynamic objects (per frame)
 

@@ -194,6 +194,10 @@ class FrameRenderer:
         GL.glDisable(GL.GL_DITHER)  # NOTE: LSB-exact readback parity
         GL.glEnable(GL.GL_DEPTH_TEST)
         GL.glDepthFunc(GL.GL_LESS)
+        GL.glFrontFace(GL.GL_CCW)  # NOTE: wall fronts wind CCW (the
+        GL.glCullFace(GL.GL_BACK)  # wall pass enables CULL_FACE)
+        GL.glDisable(GL.GL_CULL_FACE)  # NOTE: planes/sprites/sky/overlay
+        # render double-sided; only the wall pass culls
         GL.glDisable(GL.GL_BLEND)
         GL.glViewport(0, 0, w, h)
 
@@ -348,6 +352,13 @@ class FrameRenderer:
         GL.glActiveTexture(GL.GL_TEXTURE6)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
         GL.glBindVertexArray(self._wall_vao)
+        # NOTE: wall quads wind CCW seen from their front side
+        # ((v1,bottom) (v2,bottom) (v2,top) with front RIGHT of
+        # v1->v2), so backface culling drops exactly what the BSP
+        # never draws: partner-seg backs that would otherwise
+        # z-fight their coplanar fronts with a wrong (bright) light
+        # row. Planes/sprites/sky keep double-sided rendering below.
+        GL.glEnable(GL.GL_CULL_FACE)
         for texnum, start, count in res.wall_batches:
             _w, h, wrap = res.wall_info[texnum]
             GL.glActiveTexture(GL.GL_TEXTURE0)
@@ -375,6 +386,7 @@ class FrameRenderer:
             GL.glDrawElements(GL.GL_TRIANGLES, count,
                               GL.GL_UNSIGNED_INT,
                               ctypes.c_void_p(start * 4))
+        GL.glDisable(GL.GL_CULL_FACE)
         GL.glUseProgram(self.plane_prog)
         self._pal(self.plane_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.plane_prog, "uViewProj"),

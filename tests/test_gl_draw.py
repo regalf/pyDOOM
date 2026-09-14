@@ -88,13 +88,21 @@ def e1m1():
             "cmap": cmap, "pal": pal, "start": start}
 
 
-def _software_view(e1m1, angle, fullbright=False, extra_light=0):
-    """Software frame + sky/masked exclusion mask (Phase 3 pixels)."""
+def _software_view(e1m1, angle, fullbright=False, extra_light=0,
+                   x=None, y=None):
+    """Software frame + sky/masked exclusion mask (Phase 3 pixels).
+
+    x/y default to the player start (map units); far-wall regression
+    views pass an explicit camera."""
     import numpy as np
 
     from pydoom.renderer import Renderer
     wad, game_map, start = (e1m1["wad"], e1m1["game_map"],
                             e1m1["start"])
+    if x is None:
+        x = start.x << 16
+    if y is None:
+        y = start.y << 16
     from pydoom.textures import TextureManager
     renderer = Renderer(wad, TextureManager(wad))
     excl = np.zeros((200, 320), bool)
@@ -115,8 +123,7 @@ def _software_view(e1m1, angle, fullbright=False, extra_light=0):
     Renderer._draw_sky_plane = rec_sky
     Renderer._draw_masked_posts = rec_mp
     try:
-        fb = renderer.render_view(game_map, start.x << 16,
-                                  start.y << 16, angle, mobjs=[],
+        fb = renderer.render_view(game_map, x, y, angle, mobjs=[],
                                   extra_light=extra_light,
                                   fullbright=fullbright)
         viewz = renderer.viewz
@@ -127,7 +134,7 @@ def _software_view(e1m1, angle, fullbright=False, extra_light=0):
 
 
 def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
-             idx_view=False, monkeypatch=None):
+             idx_view=False, monkeypatch=None, x=None, y=None):
     """GL RGB frame (or texel-index frame with patched shaders)."""
     import numpy as np
     if idx_view:
@@ -152,7 +159,11 @@ def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
         fr = FrameRenderer(res, 320, 200)
         try:
             start = e1m1["start"]
-            fr.render(start.x << 16, start.y << 16, viewz, angle,
+            if x is None:
+                x = start.x << 16
+            if y is None:
+                y = start.y << 16
+            fr.render(x, y, viewz, angle,
                       extra_light=extra_light, fullbright=fullbright)
             out = fr.readback()
         finally:
@@ -261,6 +272,32 @@ def test_parity_lighting(e1m1):
             exact, mean = _metrics(rgb, lut[fb], excl)
             assert exact > 0.45, (angle, exact)
             assert mean < 16.0, (angle, mean)
+    finally:
+        import pygame
+        pygame.quit()
+
+
+@requires_wad
+def test_parity_far_walls(e1m1):
+    """Far-wall light rows (nukage-pool camera): the wall distance
+    guard must face the right way (den < 0 on visible faces) or far
+    walls render full-bright (li 47); backface culling must drop the
+    coplanar partner segs the BSP never draws."""
+    import numpy as np
+
+    from pydoom.palette import load_playpal
+    if _open_window() is None:
+        return
+    try:
+        lut = np.array(load_playpal(
+            e1m1["wad"].read_lump("PLAYPAL")), dtype=np.uint8)
+        angle = (90 * 0x100000000 // 360) & 0xFFFFFFFF
+        x, y = 1056 << 16, -3200 << 16
+        fb, excl, viewz = _software_view(e1m1, angle, x=x, y=y)
+        rgb = _gl_view(e1m1, angle, viewz, x=x, y=y)
+        exact, mean = _metrics(rgb, lut[fb], excl)
+        assert exact > 0.45, (exact, mean)
+        assert mean < 16.0, (exact, mean)
     finally:
         import pygame
         pygame.quit()
