@@ -319,6 +319,32 @@ def test_closed_door_masked_skipped():
 
 
 @requires_wad
+def test_single_sided_mids_flagged_double_sided():
+    """Single-sided mids (no back sector) render double-sided
+    (vanilla draws their backs mirrored); every other tier has a
+    partner seg covering the back and stays backface-culled."""
+    _, texman, _, _ = load_e1m1()
+    game_map, _ = mini_world(texman, front=(0, 128, 160),
+                             side_kw={"midtexture": "MID"})
+    quads = build_walls(game_map, texman, 999).quads
+    assert len(quads) == 1 and quads[0].tier == "mid"
+    assert quads[0].twosided is False
+    game_map, _ = mini_world(texman, front=(0, 128, 160),
+                             back=(0, 128, 160),
+                             side_kw={"midtexture": "MID"})
+    quads = build_walls(game_map, texman, 999).quads
+    # NOTE: full opening: masked mid only, still two-sided
+    assert [(q.tier, q.twosided) for q in quads] == [("masked",
+                                                     True)]
+    game_map, _ = mini_world(texman, front=(0, 128, 160),
+                             back=(0, 0, 160),
+                             side_kw={"toptexture": "MID",
+                                      "midtexture": "MID"})
+    quads = build_walls(game_map, texman, 999).quads
+    assert [(q.tier, q.twosided) for q in quads] == [("top", True)]
+
+
+@requires_wad
 def test_light_orientation_tweak():
     """Orient tweak stays static (-1/0/+1); the sector base rides the
     sector-light texture (row = base + tweak, clamped, as before:

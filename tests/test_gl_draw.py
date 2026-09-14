@@ -140,11 +140,22 @@ def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
     if idx_view:
         from pydoom.glrender import shaders
         old_wall = shaders.WALL_FRAG
+        old_double = shaders.WALL_FRAG_DOUBLE
         old_plane = shaders.PLANE_FRAG
         shaders.WALL_FRAG = old_wall.replace(
             "oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
             " 0).rgb, 1.0);",
             "oColor = vec4(vec3(float(lit) / 255.0), 1.0);")
+        # NOTE: single-sided mids ride WALL_FRAG_DOUBLE: patch it too
+        # (re-derive from the patched WALL_FRAG so the two programs
+        # cannot drift apart under the patch).
+        shaders.WALL_FRAG_DOUBLE = shaders.WALL_FRAG.replace(
+            "        int li = 47;\n"
+            "        if (den < 0.0)",
+            "        int li = 47;\n"
+            "        // NOTE: test re-derivation (mirrors shaders.py).\n"
+            "        if (abs(den) > 1e-9)",
+        )
         shaders.PLANE_FRAG = old_plane.replace(
             "oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
             " 0).rgb, 1.0);",
@@ -172,6 +183,7 @@ def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
     finally:
         if idx_view:
             shaders.WALL_FRAG = old_wall
+            shaders.WALL_FRAG_DOUBLE = old_double
             shaders.PLANE_FRAG = old_plane
     if idx_view:
         return np.round(
@@ -298,6 +310,55 @@ def test_parity_far_walls(e1m1):
         exact, mean = _metrics(rgb, lut[fb], excl)
         assert exact > 0.45, (exact, mean)
         assert mean < 16.0, (exact, mean)
+    finally:
+        import pygame
+        pygame.quit()
+
+
+@requires_wad
+def test_parity_single_sided_backs(e1m1):
+    """Boundary-wall backs (noclip camera outside the map):
+    single-sided mids draw double-sided with front-equivalent
+    lighting (only two-sided backs are culled, covered by their
+    partner seg). Metrics run over wall pixels only (hooked from
+    _draw_column): void ground outside the BSP bbox has no geometry
+    in GL (sky) while software smears edge texels, by design."""
+    import numpy as np
+
+    from pydoom.palette import load_playpal
+    from pydoom.renderer import Renderer
+    from pydoom.textures import TextureManager
+    if _open_window() is None:
+        return
+    try:
+        wad = e1m1["wad"]
+        renderer = Renderer(wad, TextureManager(wad))
+        wallmask = np.zeros((200, 320), bool)
+        o_draw = Renderer._draw_column
+
+        def rec_draw(self, xx, yl, yh, *a):
+            wallmask[max(yl, 0):yh + 1, xx] = True
+            return o_draw(self, xx, yl, yh, *a)
+
+        Renderer._draw_column = rec_draw
+        try:
+            angle = (180 * 0x100000000 // 360) & 0xFFFFFFFF
+            x, y = 4200 << 16, -3200 << 16
+            fb = renderer.render_view(e1m1["game_map"], x, y,
+                                      angle, mobjs=[])
+            viewz = renderer.viewz
+        finally:
+            Renderer._draw_column = o_draw
+        lut = np.array(load_playpal(wad.read_lump("PLAYPAL")),
+                       dtype=np.uint8)
+        rgb = _gl_view(e1m1, angle, viewz, x=x, y=y)
+        assert wallmask.sum() > 3000  # NOTE: wall-dominated view
+        diff = np.abs(rgb.astype(int)
+                      - lut[fb].astype(int)).max(axis=2)
+        dd = diff[wallmask]
+        assert (dd == 0).mean() > 0.45, ((dd == 0).mean(),
+                                         dd.mean())
+        assert dd.mean() < 8.0, dd.mean()
     finally:
         import pygame
         pygame.quit()

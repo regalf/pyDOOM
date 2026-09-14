@@ -41,6 +41,7 @@ __all__ = [
     "TEXT_FRAG",
     "TEXT_VERT",
     "WALL_FRAG",
+    "WALL_FRAG_DOUBLE",
     "WALL_VERT",
     "compile_program",
 ]
@@ -132,6 +133,18 @@ void main() {
     oIndex = float(idx) / 255.0;
 }
 """
+
+WALL_FRAG_DOUBLE = WALL_FRAG.replace(
+    "        int li = 47;\n"
+    "        if (den < 0.0)",
+    "        int li = 47;\n"
+    "        // NOTE: single-sided backs mirror the front lighting: a\n"
+    "        // mirrored camera would see the front with both dots\n"
+    "        // flipped, i.e. the same ratio, so the guard takes the\n"
+    "        // absolute value (silhouettes keep the brightest entry).\n"
+    "        if (abs(den) > 1e-9)",
+)
+assert WALL_FRAG_DOUBLE != WALL_FRAG  # NOTE: guard text moved on
 
 PLANE_VERT = """\
 #version 330 core

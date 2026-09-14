@@ -88,6 +88,8 @@ class FrameRenderer:
         self._uni: dict = {}
         self.wall_prog = shaders.compile_program(shaders.WALL_VERT,
                                                  shaders.WALL_FRAG)
+        self.wall_double_prog = shaders.compile_program(
+            shaders.WALL_VERT, shaders.WALL_FRAG_DOUBLE)
         self.plane_prog = shaders.compile_program(shaders.PLANE_VERT,
                                                   shaders.PLANE_FRAG)
         self.sprite_prog = shaders.compile_program(
@@ -112,6 +114,11 @@ class FrameRenderer:
                 (self.wall_prog, (("uWallTex", 0), ("uScaleLight", 1),
                                   ("uColormap", 2), ("uPalette", 3),
                                   ("uSectorLight", 6))),
+                (self.wall_double_prog, (("uWallTex", 0),
+                                         ("uScaleLight", 1),
+                                         ("uColormap", 2),
+                                         ("uPalette", 3),
+                                         ("uSectorLight", 6))),
                 (self.plane_prog, (("uFlatArray", 0), ("uZLight", 1),
                                    ("uColormap", 2), ("uPalette", 3),
                                    ("uSectorLight", 6))),
@@ -358,35 +365,53 @@ class FrameRenderer:
         # never draws: partner-seg backs that would otherwise
         # z-fight their coplanar fronts with a wrong (bright) light
         # row. Planes/sprites/sky keep double-sided rendering below.
+        def _run(prog, batches) -> None:
+            for texnum, start, count in batches:
+                _w, h, wrap = res.wall_info[texnum]
+                GL.glActiveTexture(GL.GL_TEXTURE0)
+                GL.glBindTexture(GL.GL_TEXTURE_2D,
+                                 res.wall_textures[texnum])
+                GL.glUniform1f(self._loc(prog, "uWrap"),
+                               float(wrap))
+                GL.glUniform1f(self._loc(prog, "uTexH"),
+                               float(h))
+                GL.glDrawElements(GL.GL_TRIANGLES, count,
+                                  GL.GL_UNSIGNED_INT,
+                                  ctypes.c_void_p(start * 4))
+
         GL.glEnable(GL.GL_CULL_FACE)
-        for texnum, start, count in res.wall_batches:
-            _w, h, wrap = res.wall_info[texnum]
-            GL.glActiveTexture(GL.GL_TEXTURE0)
-            GL.glBindTexture(GL.GL_TEXTURE_2D,
-                             res.wall_textures[texnum])
-            GL.glUniform1f(self._loc(self.wall_prog, "uWrap"),
-                           float(wrap))
-            GL.glUniform1f(self._loc(self.wall_prog, "uTexH"),
-                           float(h))
-            GL.glDrawElements(GL.GL_TRIANGLES, count,
-                              GL.GL_UNSIGNED_INT,
-                              ctypes.c_void_p(start * 4))
+        _run(self.wall_prog, res.wall_batches)
         # NOTE: masked mids ride the same program/VBO (alpha-tested
         # holes, depth written like opaque: Doom has no translucency,
         # so draw order among depth writers is irrelevant).
-        for texnum, start, count in res.masked_batches:
-            _w, h, wrap = res.wall_info[texnum]
-            GL.glActiveTexture(GL.GL_TEXTURE0)
-            GL.glBindTexture(GL.GL_TEXTURE_2D,
-                             res.wall_textures[texnum])
-            GL.glUniform1f(self._loc(self.wall_prog, "uWrap"),
-                           float(wrap))
-            GL.glUniform1f(self._loc(self.wall_prog, "uTexH"),
-                           float(h))
-            GL.glDrawElements(GL.GL_TRIANGLES, count,
-                              GL.GL_UNSIGNED_INT,
-                              ctypes.c_void_p(start * 4))
+        _run(self.wall_prog, res.masked_batches)
         GL.glDisable(GL.GL_CULL_FACE)
+        # NOTE: single-sided mids draw double-sided (no partner seg
+        # covers the back; vanilla draws single-sided backs mirrored)
+        # with front-equivalent lighting from WALL_FRAG_DOUBLE.
+        GL.glUseProgram(self.wall_double_prog)
+        self._pal(self.wall_double_prog, pal_index)
+        GL.glUniformMatrix4fv(self._loc(self.wall_double_prog,
+                                        "uViewProj"), 1, True, vp)
+        GL.glUniform2f(self._loc(self.wall_double_prog, "uViewPos"),
+                       viewx / 65536.0, viewy / 65536.0)
+        GL.glUniform2f(self._loc(self.wall_double_prog, "uViewDir"),
+                       dx, dy)
+        GL.glUniform1i(self._loc(self.wall_double_prog,
+                                 "uExtraLight"), int(extra_light))
+        GL.glUniform1i(self._loc(self.wall_double_prog,
+                                 "uFullbright"),
+                       int(bool(fullbright)))
+        GL.glActiveTexture(GL.GL_TEXTURE1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._scalelight)
+        GL.glActiveTexture(GL.GL_TEXTURE2)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
+        GL.glActiveTexture(GL.GL_TEXTURE3)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
+        GL.glActiveTexture(GL.GL_TEXTURE6)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
+        GL.glBindVertexArray(self._wall_vao)
+        _run(self.wall_double_prog, res.single_batches)
         GL.glUseProgram(self.plane_prog)
         self._pal(self.plane_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.plane_prog, "uViewProj"),
@@ -788,6 +813,7 @@ class FrameRenderer:
         try:
             from OpenGL import GL
             GL.glDeleteProgram(self.wall_prog)
+            GL.glDeleteProgram(self.wall_double_prog)
             GL.glDeleteProgram(self.plane_prog)
             GL.glDeleteProgram(self.sprite_prog)
             GL.glDeleteProgram(self.fuzz_prog)

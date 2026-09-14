@@ -126,7 +126,12 @@ Once per map load (not per frame; invalidated on level change):
   `project_mobjs`. Wall quads wind CCW from the front, so the wall
   pass enables backface culling (partner-seg backs the BSP never
   draws would otherwise z-fight their coplanar fronts with a wrong
-  light row); planes/sprites/sky stay double-sided. The wall
+  light row); single-sided mids draw double-sided in a second
+  program (vanilla draws single-sided backs mirrored, front-
+  equivalent light: a mirrored camera flips both dots, same ratio),
+  otherwise noclip views outside the map show black bands.
+  Regression: `test_parity_single_sided_backs`.
+  Planes/sprites/sky stay double-sided. The wall
   distance guard keys on `den < 0` (front-unit normals point back
   at the viewer, so visible faces have negative den); the inverted
   guard rendered every far frontal wall full-bright (near walls

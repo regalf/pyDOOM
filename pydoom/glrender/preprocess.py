@@ -59,6 +59,9 @@ class WallQuad:
     # sector-light texture, so flicker/strobe/movers never rebuild)
     tweak: int = 0  # vanilla orient tweak -1/0/+1 (static, folded
     # into the shader row next to the sector base)
+    twosided: bool = True  # False for single-sided mids (no back
+    # sector): no partner seg covers the back, so the quad renders
+    # double-sided (vanilla draws single-sided backs mirrored)
     nx: float = 0.0  # front-unit normal (front is RIGHT of v1->v2)
     ny: float = 0.0
 
@@ -119,7 +122,7 @@ def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
           x1: float, y1: float, x2: float, y2: float,
           zb: int, zt: int, u1: float, length: float,
           static: int, rowoffset: int, sector: int, tweak: int,
-          nx: float, ny: float) -> None:
+          nx: float, ny: float, twosided: bool = True) -> None:
     # NOTE: fixed-point in, floats out; degenerate spans (closed-door
     # masked) are skipped, the software clips those to nothing anyway.
     if texnum and zt > zb:
@@ -129,7 +132,8 @@ def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
             z_bottom=zb / 65536.0, z_top=zt / 65536.0,
             u1=u1, u2=u1 + length,
             texbase=(static + rowoffset) / 65536.0,
-            sector=sector, tweak=tweak, nx=nx, ny=ny))
+            sector=sector, tweak=tweak, twosided=twosided,
+            nx=nx, ny=ny))
 
 
 def build_walls(game_map: Map, texman: TextureManager,
@@ -170,7 +174,8 @@ def build_walls(game_map: Map, texman: TextureManager,
                     static = front.ceilingheight
                 _emit(out, si, "mid", side.midtexture, x1, y1, x2, y2,
                       front.floorheight, front.ceilingheight, u1, length,
-                      static, side.rowoffset, fsi, tweak, nx, ny)
+                      static, side.rowoffset, fsi, tweak, nx, ny,
+                      twosided=False)
             continue
         # NOTE: outdoor sky hack (both ceilings sky): worldtop drops
         # to worldhigh, which can only kill the top tier below.

@@ -23,16 +23,23 @@ __all__ = ["GlResources", "plan_wall_batches"]
 def plan_wall_batches(quads) -> tuple:
     """Reorder wall indices by texture (deterministic: texnums sorted).
 
-    Returns (index uint32 array, opaque batches, masked batches) with
-    [(texnum, start, count)] each: opaque tiers draw in the opaque
-    pass, masked mids in the transparent pass (same VBO/IBO, alpha
-    tested, depth written like opaque since Doom has no
-    translucency). Every quad lands in exactly one list.
+    Returns (index uint32 array, opaque batches, single batches,
+    masked batches) with [(texnum, start, count)] each: opaque and
+    masked tiers draw backface-culled (a partner seg covers the
+    back); single-sided mids draw double-sided in their own program
+    (vanilla draws single-sided backs mirrored). Every quad lands in
+    exactly one list.
     """
     opaque: dict = {}
+    single: dict = {}
     masked: dict = {}
     for q, quad in enumerate(quads):
-        target = masked if quad.tier == "masked" else opaque
+        if quad.tier == "masked":
+            target = masked
+        elif quad.twosided:
+            target = opaque
+        else:
+            target = single
         target.setdefault(quad.texnum, []).append(q)
 
     def emit(groups: dict):
@@ -51,9 +58,12 @@ def plan_wall_batches(quads) -> tuple:
         return index, batches
 
     o_index, o_batches = emit(opaque)
+    s_index, s_batches = emit(single)
     m_index, m_batches = emit(masked)
-    return np.concatenate((o_index, m_index)), o_batches, [
-        (t, s + len(o_index), c) for t, s, c in m_batches]
+    return (np.concatenate((o_index, s_index, m_index)), o_batches,
+            [(t, s + len(o_index), c) for t, s, c in s_batches],
+            [(t, s + len(o_index) + len(s_index), c)
+             for t, s, c in m_batches])
 
 
 @dataclass
@@ -63,6 +73,7 @@ class GlResources:
     wall_vbo: int = 0
     wall_ibo: int = 0
     wall_batches: list = field(default_factory=list)
+    single_batches: list = field(default_factory=list)
     masked_batches: list = field(default_factory=list)
     wall_textures: dict = field(default_factory=dict)  # texnum -> id
     wall_info: dict = field(default_factory=dict)  # texnum -> (w,h,wrap)
@@ -165,10 +176,12 @@ class GlResources:
         inter = cls._wall_interleaved(wall_geo)
         created.wall_vbo = cls._new_buffer(inter,
                                            GL.GL_ARRAY_BUFFER)
-        index, batches, masked = plan_wall_batches(wall_geo.quads)
+        index, batches, singles, masked = plan_wall_batches(
+            wall_geo.quads)
         created.wall_ibo = cls._new_buffer(index,
                                            GL.GL_ELEMENT_ARRAY_BUFFER)
         created.wall_batches = batches
+        created.single_batches = singles
         created.masked_batches = masked
         created.upload_wall_textures(wall_tex)
         GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
@@ -276,12 +289,14 @@ class GlResources:
         GL.glBufferData(GL.GL_ARRAY_BUFFER, inter.nbytes, inter,
                         GL.GL_STATIC_DRAW)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
-        index, batches, masked = plan_wall_batches(wall_geo.quads)
+        index, batches, singles, masked = plan_wall_batches(
+            wall_geo.quads)
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.wall_ibo)
         GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, index.nbytes,
                         index, GL.GL_STATIC_DRAW)
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, 0)
         self.wall_batches = batches
+        self.single_batches = singles
         self.masked_batches = masked
 
     def reupload_planes(self, plane_geo, flat_layers: dict) -> None:
@@ -381,6 +396,7 @@ class GlResources:
         finally:
             self.wall_vbo = self.wall_ibo = self.plane_vbo = 0
             self.wall_batches = []
+            self.single_batches = []
             self.masked_batches = []
             self.wall_textures = {}
             self.sprite_textures = {}

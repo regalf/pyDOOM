@@ -102,7 +102,8 @@ def main() -> int:
     if renderer0_tex in res.wall_textures:
         sky_arg = (res.wall_textures[renderer0_tex],
                    res.wall_info[renderer0_tex][1])
-    draws = len(res.wall_batches) + len(res.masked_batches) + 2
+    draws = (len(res.wall_batches) + len(res.single_batches)
+             + len(res.masked_batches) + 2)
     print(f"gl bench: {len(walls.quads)} quads, "
           f"{len(planes.tris)} tris, {len(wtex.order)} walltex, "
           f"{len(ftex.order)} flats, {len(stex.order)} sprites, "
