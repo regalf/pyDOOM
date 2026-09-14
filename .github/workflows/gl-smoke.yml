@@ -17,6 +17,7 @@ on:
 jobs:
   gl-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       SDL_AUDIODRIVER: dummy
     steps:
