@@ -138,11 +138,16 @@ Once per map load (not per frame; invalidated on level change):
   batches into their own ranges (same VBO/program, alpha-tested).
   Depth written like opaque (Doom has no translucency), so draw
   order is irrelevant and no painter sort exists. DONE.
-- **Fuzz** (spectres): NOT DONE — needs an MRT index target (the
-  software fuzz reads backdrop indices, so the main pass must also
-  emit raw indices to an R8 target; fuzz quads then sample backdrop
-  + FUZZOFFSETS neighbor + colormap row 6). MF_SHADOW skipped.
-- **Weapon psprite**: NOT DONE (needs viewer bob/frame plumbing).
+- **Fuzz** (spectres): DONE — MRT index target (all main-pass
+  shaders emit raw indices to an R8 attachment; fuzz quads sample a
+  copied backdrop + FUZZOFFSETS neighbor through colormap row 6).
+  The software global pixel counter is approximated by frame + row
+  (shimmer pattern differs, colors match). Uniform int arrays only
+  upload their first element under PyOpenGL here, so the table rides
+  a 50x1 LUT texture instead. E1M5 parity gate.
+- **Weapon psprite**: DONE (`draw_psprite` quad: vanilla anchor in
+  320x200 space scaled native, raw indices, no depth test;
+  pixel-perfect vs `draw_psprite` on gun pixels).
 - **Sky surface**: DONE (`glrender/sky.py` camera cylinder, one
   point_to_angle2 anchor +16 cols/segment, v from the fragment row;
   colormap row 0 like `_draw_sky_plane`, fullbright-independent).

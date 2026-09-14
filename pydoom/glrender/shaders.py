@@ -25,8 +25,11 @@ negates viewy).
 from __future__ import annotations
 
 __all__ = [
+    "FUZZ_FRAG",
     "PLANE_FRAG",
     "PLANE_VERT",
+    "PSPRITE_FRAG",
+    "PSPRITE_VERT",
     "SKY_FRAG",
     "SKY_VERT",
     "SPRITE_FRAG",
@@ -74,6 +77,7 @@ uniform int uFullbright;
 uniform float uWrap;
 uniform float uTexH;
 out vec4 oColor;
+layout(location = 1) out float oIndex;
 void main() {
     vec2 rg = texelFetch(uWallTex,
                          ivec2(int(mod(vUv.x, uWrap)),
@@ -99,6 +103,7 @@ void main() {
                   * 255.0 + 0.5);
     }
     oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oIndex = float(idx) / 255.0;
 }
 """
 
@@ -137,6 +142,7 @@ uniform float uViewH;
 uniform int uExtraLight;
 uniform int uFullbright;
 out vec4 oColor;
+layout(location = 1) out float oIndex;
 void main() {
     vec4 t = texelFetch(uFlatArray,
                         ivec3(int(mod(vUv.x, 64.0)),
@@ -159,6 +165,7 @@ void main() {
                   * 255.0 + 0.5);
     }
     oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oIndex = float(idx) / 255.0;
 }
 """
 
@@ -188,6 +195,7 @@ uniform sampler2D uPalette;
 uniform float uWrap;
 uniform float uTexH;
 out vec4 oColor;
+layout(location = 1) out float oIndex;
 void main() {
     vec2 rg = texelFetch(uSpriteTex,
                          ivec2(int(mod(vUv.x, uWrap)),
@@ -198,6 +206,7 @@ void main() {
                              ivec2(idx, int(vLight + 0.5)), 0).r
                   * 255.0 + 0.5);
     oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oIndex = float(idx) / 255.0;
 }
 """
 
@@ -223,6 +232,7 @@ uniform sampler2D uPalette;
 uniform float uViewH;
 uniform float uTexH;
 out vec4 oColor;
+layout(location = 1) out float oIndex;
 void main() {
     // NOTE: software sky column (angle>>22, widthmask-folded) and
     // row (SKYTEXTUREMID + (row - cy), iscale 1 texel/row); colormap
@@ -237,6 +247,69 @@ void main() {
     int lit = int(texelFetch(uColormap, ivec2(idx, 0), 0).r
                   * 255.0 + 0.5);
     oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oIndex = float(idx) / 255.0;
+}
+"""
+
+
+FUZZ_FRAG = """\
+#version 330 core
+in vec2 vUv;
+in float vLight;
+uniform sampler2D uIndexTex;
+uniform sampler2D uColormap;
+uniform sampler2D uPalette;
+uniform sampler2D uFuzzTex;
+uniform int uFrame;
+uniform float uViewH;
+out vec4 oColor;
+void main() {
+    // NOTE: vanilla fuzz reads the backdrop index one row off
+    // (FUZZOFFSETS cycling, 50x1 LUT: PyOpenGL uniform arrays only
+    // upload their first element here) through colormap row 6; the
+    // software global pixel counter is approximated by frame + row.
+    ivec2 px = ivec2(gl_FragCoord.xy);
+    int off = int(texelFetch(uFuzzTex,
+                             ivec2((uFrame + px.y) % 50, 0), 0).r
+                  * 255.0 + 0.5) * 2 - 1;
+    int yy = clamp(px.y + off, 0, int(uViewH) - 1);
+    int bidx = int(texelFetch(uIndexTex, ivec2(px.x, yy), 0).r
+                   * 255.0 + 0.5);
+    int lit = int(texelFetch(uColormap, ivec2(bidx, 6), 0).r
+                  * 255.0 + 0.5);
+    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+}
+"""
+
+
+PSPRITE_VERT = """\
+#version 330 core
+layout(location = 0) in vec2 aNDC;
+layout(location = 1) in vec2 aUv;
+out vec2 vUv;
+void main() {
+    gl_Position = vec4(aNDC, 0.0, 1.0);
+    vUv = aUv;
+}
+"""
+
+PSPRITE_FRAG = """\
+#version 330 core
+in vec2 vUv;
+uniform sampler2D uSpriteTex;
+uniform sampler2D uPalette;
+uniform float uWrap;
+uniform float uTexH;
+out vec4 oColor;
+void main() {
+    // NOTE: raw indices like draw_psprite (no colormap, no light:
+    // the gun ignores sector darkness, muzzle flash included).
+    vec2 rg = texelFetch(uSpriteTex,
+                         ivec2(int(mod(vUv.x, uWrap)),
+                               int(mod(vUv.y, uTexH))), 0).rg;
+    if (rg.g < 0.5) discard;
+    int idx = int(rg.r * 255.0 + 0.5);
+    oColor = vec4(texelFetch(uPalette, ivec2(idx, 0), 0).rgb, 1.0);
 }
 """
 

@@ -9,8 +9,9 @@ and the colormap value is precomputed per sprite (vanilla grades a
 whole sprite by one scalelight entry: lightnum from the sector plus
 extralight/visor, indexed by xscale).
 
-MF_SHADOW carriers are SKIPPED here (fuzz needs the index-target
-backdrop, next slice). Pure CPU, no GL imports.
+MF_SHADOW carriers are EMITTED with fuzz=True (corners identical;
+the fuzz program shades them from the backdrop index target instead
+of their patch). Pure CPU, no GL imports.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ class SpriteBillboard:
     lump: int = 0  # texman sprite-relative patch index
     flip: bool = False
     colormap: int = 0
+    fuzz: bool = False  # MF_SHADOW: shade from backdrop, not patch
     left_x: float = 0.0
     left_y: float = 0.0
     right_x: float = 0.0
@@ -86,8 +88,6 @@ class SpriteFeed:
         for mo in mobjs:
             if mo.dead or mo.state == 0:
                 continue
-            if mo.flags & MF_SHADOW:
-                continue  # NOTE: fuzz slice (backdrop index target)
             bb = self._one(mo, viewx, viewy, angle_bam, viewcos,
                            viewsin, texman, extra_light, fullbright,
                            scalelight)
@@ -137,7 +137,10 @@ class SpriteFeed:
         if x2 < 0:
             return None
         gzt = mo.z + (patch.topoffset << FRACBITS)
-        if mo.frame & FF_FULLBRIGHT:
+        fuzz = bool(mo.flags & MF_SHADOW)
+        if fuzz:
+            colormap = 0  # NOTE: unused (backdrop shades fuzz)
+        elif mo.frame & FF_FULLBRIGHT:
             colormap = 0
         else:
             lightlevel = (mo.sector.lightlevel
@@ -157,7 +160,7 @@ class SpriteFeed:
         roff = patch.width - patch.leftoffset
         px, py = mo.x / 65536.0, mo.y / 65536.0
         return SpriteBillboard(
-            lump=lump, flip=flip, colormap=colormap,
+            lump=lump, flip=flip, colormap=colormap, fuzz=fuzz,
             left_x=px - rx * loff, left_y=py - ry * loff,
             right_x=px + rx * roff, right_y=py + ry * roff,
             z_bottom=gzt / 65536.0 - patch.height,

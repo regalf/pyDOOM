@@ -22,6 +22,7 @@ from pydoom.glrender.light import scalelight_lut, zlight_lut
 from pydoom.glrender.sky import SKY_SEGS, sky_index
 from pydoom.renderer import (
     FIELDOFVIEW,
+    FUZZOFFSETS,
     MAXVISSPRITES,
     SCREENWIDTH,
 )
@@ -90,8 +91,12 @@ class FrameRenderer:
                                                   shaders.PLANE_FRAG)
         self.sprite_prog = shaders.compile_program(
             shaders.SPRITE_VERT, shaders.SPRITE_FRAG)
+        self.fuzz_prog = shaders.compile_program(
+            shaders.SPRITE_VERT, shaders.FUZZ_FRAG)
         self.sky_prog = shaders.compile_program(shaders.SKY_VERT,
                                                 shaders.SKY_FRAG)
+        self.psprite_prog = shaders.compile_program(
+            shaders.PSPRITE_VERT, shaders.PSPRITE_FRAG)
         self._scalelight = res._upload_lut(scalelight_lut(), 48, 16,
                                            GL.GL_R8, GL.GL_RED)
         self._zlight = res._upload_lut(zlight_lut(), 128, 16,
@@ -104,13 +109,28 @@ class FrameRenderer:
                 (self.sprite_prog, (("uSpriteTex", 0),
                                     ("uColormap", 2),
                                     ("uPalette", 3))),
+                (self.fuzz_prog, (("uIndexTex", 4),
+                                  ("uColormap", 2),
+                                  ("uPalette", 3),
+                                  ("uFuzzTex", 5))),
                 (self.sky_prog, (("uSkyTex", 0),
                                  ("uColormap", 2),
-                                 ("uPalette", 3)))):
+                                 ("uPalette", 3))),
+                (self.psprite_prog, (("uSpriteTex", 0),
+                                     ("uPalette", 3)))):
             GL.glUseProgram(prog)
             for name, unit in samplers:
                 GL.glUniform1i(self._loc(prog, name), unit)
         GL.glUseProgram(0)
+        self._frame = 0
+        self._fuzzlut = res._upload_lut(
+            bytes(255 if v > 0 else 0 for v in FUZZOFFSETS),
+            50, 1, GL.GL_R8, GL.GL_RED)
+        (self._fbo, self._fb_color, self._fb_index,
+         self._fb_depth) = self._make_fbo(w, h)
+        self._spare_index = self._new_tex2d(w, h, GL.GL_R8,
+                                            GL.GL_RED, None)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
         self._wall_vao = self._make_vao(
             res.wall_vbo, 8,
             [(0, 3, 0), (1, 1, 3), (2, 1, 4), (3, 1, 5), (4, 2, 6)],
@@ -139,6 +159,10 @@ class FrameRenderer:
         self._sky_vao = self._make_vao(
             self._sky_vbo, 4, [(0, 3, 0), (1, 1, 3)],
             self._sky_ibo)
+        # NOTE: weapon psprite quad (screen-space, refilled per draw).
+        self._psprite_vbo = self._new_dynamic(4 * 4)
+        self._psprite_vao = self._make_vao(
+            self._psprite_vbo, 4, [(0, 2, 0), (1, 2, 2)], 0)
         GL.glDisable(GL.GL_DITHER)  # NOTE: LSB-exact readback parity
         GL.glEnable(GL.GL_DEPTH_TEST)
         GL.glDepthFunc(GL.GL_LESS)
@@ -171,6 +195,54 @@ class FrameRenderer:
         return buf
 
     @staticmethod
+    def _new_tex2d(w: int, h: int, internal: int, fmt: int,
+                   data) -> int:
+        from OpenGL import GL
+        tex = int(GL.glGenTextures(1))
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER,
+                           GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER,
+                           GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S,
+                           GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T,
+                           GL.GL_CLAMP_TO_EDGE)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, internal, w, h, 0, fmt,
+                        GL.GL_UNSIGNED_BYTE, data)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+        return tex
+
+    @classmethod
+    def _make_fbo(cls, w: int, h: int) -> tuple:
+        """RGB8 + R8-index targets with depth (readback identical to
+        the default framebuffer; the index target feeds fuzz)."""
+        from OpenGL import GL
+        fbo = int(GL.glGenFramebuffers(1))
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, fbo)
+        color = cls._new_tex2d(w, h, GL.GL_RGB8, GL.GL_RGB, None)
+        index = cls._new_tex2d(w, h, GL.GL_R8, GL.GL_RED, None)
+        GL.glFramebufferTexture2D(GL.GL_FRAMEBUFFER,
+                                  GL.GL_COLOR_ATTACHMENT0,
+                                  GL.GL_TEXTURE_2D, color, 0)
+        GL.glFramebufferTexture2D(GL.GL_FRAMEBUFFER,
+                                  GL.GL_COLOR_ATTACHMENT1,
+                                  GL.GL_TEXTURE_2D, index, 0)
+        depth = int(GL.glGenRenderbuffers(1))
+        GL.glBindRenderbuffer(GL.GL_RENDERBUFFER, depth)
+        GL.glRenderbufferStorage(GL.GL_RENDERBUFFER,
+                                 GL.GL_DEPTH_COMPONENT24, w, h)
+        GL.glFramebufferRenderbuffer(GL.GL_FRAMEBUFFER,
+                                     GL.GL_DEPTH_ATTACHMENT,
+                                     GL.GL_RENDERBUFFER, depth)
+        GL.glDrawBuffers(2, [GL.GL_COLOR_ATTACHMENT0,
+                             GL.GL_COLOR_ATTACHMENT1])
+        status = GL.glCheckFramebufferStatus(GL.GL_FRAMEBUFFER)
+        if status != GL.GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError(f"FBO incomplete: {status:#x}")
+        return fbo, color, index, depth
+
+    @staticmethod
     def _make_vao(vbo: int, stride_floats: int, attribs: list,
                   ibo: int) -> int:
         from OpenGL import GL
@@ -198,17 +270,28 @@ class FrameRenderer:
     def render(self, viewx: int, viewy: int, viewz: int,
                angle_bam: int, extra_light: int = 0,
                fullbright: bool = False, sprites=None,
-               sky=None) -> None:
+               sky=None, frame_no: int | None = None,
+               psprites=None) -> None:
         """Draw sky (optional) + walls + planes (+ optional sprite
-        billboards) for one camera (raises on GL error: silent
+        billboards, fuzz last over a complete backdrop, weapon
+        psprites on top) for one camera (raises on GL error: silent
         corruption is worse than a loud test failure). Sprites draw
         last, depth-tested with depth writes on like everything else
-        (Doom has no translucency, so order is irrelevant). sky is a
-        (texture_id, tex_height) tuple or None."""
+        (Doom has no translucency, so order is irrelevant); psprites
+        overdraw with no depth test like the software blit. sky is a
+        (texture_id, tex_height) tuple or None; psprites a list of
+        (tex_id, w, h, leftoff, topoff, bobx, boby) tuples in 320x200
+        space. frame_no pins the fuzz shimmer counter (tests); None
+        advances it per frame."""
         from OpenGL import GL
         res = self._res
+        if frame_no is None:
+            self._frame += 1
+        else:
+            self._frame = int(frame_no)
         vp, (dx, dy) = camera_frame(viewx, viewy, viewz, angle_bam,
                                     self._w, self._h)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         if sky is not None:
@@ -281,6 +364,9 @@ class FrameRenderer:
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, res.plane_count)
         if sprites:
             self.draw_sprites(res, sprites, vp)
+        if psprites:
+            for args in psprites:
+                self.draw_psprite(*args)
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
         err = GL.glGetError()
@@ -321,34 +407,50 @@ class FrameRenderer:
             raise RuntimeError(f"GL error {err:#x} in draw_sky")
 
     def draw_sprites(self, res, billboards, vp) -> None:
-        """Fill the dynamic VBO with billboards grouped by patch and
-        draw them (depth-tested, depth written: order-free)."""
+        """Fill the dynamic VBO (normal billboards grouped by patch,
+        fuzz quads in one trailing range) and draw: normal sprites
+        first, then the fuzz pass over a copied index backdrop (the
+        copy avoids a feedback loop on the attached target)."""
         import numpy as np
         from OpenGL import GL
         assert len(billboards) <= MAXVISSPRITES
         groups: dict = {}
+        fuzz: list = []
         for bb in billboards:
-            groups.setdefault(bb.lump, []).append(bb)
+            if bb.fuzz:
+                fuzz.append(bb)
+            else:
+                groups.setdefault(bb.lump, []).append(bb)
         verts = np.zeros((len(billboards) * 4, 6), dtype=np.float32)
         index = np.zeros(len(billboards) * 6, dtype=np.uint32)
         pos = 0
         ranges = []
+
+        def emit(bb) -> None:
+            nonlocal pos
+            v = pos // 6 * 4
+            verts[v + 0] = (bb.left_x, bb.left_y, bb.z_bottom,
+                            bb.u0, bb.v0, bb.colormap)
+            verts[v + 1] = (bb.right_x, bb.right_y, bb.z_bottom,
+                            bb.u1, bb.v0, bb.colormap)
+            verts[v + 2] = (bb.right_x, bb.right_y, bb.z_top,
+                            bb.u1, bb.v1, bb.colormap)
+            verts[v + 3] = (bb.left_x, bb.left_y, bb.z_top,
+                            bb.u0, bb.v1, bb.colormap)
+            index[pos:pos + 6] = (v, v + 1, v + 2, v, v + 2, v + 3)
+            pos += 6
+
         for lump in sorted(groups):
             start = pos
             for bb in groups[lump]:
-                v = pos // 6 * 4
-                verts[v + 0] = (bb.left_x, bb.left_y, bb.z_bottom,
-                                bb.u0, bb.v0, bb.colormap)
-                verts[v + 1] = (bb.right_x, bb.right_y, bb.z_bottom,
-                                bb.u1, bb.v0, bb.colormap)
-                verts[v + 2] = (bb.right_x, bb.right_y, bb.z_top,
-                                bb.u1, bb.v1, bb.colormap)
-                verts[v + 3] = (bb.left_x, bb.left_y, bb.z_top,
-                                bb.u0, bb.v1, bb.colormap)
-                index[pos:pos + 6] = (v, v + 1, v + 2,
-                                      v, v + 2, v + 3)
-                pos += 6
+                emit(bb)
             ranges.append((lump, start, pos - start))
+        fuzz_range = None
+        if fuzz:
+            start = pos
+            for bb in fuzz:
+                emit(bb)
+            fuzz_range = (start, pos - start)
         GL.glUseProgram(self.sprite_prog)
         GL.glUniformMatrix4fv(self._loc(self.sprite_prog, "uViewProj"),
                               1, True, vp)
@@ -375,9 +477,83 @@ class FrameRenderer:
             GL.glDrawElements(GL.GL_TRIANGLES, count,
                               GL.GL_UNSIGNED_INT,
                               ctypes.c_void_p(start * 4))
+        if fuzz_range is not None:
+            self.draw_fuzz(*fuzz_range, vp)
         err = GL.glGetError()
         if err != GL.GL_NO_ERROR:
             raise RuntimeError(f"GL error {err:#x} in draw_sprites")
+
+    def draw_fuzz(self, start: int, count: int, vp) -> None:
+        """Fuzz quads over a copied index backdrop (copy-then-sample:
+        sampling the attached target would be a feedback loop)."""
+        from OpenGL import GL
+        GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._spare_index)
+        GL.glCopyTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
+                               self._w, self._h)
+        GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT0)
+        GL.glUseProgram(self.fuzz_prog)
+        GL.glUniformMatrix4fv(self._loc(self.fuzz_prog, "uViewProj"),
+                              1, True, vp)
+        GL.glUniform1i(self._loc(self.fuzz_prog, "uFrame"),
+                       int(self._frame))
+        GL.glUniform1f(self._loc(self.fuzz_prog, "uViewH"),
+                       float(self._h))
+        GL.glActiveTexture(GL.GL_TEXTURE4)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._spare_index)
+        GL.glActiveTexture(GL.GL_TEXTURE5)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._fuzzlut)
+        GL.glActiveTexture(GL.GL_TEXTURE2)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.colormap_tex)
+        GL.glActiveTexture(GL.GL_TEXTURE3)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.palette_tex)
+        GL.glBindVertexArray(self._sprite_vao)
+        GL.glDrawElements(GL.GL_TRIANGLES, count,
+                          GL.GL_UNSIGNED_INT,
+                          ctypes.c_void_p(start * 4))
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in draw_fuzz")
+
+    def draw_psprite(self, tex_id: int, w: int, h: int,
+                       leftoff: int, topoff: int, bobx: int,
+                       boby: int) -> None:
+        """Weapon sprite overdraw (vanilla draw_psprite anchor, raw
+        indices, no depth test). x0/y0 live in 320x200 space and scale
+        to native like the software blit."""
+        import numpy as np
+        from OpenGL import GL
+        sx, sy = self._w / 320.0, self._h / 200.0
+        x0, y0 = (1 + bobx - leftoff) * sx, (32 + boby - topoff) * sy
+        x1, y1 = x0 + w * sx, y0 + h * sy
+        verts = np.array([
+            x0 / (self._w / 2) - 1.0, 1.0 - y0 / (self._h / 2), 0.0, 0.0,
+            x0 / (self._w / 2) - 1.0, 1.0 - y1 / (self._h / 2), 0.0,
+            float(h),
+            x1 / (self._w / 2) - 1.0, 1.0 - y0 / (self._h / 2),
+            float(w), 0.0,
+            x1 / (self._w / 2) - 1.0, 1.0 - y1 / (self._h / 2),
+            float(w), float(h),
+        ], dtype=np.float32)
+        GL.glUseProgram(self.psprite_prog)
+        GL.glUniform1f(self._loc(self.psprite_prog, "uWrap"),
+                       float(w))
+        GL.glUniform1f(self._loc(self.psprite_prog, "uTexH"),
+                       float(h))
+        GL.glActiveTexture(GL.GL_TEXTURE0)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex_id)
+        GL.glActiveTexture(GL.GL_TEXTURE3)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.palette_tex)
+        GL.glBindVertexArray(self._psprite_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._psprite_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
+                        GL.GL_DYNAMIC_DRAW)
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glDrawArrays(GL.GL_TRIANGLE_STRIP, 0, 4)
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in draw_psprite")
 
     def readback(self) -> np.ndarray:
         """Top-down RGB framebuffer (software-fb layout)."""
@@ -394,15 +570,24 @@ class FrameRenderer:
             GL.glDeleteProgram(self.wall_prog)
             GL.glDeleteProgram(self.plane_prog)
             GL.glDeleteProgram(self.sprite_prog)
+            GL.glDeleteProgram(self.fuzz_prog)
+            GL.glDeleteProgram(self.psprite_prog)
             GL.glDeleteProgram(self.sky_prog)
             GL.glDeleteVertexArrays(4, [self._wall_vao,
                                         self._plane_vao,
                                         self._sprite_vao,
                                         self._sky_vao])
-            GL.glDeleteBuffers(3, [self._sprite_vbo,
+            GL.glDeleteVertexArrays(1, [self._psprite_vao])
+            GL.glDeleteBuffers(4, [self._sprite_vbo,
                                    self._sprite_ibo,
-                                   self._sky_vbo])
-            GL.glDeleteBuffers(1, [self._sky_ibo])
+                                   self._sky_vbo,
+                                   self._sky_ibo])
+            GL.glDeleteBuffers(1, [self._psprite_vbo])
             GL.glDeleteTextures(2, [self._scalelight, self._zlight])
+            GL.glDeleteTextures(1, [self._fuzzlut])
+            GL.glDeleteTextures(3, [self._fb_color, self._fb_index,
+                                    self._spare_index])
+            GL.glDeleteRenderbuffers(1, [self._fb_depth])
+            GL.glDeleteFramebuffers(1, [self._fbo])
         except Exception:  # noqa: BLE001, S110 - teardown never raises
             pass

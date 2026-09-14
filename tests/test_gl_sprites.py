@@ -97,7 +97,10 @@ def test_feed_matches_software_vissprites():
               if v["colormap"] is not None]
         got = feed.project(mobjs, start.x << 16, start.y << 16,
                            angle, texman)
-        mine = [(b.lump, b.flip, b.colormap, b.depth) for b in got]
+        # NOTE: fuzz spectres compare in the fuzz tests (backdrop
+        # target); here both sides drop them.
+        mine = [(b.lump, b.flip, b.colormap, b.depth) for b in got
+                if not b.fuzz]
         assert len(mine) == len(sw), (angle, len(mine), len(sw))
         assert sorted(mine) == sorted(sw), angle
 
