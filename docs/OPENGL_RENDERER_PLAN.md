@@ -127,17 +127,24 @@ Once per map load (not per frame; invalidated on level change):
 
 ### Phase 3 — dynamic objects (per frame)
 
-- **Sprites.** Keep `renderer.py`'s projection math
-  (`_project_sprite`, `sprite_num_for_base`, rotation tables from
-  `init_sprite_defs`) as the CPU feed: it yields screen-space
-  billboards; GL draws them as camera-facing quads with the patch
-  texture at native res. Sprite textures again `GL_R8` palette-index.
-- **Masked mids.** Two-sided segs with a midmask texture become
-  transparent quads drawn in painter order after opaque walls.
-- **Weapon psprite.** Fullscreen quad at native res using the `P_*`
-  sprite; bob/offsets scaled from the 320x200 anchor
-  (`draw_psprite` anchor math, tests in `test_renderer.py`).
-- **Fuzz** on shadowed sprites: shader variant from Phase 2.
+- **Sprites.** `glrender/sprites.py` CPU feed mirrors
+  `_project_sprite` culling/rotation/light exactly and emits
+  camera-facing quads (cylindrical == spherical on the yaw-only
+  camera); UVs static per patch (u mirrored on flip, v = gzt - z),
+  colormap precomputed per sprite (vanilla grades whole sprites by
+  one scalelight entry). Dynamic VBO refilled per frame, drawn per
+  patch texture. DONE (E1M1 parity gate).
+- **Masked mids.** Phase-1 "masked" quads split out of the opaque
+  batches into their own ranges (same VBO/program, alpha-tested).
+  Depth written like opaque (Doom has no translucency), so draw
+  order is irrelevant and no painter sort exists. DONE.
+- **Fuzz** (spectres): NOT DONE — needs an MRT index target (the
+  software fuzz reads backdrop indices, so the main pass must also
+  emit raw indices to an R8 target; fuzz quads then sample backdrop
+  + FUZZOFFSETS neighbor + colormap row 6). MF_SHADOW skipped.
+- **Weapon psprite**: NOT DONE (needs viewer bob/frame plumbing).
+- **Sky surface**: NOT DONE (cylinder mesh, CPU-baked u from
+  point_to_angle2 per frame, v from the fragment row).
 
 ### Phase 4 — overlay compositing (keep index path)
 

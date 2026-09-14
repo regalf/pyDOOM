@@ -23,24 +23,37 @@ __all__ = ["GlResources", "plan_wall_batches"]
 def plan_wall_batches(quads) -> tuple:
     """Reorder wall indices by texture (deterministic: texnums sorted).
 
-    Returns (index uint32 array, batches [(texnum, start, count)]):
-    each batch draws one texture binding's index range, covering
-    every quad exactly once. Pure logic, headless-testable.
+    Returns (index uint32 array, opaque batches, masked batches) with
+    [(texnum, start, count)] each: opaque tiers draw in the opaque
+    pass, masked mids in the transparent pass (same VBO/IBO, alpha
+    tested, depth written like opaque since Doom has no
+    translucency). Every quad lands in exactly one list.
     """
-    by_tex: dict = {}
+    opaque: dict = {}
+    masked: dict = {}
     for q, quad in enumerate(quads):
-        by_tex.setdefault(quad.texnum, []).append(q)
-    index = np.zeros(len(quads) * 6, dtype=np.uint32)
-    batches = []
-    pos = 0
-    for texnum in sorted(by_tex):
-        start = pos
-        for q in by_tex[texnum]:
-            b = q * 4
-            index[pos:pos + 6] = (b, b + 1, b + 2, b, b + 2, b + 3)
-            pos += 6
-        batches.append((texnum, start, pos - start))
-    return index, batches
+        target = masked if quad.tier == "masked" else opaque
+        target.setdefault(quad.texnum, []).append(q)
+
+    def emit(groups: dict):
+        index = np.zeros(sum(len(v) for v in groups.values()) * 6,
+                         dtype=np.uint32)
+        batches = []
+        pos = 0
+        for texnum in sorted(groups):
+            start = pos
+            for q in groups[texnum]:
+                b = q * 4
+                index[pos:pos + 6] = (b, b + 1, b + 2,
+                                      b, b + 2, b + 3)
+                pos += 6
+            batches.append((texnum, start, pos - start))
+        return index, batches
+
+    o_index, o_batches = emit(opaque)
+    m_index, m_batches = emit(masked)
+    return np.concatenate((o_index, m_index)), o_batches, [
+        (t, s + len(o_index), c) for t, s, c in m_batches]
 
 
 @dataclass
@@ -50,27 +63,33 @@ class GlResources:
     wall_vbo: int = 0
     wall_ibo: int = 0
     wall_batches: list = field(default_factory=list)
+    masked_batches: list = field(default_factory=list)
     wall_textures: dict = field(default_factory=dict)  # texnum -> id
     wall_info: dict = field(default_factory=dict)  # texnum -> (w,h,wrap)
     plane_vbo: int = 0
     plane_count: int = 0
     flat_array: int = 0
     flat_layers: dict = field(default_factory=dict)  # flatnum -> layer
+    sprite_textures: dict = field(default_factory=dict)  # sprnum -> id
+    sprite_info: dict = field(default_factory=dict)  # sprnum -> (w,h)
     colormap_tex: int = 0
     palette_tex: int = 0
 
     @classmethod
     def create(cls, wall_geo, plane_geo, wall_tex, flat_tex,
-               colormap: bytes, palette: bytes):
+               colormap: bytes, palette: bytes, sprite_tex=None):
         """Upload everything; None (with best-effort cleanup) on any
         GL failure. wall_tex/flat_tex are WallTextureSet /
-        FlatTextureSet; colormap/palette the light.py LUT bytes."""
+        FlatTextureSet; sprite_tex an optional SpriteTextureSet;
+        colormap/palette the light.py LUT bytes."""
         from OpenGL import GL
         created = cls()
         try:
             GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
             cls._upload_walls(created, wall_geo, wall_tex)
             cls._upload_planes(created, plane_geo, flat_tex)
+            if sprite_tex is not None:
+                cls._upload_sprites(created, sprite_tex)
             created.colormap_tex = cls._upload_lut(
                 colormap, 256, 32, GL.GL_R8, GL.GL_RED)
             created.palette_tex = cls._upload_lut(
@@ -105,10 +124,11 @@ class GlResources:
         created.wall_vbo = cls._new_buffer(
             np.ascontiguousarray(inter),
             GL.GL_ARRAY_BUFFER)
-        index, batches = plan_wall_batches(wall_geo.quads)
+        index, batches, masked = plan_wall_batches(wall_geo.quads)
         created.wall_ibo = cls._new_buffer(index,
                                            GL.GL_ELEMENT_ARRAY_BUFFER)
         created.wall_batches = batches
+        created.masked_batches = masked
         for texnum, blob, size, wrap in zip(
                 wall_tex.order, wall_tex.blobs, wall_tex.sizes,
                 wall_tex.wraps):
@@ -172,6 +192,29 @@ class GlResources:
             created.flat_array = int(tex)
             created.flat_layers = dict(flat_tex.index_of)
 
+    @classmethod
+    def _upload_sprites(cls, created, sprite_tex) -> None:
+        """One RG8 texture per sprite patch (same params as walls)."""
+        from OpenGL import GL
+        for spritenum, blob, (w, h) in zip(sprite_tex.order,
+                                           sprite_tex.blobs,
+                                           sprite_tex.sizes):
+            tex = GL.glGenTextures(1)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_WRAP_S, GL.GL_REPEAT)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_WRAP_T, GL.GL_REPEAT)
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RG8, w, h, 0,
+                            GL.GL_RG, GL.GL_UNSIGNED_BYTE, blob)
+            created.sprite_textures[spritenum] = int(tex)
+            created.sprite_info[spritenum] = (w, h)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+
     @staticmethod
     def _upload_lut(blob: bytes, w: int, h: int, internal: int,
                     fmt: int) -> int:
@@ -199,6 +242,7 @@ class GlResources:
             ids = [self.wall_vbo, self.wall_ibo, self.plane_vbo]
             GL.glDeleteBuffers(3, [i for i in ids if i])
             tids = (list(self.wall_textures.values())
+                    + list(self.sprite_textures.values())
                     + [self.flat_array, self.colormap_tex,
                        self.palette_tex])
             tids = [t for t in tids if t]
@@ -209,7 +253,10 @@ class GlResources:
         finally:
             self.wall_vbo = self.wall_ibo = self.plane_vbo = 0
             self.wall_batches = []
+            self.masked_batches = []
             self.wall_textures = {}
+            self.sprite_textures = {}
+            self.sprite_info = {}
             self.wall_info = {}
             self.plane_count = 0
             self.flat_array = 0

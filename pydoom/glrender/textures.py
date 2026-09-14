@@ -39,8 +39,10 @@ from pydoom.textures import FLAT_SIZE, TextureManager
 
 __all__ = [
     "FlatTextureSet",
+    "SpriteTextureSet",
     "WallTextureSet",
     "build_flat_textures",
+    "build_sprite_textures",
     "build_wall_textures",
     "flatnums_used",
     "wall_texnums_used",
@@ -65,6 +67,20 @@ class FlatTextureSet:
     order: list[int] = field(default_factory=list)  # flatnums, sorted
     index_of: dict[int, int] = field(default_factory=dict)
     blob: bytes = b""
+
+
+@dataclass
+class SpriteTextureSet:
+    """Per-patch RG8 blobs (index + opaque mask) plus sizes.
+
+    Sprite lumps decode via column_pixels (full-height canvas): same
+    (pixels, mask) contract as wall get_column, so masked edges and
+    holes survive identically. spritenum is the texman-relative patch
+    index (get_sprite_patch domain)."""
+
+    order: list[int] = field(default_factory=list)  # spritenums, sorted
+    blobs: list[bytes] = field(default_factory=list)  # RG8 each
+    sizes: list[tuple[int, int]] = field(default_factory=list)
 
 
 def wall_texnums_used(wall_geometry) -> list:
@@ -112,4 +128,23 @@ def build_flat_textures(texman: TextureManager,
         out.index_of[flatnum] = len(parts)
         parts.append(flat)
     out.blob = b"".join(parts)
+    return out
+
+
+def build_sprite_textures(texman: TextureManager,
+                          spritenums) -> SpriteTextureSet:
+    """Assemble RG8 blobs for sprite patches (same channel contract
+    as walls: R = index, G = 0/255 mask, row 0 = patch top)."""
+    out = SpriteTextureSet()
+    for spritenum in sorted(spritenums):
+        patch = texman.get_sprite_patch(spritenum)
+        blob = np.zeros((patch.height, patch.width, 2),
+                        dtype=np.uint8)
+        for x in range(patch.width):
+            pixels, mask = patch.column_pixels(x)
+            blob[:, x, 0] = np.frombuffer(pixels, dtype=np.uint8)
+            blob[:, x, 1] = np.frombuffer(mask, dtype=np.uint8) * 255
+        out.order.append(spritenum)
+        out.blobs.append(blob.tobytes())
+        out.sizes.append((patch.width, patch.height))
     return out

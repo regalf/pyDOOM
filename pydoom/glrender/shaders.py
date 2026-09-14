@@ -27,6 +27,8 @@ from __future__ import annotations
 __all__ = [
     "PLANE_FRAG",
     "PLANE_VERT",
+    "SPRITE_FRAG",
+    "SPRITE_VERT",
     "WALL_FRAG",
     "WALL_VERT",
     "compile_program",
@@ -154,6 +156,45 @@ void main() {
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
     }
+    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+}
+"""
+
+
+SPRITE_VERT = """\
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aUv;
+layout(location = 2) in float aLight;
+uniform mat4 uViewProj;
+out vec2 vUv;
+out float vLight;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vUv = aUv;
+    vLight = aLight;
+}
+"""
+
+SPRITE_FRAG = """\
+#version 330 core
+in vec2 vUv;
+in float vLight;
+uniform sampler2D uSpriteTex;
+uniform sampler2D uColormap;
+uniform sampler2D uPalette;
+uniform float uWrap;
+uniform float uTexH;
+out vec4 oColor;
+void main() {
+    vec2 rg = texelFetch(uSpriteTex,
+                         ivec2(int(mod(vUv.x, uWrap)),
+                               int(mod(vUv.y, uTexH))), 0).rg;
+    if (rg.g < 0.5) discard;
+    int idx = int(rg.r * 255.0 + 0.5);
+    int lit = int(texelFetch(uColormap,
+                             ivec2(idx, int(vLight + 0.5)), 0).r
+                  * 255.0 + 0.5);
     oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
 }
 """

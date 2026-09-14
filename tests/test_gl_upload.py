@@ -106,11 +106,14 @@ def test_light_luts_match_renderer_tables():
 @requires_wad
 def test_plan_wall_batches_cover_and_group():
     _texman, walls, _planes, wtex, _ftex, _cmap, _pal = load_e1m1_sets()
-    index, batches = plan_wall_batches(walls.quads)
+    index, batches, masked = plan_wall_batches(walls.quads)
+    opaque_quads = [q for q in walls.quads if q.tier != "masked"]
+    masked_quads = [q for q in walls.quads if q.tier == "masked"]
     assert len(index) == len(walls.quads) * 6
-    # NOTE: every quad exactly once, batches one texnum each.
+    # NOTE: every quad exactly once, in its own list; each batch one
+    # texnum with valid triangles.
     seen = []
-    for texnum, start, count in batches:
+    for texnum, start, count in list(batches) + list(masked):
         assert count % 6 == 0 and count > 0
         for k in range(start, start + count, 6):
             q = int(index[k]) // 4
@@ -123,8 +126,14 @@ def test_plan_wall_batches_cover_and_group():
             seen.append(q)
     assert sorted(seen) == list(range(len(walls.quads)))
     assert [b[0] for b in batches] == sorted(
-        {q.texnum for q in walls.quads})  # NOTE: deterministic order
-    assert len(batches) == len(wtex.order) == 32  # E1M1 golden
+        {q.texnum for q in opaque_quads})  # NOTE: deterministic order
+    assert [b[0] for b in masked] == sorted(
+        {q.texnum for q in masked_quads})
+    # NOTE: one texnum may serve both lists (E1M1: 17 does); the
+    # union covers every referenced texture exactly once in the set.
+    assert ({b[0] for b in batches} | {b[0] for b in masked}
+            == set(wtex.order))
+    assert len(wtex.order) == 32  # E1M1 golden
 
 
 def _gl_context():

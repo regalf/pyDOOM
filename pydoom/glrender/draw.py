@@ -19,7 +19,11 @@ from pydoom import tables
 from pydoom.fixed import FRACBITS, fixed_div
 from pydoom.glrender import shaders
 from pydoom.glrender.light import scalelight_lut, zlight_lut
-from pydoom.renderer import FIELDOFVIEW, SCREENWIDTH
+from pydoom.renderer import (
+    FIELDOFVIEW,
+    MAXVISSPRITES,
+    SCREENWIDTH,
+)
 
 __all__ = ["FrameRenderer", "camera_frame", "focal_x_factor"]
 
@@ -83,6 +87,8 @@ class FrameRenderer:
                                                  shaders.WALL_FRAG)
         self.plane_prog = shaders.compile_program(shaders.PLANE_VERT,
                                                   shaders.PLANE_FRAG)
+        self.sprite_prog = shaders.compile_program(
+            shaders.SPRITE_VERT, shaders.SPRITE_FRAG)
         self._scalelight = res._upload_lut(scalelight_lut(), 48, 16,
                                            GL.GL_R8, GL.GL_RED)
         self._zlight = res._upload_lut(zlight_lut(), 128, 16,
@@ -91,7 +97,10 @@ class FrameRenderer:
                 (self.wall_prog, (("uWallTex", 0), ("uScaleLight", 1),
                                   ("uColormap", 2), ("uPalette", 3))),
                 (self.plane_prog, (("uFlatArray", 0), ("uZLight", 1),
-                                   ("uColormap", 2), ("uPalette", 3)))):
+                                   ("uColormap", 2), ("uPalette", 3))),
+                (self.sprite_prog, (("uSpriteTex", 0),
+                                    ("uColormap", 2),
+                                    ("uPalette", 3)))):
             GL.glUseProgram(prog)
             for name, unit in samplers:
                 GL.glUniform1i(self._loc(prog, name), unit)
@@ -103,6 +112,14 @@ class FrameRenderer:
         self._plane_vao = self._make_vao(
             res.plane_vbo, 7,
             [(0, 3, 0), (1, 2, 3), (2, 1, 5), (3, 1, 6)], 0)
+        # NOTE: sprite VBO/IBO are refilled per frame (dynamic
+        # billboards); sized for MAXVISSPRITES quads like the
+        # software vissprite cap.
+        self._sprite_vbo = self._new_dynamic(MAXVISSPRITES * 4 * 6)
+        self._sprite_ibo = self._new_dynamic(MAXVISSPRITES * 6, True)
+        self._sprite_vao = self._make_vao(
+            self._sprite_vbo, 6, [(0, 3, 0), (1, 2, 3), (2, 1, 5)],
+            self._sprite_ibo)
         GL.glDisable(GL.GL_DITHER)  # NOTE: LSB-exact readback parity
         GL.glEnable(GL.GL_DEPTH_TEST)
         GL.glDepthFunc(GL.GL_LESS)
@@ -117,6 +134,22 @@ class FrameRenderer:
             loc = int(GL.glGetUniformLocation(prog, name))
             self._uni[key] = loc
         return loc
+
+    @staticmethod
+    def _new_dynamic(nfloats: int, ints: bool = False) -> int:
+        """Empty dynamic buffer (orphaned + refilled per frame)."""
+        import numpy as np
+        from OpenGL import GL
+        buf = int(GL.glGenBuffers(1))
+        dtype = np.uint32 if ints else np.float32
+        target = (GL.GL_ELEMENT_ARRAY_BUFFER if ints
+                  else GL.GL_ARRAY_BUFFER)
+        GL.glBindBuffer(target, buf)
+        GL.glBufferData(target,
+                        np.zeros(nfloats, dtype=dtype).nbytes, None,
+                        GL.GL_DYNAMIC_DRAW)
+        GL.glBindBuffer(target, 0)
+        return buf
 
     @staticmethod
     def _make_vao(vbo: int, stride_floats: int, attribs: list,
@@ -145,9 +178,12 @@ class FrameRenderer:
 
     def render(self, viewx: int, viewy: int, viewz: int,
                angle_bam: int, extra_light: int = 0,
-               fullbright: bool = False) -> None:
-        """Draw walls + planes for one camera (raises on GL error:
-        silent corruption is worse than a loud test failure)."""
+               fullbright: bool = False, sprites=None) -> None:
+        """Draw walls + planes (+ optional sprite billboards) for one
+        camera (raises on GL error: silent corruption is worse than a
+        loud test failure). Sprites draw last, depth-tested with
+        depth writes on like everything else (Doom has no
+        translucency, so order is irrelevant)."""
         from OpenGL import GL
         res = self._res
         vp, (dx, dy) = camera_frame(viewx, viewy, viewz, angle_bam,
@@ -183,6 +219,21 @@ class FrameRenderer:
             GL.glDrawElements(GL.GL_TRIANGLES, count,
                               GL.GL_UNSIGNED_INT,
                               ctypes.c_void_p(start * 4))
+        # NOTE: masked mids ride the same program/VBO (alpha-tested
+        # holes, depth written like opaque: Doom has no translucency,
+        # so draw order among depth writers is irrelevant).
+        for texnum, start, count in res.masked_batches:
+            _w, h, wrap = res.wall_info[texnum]
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D,
+                             res.wall_textures[texnum])
+            GL.glUniform1f(self._loc(self.wall_prog, "uWrap"),
+                           float(wrap))
+            GL.glUniform1f(self._loc(self.wall_prog, "uTexH"),
+                           float(h))
+            GL.glDrawElements(GL.GL_TRIANGLES, count,
+                              GL.GL_UNSIGNED_INT,
+                              ctypes.c_void_p(start * 4))
         GL.glUseProgram(self.plane_prog)
         GL.glUniformMatrix4fv(self._loc(self.plane_prog, "uViewProj"),
                               1, True, vp)
@@ -205,11 +256,72 @@ class FrameRenderer:
         GL.glBindVertexArray(self._plane_vao)
         if res.plane_count:
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, res.plane_count)
+        if sprites:
+            self.draw_sprites(res, sprites, vp)
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
         err = GL.glGetError()
         if err != GL.GL_NO_ERROR:
             raise RuntimeError(f"GL error {err:#x} in render")
+
+    def draw_sprites(self, res, billboards, vp) -> None:
+        """Fill the dynamic VBO with billboards grouped by patch and
+        draw them (depth-tested, depth written: order-free)."""
+        import numpy as np
+        from OpenGL import GL
+        assert len(billboards) <= MAXVISSPRITES
+        groups: dict = {}
+        for bb in billboards:
+            groups.setdefault(bb.lump, []).append(bb)
+        verts = np.zeros((len(billboards) * 4, 6), dtype=np.float32)
+        index = np.zeros(len(billboards) * 6, dtype=np.uint32)
+        pos = 0
+        ranges = []
+        for lump in sorted(groups):
+            start = pos
+            for bb in groups[lump]:
+                v = pos // 6 * 4
+                verts[v + 0] = (bb.left_x, bb.left_y, bb.z_bottom,
+                                bb.u0, bb.v0, bb.colormap)
+                verts[v + 1] = (bb.right_x, bb.right_y, bb.z_bottom,
+                                bb.u1, bb.v0, bb.colormap)
+                verts[v + 2] = (bb.right_x, bb.right_y, bb.z_top,
+                                bb.u1, bb.v1, bb.colormap)
+                verts[v + 3] = (bb.left_x, bb.left_y, bb.z_top,
+                                bb.u0, bb.v1, bb.colormap)
+                index[pos:pos + 6] = (v, v + 1, v + 2,
+                                      v, v + 2, v + 3)
+                pos += 6
+            ranges.append((lump, start, pos - start))
+        GL.glUseProgram(self.sprite_prog)
+        GL.glUniformMatrix4fv(self._loc(self.sprite_prog, "uViewProj"),
+                              1, True, vp)
+        GL.glActiveTexture(GL.GL_TEXTURE2)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
+        GL.glActiveTexture(GL.GL_TEXTURE3)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.palette_tex)
+        GL.glBindVertexArray(self._sprite_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._sprite_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
+                        GL.GL_DYNAMIC_DRAW)
+        GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self._sprite_ibo)
+        GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, index.nbytes,
+                        index, GL.GL_DYNAMIC_DRAW)
+        for lump, start, count in ranges:
+            w, h = res.sprite_info[lump]
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D,
+                             res.sprite_textures[lump])
+            GL.glUniform1f(self._loc(self.sprite_prog, "uWrap"),
+                           float(w))
+            GL.glUniform1f(self._loc(self.sprite_prog, "uTexH"),
+                           float(h))
+            GL.glDrawElements(GL.GL_TRIANGLES, count,
+                              GL.GL_UNSIGNED_INT,
+                              ctypes.c_void_p(start * 4))
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in draw_sprites")
 
     def readback(self) -> np.ndarray:
         """Top-down RGB framebuffer (software-fb layout)."""
@@ -225,8 +337,12 @@ class FrameRenderer:
             from OpenGL import GL
             GL.glDeleteProgram(self.wall_prog)
             GL.glDeleteProgram(self.plane_prog)
-            GL.glDeleteVertexArrays(2, [self._wall_vao,
-                                        self._plane_vao])
+            GL.glDeleteProgram(self.sprite_prog)
+            GL.glDeleteVertexArrays(3, [self._wall_vao,
+                                        self._plane_vao,
+                                        self._sprite_vao])
+            GL.glDeleteBuffers(2, [self._sprite_vbo,
+                                   self._sprite_ibo])
             GL.glDeleteTextures(2, [self._scalelight, self._zlight])
         except Exception:  # noqa: BLE001, S110 - teardown never raises
             pass
