@@ -51,7 +51,7 @@ def main() -> int:
         ver = GL.glGetString(GL.GL_VERSION)
         if not ver:
             raise ValueError("no GL version")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any GL failure exits 2
         print(f"gl bench: no GL context ({exc}), needs a display")
         pygame.quit()
         return 2
