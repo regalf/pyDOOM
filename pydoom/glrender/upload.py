@@ -77,11 +77,12 @@ class GlResources:
 
     @classmethod
     def create(cls, wall_geo, plane_geo, wall_tex, flat_tex,
-               colormap: bytes, palette: bytes, sprite_tex=None):
+               colormap: bytes, playpal: bytes, sprite_tex=None):
         """Upload everything; None (with best-effort cleanup) on any
         GL failure. wall_tex/flat_tex are WallTextureSet /
         FlatTextureSet; sprite_tex an optional SpriteTextureSet;
-        colormap/palette the light.py LUT bytes."""
+        colormap the light.py LUT bytes; playpal the FULL PLAYPAL
+        lump (14 palettes: damage/bonus flashes ride uPalIndex)."""
         from OpenGL import GL
         created = cls()
         try:
@@ -92,8 +93,7 @@ class GlResources:
                 cls._upload_sprites(created, sprite_tex)
             created.colormap_tex = cls._upload_lut(
                 colormap, 256, 32, GL.GL_R8, GL.GL_RED)
-            created.palette_tex = cls._upload_lut(
-                palette, 256, 1, GL.GL_RGB8, GL.GL_RGB)
+            created.palette_tex = cls._upload_palette(playpal)
         except Exception:  # noqa: BLE001 - any GL failure falls back
             created.delete()
             return None
@@ -214,6 +214,29 @@ class GlResources:
             created.sprite_textures[spritenum] = int(tex)
             created.sprite_info[spritenum] = (w, h)
         GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+
+    @staticmethod
+    def _upload_palette(playpal: bytes) -> int:
+        """Full PLAYPAL lump as a 256x14 RGB8 array (one layer per
+        flash slot; uPalIndex selects, base palette is layer 0)."""
+        from OpenGL import GL
+        assert len(playpal) >= 14 * 768, len(playpal)
+        tex = GL.glGenTextures(1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, tex)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                           GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                           GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                           GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D_ARRAY,
+                           GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexImage3D(GL.GL_TEXTURE_2D_ARRAY, 0, GL.GL_RGB8,
+                        256, 1, 14, 0,
+                        GL.GL_RGB, GL.GL_UNSIGNED_BYTE,
+                        bytes(playpal[:14 * 768]))
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, 0)
+        return int(tex)
 
     @staticmethod
     def _upload_lut(blob: bytes, w: int, h: int, internal: int,

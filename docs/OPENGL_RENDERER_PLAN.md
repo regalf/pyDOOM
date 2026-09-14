@@ -155,6 +155,22 @@ Once per map load (not per frame; invalidated on level change):
 
 ### Phase 4 — overlay compositing (keep index path)
 
+DONE. Menu/statusbar/HUD/automap/intermission/pause/melt keep
+drawing into the 320x200 index fb; GL uploads it over the FBO world
+blit (nearest, chunky look kept) with index 255 reserved
+transparent (verified unused by all overlay art), so sparse art
+floats over the live world. Damage/bonus flashes ride a 256x14
+palette array + uPalIndex on every program (world included).
+Weapon gun draws as a GL quad BEFORE the overlay (bar covers its
+base, like the blit order); viewer gun selection refactored into
+gun_draws() shared by both paths. Automap collects framebuffer
+segments (same clip/colors) drawn as GL lines (100% within 1px both
+ways). Version/finale text via baked-alpha quads (software blit
+math replicated). Demos force the software present path (checksums
+touch the full fb). Extra-hud/debug/help/automap-hint text stays
+software-only. Present parity gates: level, menu, layering,
+version, automap.
+
 - Menu, status bar, HUD, automap, intermission, pause, and the melt
   (`wipe.py`) all keep drawing into the existing `(200,320)` index
   framebuffer. GL uploads that fb as an overlay texture and draws it

@@ -51,7 +51,7 @@ def load_e1m1_sets():
     wtex = build_wall_textures(texman, wall_texnums_used(walls))
     ftex = build_flat_textures(texman, flatnums_used(planes))
     cmap = colormap_lut(bytes(wad.cache_lump("COLORMAP")))
-    pal = palette_lut(bytes(wad.read_lump("PLAYPAL")))
+    pal = bytes(wad.read_lump("PLAYPAL"))
     return texman, walls, planes, wtex, ftex, cmap, pal
 
 
@@ -205,11 +205,15 @@ def test_create_uploads_byte_exact():
         back = GL.glGetTexImage(GL.GL_TEXTURE_2D, 0, GL.GL_RED,
                                 GL.GL_UNSIGNED_BYTE)
         assert bytes(back) == cmap
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.palette_tex)
-        back = GL.glGetTexImage(GL.GL_TEXTURE_2D, 0, GL.GL_RGB,
-                                GL.GL_UNSIGNED_BYTE)
-        assert bytes(back) == pal
-        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+        # NOTE: palette is a 256x14 array (one layer per flash slot).
+        from pydoom.wad import WadFile
+        full = bytes(WadFile(WAD_PATH).read_lump("PLAYPAL"))
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
+        out = np.zeros((14, 1, 256, 3), dtype=np.uint8)
+        GL.glGetTexImage(GL.GL_TEXTURE_2D_ARRAY, 0, GL.GL_RGB,
+                         GL.GL_UNSIGNED_BYTE, out)
+        assert out.tobytes() == full
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, 0)
         res.delete()
         assert res.wall_vbo == 0 and res.wall_textures == {}
     finally:

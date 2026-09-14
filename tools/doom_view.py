@@ -316,6 +316,8 @@ def main() -> int:
     gl_info = None  # GL version string when the opengl path is live
     gl_live = False  # set after the window dance (try_init below)
     gl_res = None  # GlResources for the current map (or None)
+    gl_frame = None  # FrameRenderer bound to gl_res (or None)
+    gl_feed = None  # SpriteFeed for live-mobj billboards (or None)
 
     def refresh_gl_resources(game_map) -> None:
         """(Re)build GPU resources for game_map (milestone H).
@@ -324,19 +326,30 @@ def main() -> int:
         runs never enter (gl_live False). Never raises: any failure
         drops back to software presentation mid-session.
         """
-        nonlocal gl_res
+        nonlocal gl_res, gl_frame, gl_feed
+        if gl_frame is not None:
+            try:
+                gl_frame.close()
+            except Exception:  # noqa: BLE001, S110 - teardown never fail
+                pass
+            gl_frame = None
+        gl_text_cache.clear()  # NOTE: ids died with the old frame
         if gl_res is not None:
             gl_res.delete()
             gl_res = None
+        gl_feed = None
         if not gl_live or gl_info is None:
             return
         try:
             import time
 
+            from pydoom.glrender import draw as gldraw
             from pydoom.glrender import light as gllight
             from pydoom.glrender import preprocess as glpre
+            from pydoom.glrender import sprites as glsprites
             from pydoom.glrender import textures as gltex
             from pydoom.glrender import upload as glup
+            from pydoom.renderer import init_sprite_defs
             t0 = time.time()
             walls = glpre.build_walls(game_map, texman,
                                       renderer.skyflatnum)
@@ -348,14 +361,20 @@ def main() -> int:
                 | {renderer.skytexture})
             ftex = gltex.build_flat_textures(
                 texman, gltex.flatnums_used(planes))
+            stex = gltex.build_sprite_textures(
+                texman, range(texman.numsprites))
             cmap = gllight.colormap_lut(bytes(
                 wad.cache_lump("COLORMAP")))
-            pal = gllight.palette_lut(bytes(
-                wad.read_lump("PLAYPAL")))
-            gl_res = glup.GlResources.create(walls, planes, wtex,
-                                             ftex, cmap, pal)
+            pal = bytes(wad.read_lump("PLAYPAL"))
+            gl_res = glup.GlResources.create(
+                walls, planes, wtex, ftex, cmap, pal,
+                sprite_tex=stex)
+            gl_feed = glsprites.SpriteFeed(sprites=init_sprite_defs(
+                wad, texman.firstsprite, texman.lastsprite))
+            if gl_res is not None:
+                gl_frame = gldraw.FrameRenderer(gl_res, WIN_W, WIN_H)
             dt = (time.time() - t0) * 1000
-            if gl_res is None:
+            if gl_res is None or gl_frame is None:
                 print("gl resources: upload failed "
                       "(software-presented)")
             else:
@@ -366,6 +385,97 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - GL never breaks play
             print(f"gl resources: {exc} (software-presented)")
             gl_res = None
+            gl_frame = None
+            gl_feed = None
+
+    gl_text_cache: dict = {}  # text key -> (tex_id, w, h)
+
+    def gl_text_line(text: str, rgb, alpha: int):
+        """Upload a font line once (RGBA, surface alpha baked in)."""
+        import numpy as np
+        img = font.render(text, True, rgb)
+        w, h = img.get_width(), img.get_height()
+        arr = np.frombuffer(pygame.image.tobytes(img, "RGBA"),
+                            dtype=np.uint8).reshape(h, w, 4).copy()
+        arr[:, :, 3] = (arr[:, :, 3].astype(np.uint16)
+                        * alpha // 255).astype(np.uint8)
+        return gl_frame.upload_text(arr.tobytes(), w, h), w, h
+
+    def gl_draw_version() -> None:
+        """Top-right build tag (always on, like software)."""
+        if font is None or gl_frame is None:
+            return
+        key = "version"
+        if key not in gl_text_cache:
+            tex_id, w, h = gl_text_line(f"v{ver}", (255, 255, 255),
+                                        96)
+            gl_text_cache[key] = (tex_id, w, h)
+        tex_id, w, h = gl_text_cache[key]
+        gl_frame.draw_text_quad(tex_id, WIN_W - 8 - w, 8, w, h)
+
+    def gl_finale_text() -> None:
+        """Centered finale lines (software positions mirrored)."""
+        if font is None or gl_frame is None:
+            return
+        big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
+        lines = [("EPISODE 1 COMPLETE", big, WIN_H // 2 - 130,
+                  255)]
+        for i, text_line in enumerate(_E1TEXT_LINES):
+            small = font.render(text_line, True, (200, 200, 200))
+            lines.append((text_line, small, WIN_H // 2 - 90 + i * 20,
+                          255))
+        sub = font.render("ANY KEY: TITLE", True, (255, 255, 255))
+        lines.append(("ANY KEY: TITLE", sub, WIN_H // 2 + 130, 255))
+        for key, img, y, alpha in lines:
+            ck = ("finale", key)
+            if ck not in gl_text_cache:
+                w, h = img.get_width(), img.get_height()
+                import numpy as np
+                arr = np.frombuffer(
+                    pygame.image.tobytes(img, "RGBA"),
+                    dtype=np.uint8).reshape(h, w, 4).copy()
+                arr[:, :, 3] = (arr[:, :, 3].astype(np.uint16)
+                                * alpha // 255).astype(np.uint8)
+                gl_text_cache[ck] = (gl_frame.upload_text(
+                    arr.tobytes(), w, h), w, h)
+            tex_id, w, h = gl_text_cache[ck]
+            gl_frame.draw_text_quad(tex_id, (WIN_W - w) // 2, y, w, h)
+
+    def gl_present_all(fb, pal_idx) -> None:
+        """GL present: live world (level/menu) + overlay + text."""
+        if has_level and gamestate in ("level", "menu"):
+            bbs = gl_feed.project(
+                mobjs, int(cam.x * 65536), int(cam.y * 65536),
+                cam.bam, texman) if gl_feed is not None else []
+            if renderer.skytexture in gl_res.wall_textures:
+                sky = (gl_res.wall_textures[renderer.skytexture],
+                       gl_res.wall_info[renderer.skytexture][1])
+            else:
+                sky = None
+            guns = []
+            for base, frame, bobx, boby in gun_draws():
+                spr = renderer.sprite_num_for_base(base, frame)
+                if spr is None:
+                    continue
+                patch = texman.get_sprite_patch(spr)
+                tex_id = gl_res.sprite_textures.get(spr)
+                if tex_id is None:
+                    continue
+                guns.append((tex_id, patch.width, patch.height,
+                             patch.leftoffset, patch.topoffset,
+                             bobx, boby))
+            gl_frame.render(
+                int(cam.x * 65536), int(cam.y * 65536),
+                int(cam.viewz * 65536), cam.bam,
+                extra_light=flash_light(),
+                fullbright=bool(state["ps"].powers.get(PW_INFRARED)),
+                sprites=bbs, sky=sky, psprites=guns,
+                pal_index=pal_idx)
+            gl_frame.blit_world()
+        gl_frame.present_overlay(fb, pal_idx)
+        if gamestate == "finale":
+            gl_finale_text()
+        gl_draw_version()
 
     def load_map(marker: str, keep_ps=None, keep_hp: int | None = None):
         game_map = Map.from_wad(wad, marker)
@@ -470,10 +580,9 @@ def main() -> int:
     QUITSOUNDS = ("pldeth", "dmpain", "popain", "slop", "telept",
                   "posit1", "posit3", "sgtatk")
 
-    def render_scene():
-        """One frozen-sim scene frame (psprites + status bar included)."""
-        # NOTE: muzzle-flash room light (A_Light1/2 levels, with the
-        # shotgun/BFG step-up mid-flash), like the psprite flash.
+    def flash_light() -> int:
+        """Muzzle-flash room light (A_Light1/2 levels, with the
+        shotgun/BFG step-up mid-flash), like the psprite flash."""
         ps = state["ps"]
         extra = 0
         left = state.get("flash_until", 0) - state.get("tics", 0)
@@ -483,13 +592,14 @@ def main() -> int:
             if split is not None and \
                     weapons.FLASH_TICS[ps.readyweapon] - left >= split[0]:
                 extra = split[1]
-        fb = renderer.render_view(
-            game_map, int(cam.x * 65536), int(cam.y * 65536), cam.bam,
-            int(cam.viewz * 65536), mobjs, extra_light=extra,
-            fullbright=bool(state["ps"].powers.get(PW_INFRARED)),
-        )
-        # NOTE: P_DrawPlayerSprites lite: ready gun + muzzle flash, bob,
-        # lower/raise travel while switching, kick frame while firing.
+        return extra
+
+    def gun_draws() -> list:
+        """(base, frame, bobx, boby) in draw order (P_DrawPlayerSprites
+        lite: ready gun + muzzle flash, bob, lower/raise travel while
+        switching, kick frame while firing). The software path draws
+        these into the fb; the GL path resolves them to psprite quads
+        (same selection incl. the pick-or-A fallback)."""
         ps = state["ps"]
         body, flash = weapons.PSPRITES[ps.readyweapon]
         bob, amp = state.get("tics", 0), state.get("bobamp", 0)
@@ -511,6 +621,7 @@ def main() -> int:
             firing = attacking = False
         else:
             yoff = 0
+        draws = []
         if attacking:
             # NOTE: body frames ride the full attack cycle (p_pspr.c),
             # so kicks read instead of blinking past.
@@ -520,25 +631,46 @@ def main() -> int:
                                                state.get("atkflip", 0),
                                                state.get("atkheld", False))
             pick = timeline[min(len(timeline) - 1, max(0, elapsed))]
-            if not renderer.draw_psprite(fb, body, bobx, boby + yoff,
-                                         pick):
-                renderer.draw_psprite(fb, body, bobx, boby + yoff, "A")
+            if renderer.sprite_num_for_base(body, pick) is not None:
+                draws.append((body, pick, bobx, boby + yoff))
+            else:
+                draws.append((body, "A", bobx, boby + yoff))
         elif ps.pendingweapon != ps.readyweapon:
             # NOTE: lower/raise states show each gun's own up/down
             # frame (all A, saw C: S_SAWUP/S_SAWDOWN run on frame 2).
             shown = (ps.pendingweapon if travel >= 0.5
                      else ps.readyweapon)
             rest = "C" if shown == WP_CHAINSAW else "A"
-            renderer.draw_psprite(fb, body, bobx, boby + yoff, rest)
+            draws.append((body, rest, bobx, boby + yoff))
         else:
             # NOTE: ready guns hold frame A, except the idling saw
             # (S_SAW/S_SAWB alternate C/D every 4 tics, blade up).
-            renderer.draw_psprite(
-                fb, body, bobx, boby + yoff,
-                weapons.idle_frame(ps.readyweapon,
-                                   state.get("tics", 0)))
+            draws.append((body, weapons.idle_frame(
+                ps.readyweapon, state.get("tics", 0)),
+                bobx, boby + yoff))
         if firing and flash is not None:
-            renderer.draw_psprite(fb, flash, bobx, boby + yoff)
+            draws.append((flash, "A", bobx, boby + yoff))
+        return draws
+
+    def render_scene(with_view: bool = True):
+        """One frozen-sim scene frame (psprites + status bar included).
+
+        with_view False skips the 3D raycast and the gun blits (GL
+        path: the world and the gun draw natively, the fb carries
+        only overlay art over a transparent-255 background)."""
+        ps = state["ps"]
+        extra = flash_light()
+        if with_view:
+            fb = renderer.render_view(
+                game_map, int(cam.x * 65536), int(cam.y * 65536),
+                cam.bam, int(cam.viewz * 65536), mobjs,
+                extra_light=extra,
+                fullbright=bool(state["ps"].powers.get(PW_INFRARED)),
+            )
+            for base, frame, bobx, boby in gun_draws():
+                renderer.draw_psprite(fb, base, bobx, boby, frame)
+        else:
+            fb = np.full((200, 320), 255, dtype=np.uint8)
         # NOTE: classic bottom strip (covers the gun base, like vanilla).
         draw_status_bar(renderer, fb, ps, player_mo.health,
                         state.get("facelump", "STFST00"))
@@ -1743,20 +1875,36 @@ def main() -> int:
                 trace_sim_tic()
 
         audio.set_listener(player_mo.x, player_mo.y, cam.bam)
+        use_gl = (gl_live and gl_frame is not None
+                  and not (recording or replaying))
         if amap is not None:
             # NOTE: fullscreen automap (TAB): the game keeps running.
             amap.plr_x, amap.plr_y = player_mo.x, player_mo.y
             amap.plr_angle = cam.bam
-            screen.fill((0, 0, 0))
-            amap.draw(screen, mobjs
-                       if (amap.cheating == 2
-                           or state["ps"].powers.get(PW_ALLMAP))
-                       else None)
-            if font is not None:
+            if use_gl:
+                try:
+                    segs = amap.collect_segments(mobjs
+                             if (amap.cheating == 2
+                                 or state["ps"].powers.get(PW_ALLMAP))
+                             else None)
+                    gl_frame.clear_window()
+                    gl_frame.draw_automap(segs)
+                    gl_draw_version()
+                except Exception as exc:  # noqa: BLE001 - frame fallback
+                    print(f"gl automap: {exc} (software fallback)")
+                    use_gl = False
+            if not use_gl:
+                screen.fill((0, 0, 0))
+                amap.draw(screen, mobjs
+                           if (amap.cheating == 2
+                               or state["ps"].powers.get(PW_ALLMAP))
+                           else None)
+            if not use_gl and font is not None:
                 hint = font.render(
                     "AUTOMAP +-zoom F-follow G-grid TAB-close",
                     True, (180, 180, 180))
                 screen.blit(hint, (8, WIN_H - 24))
+            # NOTE: automap hint/help text stays software-only.
             pygame.display.flip()
             frames += 1
             if frames_opt is not None and frames >= frames_opt:
@@ -1771,7 +1919,7 @@ def main() -> int:
                 running = False
             continue
         if has_level:
-            fb = render_scene()
+            fb = render_scene(with_view=not use_gl)
         else:
             fb = np.zeros((200, 320), dtype=np.uint8)
             game_menu.draw_title(fb)  # NOTE: TITLESCREEN backdrop
@@ -1796,13 +1944,27 @@ def main() -> int:
         last_fb = fb.copy()
         if recording or replaying:
             demo_sum = (demo_sum + int(fb.sum())) % 1000000007
-        frame = pygame.image.frombuffer(
-            palette_luts[palette_index(state["ps"])][fb].tobytes(),
-            (SCREENWIDTH, SCREENHEIGHT), "RGB"
-        )
-        screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)), (0, 0))
-        if font is not None and gamestate in ("level", "menu", "wipe") \
-                and has_level:
+        if use_gl:
+            # NOTE: GL present (world + gun + overlay + text); any
+            # failure falls back to software for this frame (the
+            # fullscreen blit below overwrites the half-drawn back
+            # buffer, so recovery is clean).
+            try:
+                gl_present_all(fb, palette_index(state["ps"]))
+            except Exception as exc:  # noqa: BLE001 - frame fallback
+                print(f"gl present: {exc} (software fallback)")
+                use_gl = False
+        if not use_gl:
+            frame = pygame.image.frombuffer(
+                palette_luts[palette_index(state["ps"])][fb].tobytes(),
+                (SCREENWIDTH, SCREENHEIGHT), "RGB"
+            )
+            screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)),
+                        (0, 0))
+        if not use_gl and font is not None and gamestate in (
+                "level", "menu", "wipe") and has_level:
+            # NOTE: readout block + help line stay software-only (dev
+            # aids; the version tag and finale text ride GL quads).
             # NOTE: readout block (coords, AI, fps, version) shows with
             # --extra-hud (or --debug, as before), translucent, below
             # the red message line when one is up.
@@ -1860,7 +2022,7 @@ def main() -> int:
                 help_line += " [N noclip F freeze X AI PgUp/PgDn G mouse]"
             screen.blit(font.render(help_line, True, (180, 180, 180)),
                         (8, WIN_H - 120))
-        if font is not None and gamestate == "finale":
+        if not use_gl and font is not None and gamestate == "finale":
             big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
             screen.blit(big, (WIN_W // 2 - big.get_width() // 2,
                                WIN_H // 2 - 130))
@@ -1873,7 +2035,7 @@ def main() -> int:
                               True, (255, 255, 255))
             screen.blit(sub, (WIN_W // 2 - sub.get_width() // 2,
                               WIN_H // 2 + 130))
-        if font is not None:
+        if not use_gl and font is not None:
             # NOTE: build tag, always on top-right (~38% ghost): every
             # screenshot names its code, no flags needed for bug reports.
             ver_img = font.render(f"v{ver}", True, (255, 255, 255))

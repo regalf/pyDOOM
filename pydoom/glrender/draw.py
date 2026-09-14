@@ -24,6 +24,7 @@ from pydoom.renderer import (
     FIELDOFVIEW,
     FUZZOFFSETS,
     MAXVISSPRITES,
+    SCREENHEIGHT,
     SCREENWIDTH,
 )
 
@@ -97,6 +98,12 @@ class FrameRenderer:
                                                 shaders.SKY_FRAG)
         self.psprite_prog = shaders.compile_program(
             shaders.PSPRITE_VERT, shaders.PSPRITE_FRAG)
+        self.overlay_prog = shaders.compile_program(
+            shaders.OVERLAY_VERT, shaders.OVERLAY_FRAG)
+        self.text_prog = shaders.compile_program(shaders.TEXT_VERT,
+                                                 shaders.TEXT_FRAG)
+        self.auto_prog = shaders.compile_program(shaders.AUTO_VERT,
+                                                 shaders.AUTO_FRAG)
         self._scalelight = res._upload_lut(scalelight_lut(), 48, 16,
                                            GL.GL_R8, GL.GL_RED)
         self._zlight = res._upload_lut(zlight_lut(), 128, 16,
@@ -117,7 +124,11 @@ class FrameRenderer:
                                  ("uColormap", 2),
                                  ("uPalette", 3))),
                 (self.psprite_prog, (("uSpriteTex", 0),
-                                     ("uPalette", 3)))):
+                                     ("uPalette", 3))),
+                (self.overlay_prog, (("uOverlay", 0),
+                                     ("uPalette", 3))),
+                (self.text_prog, (("uTextTex", 0),)),
+                (self.auto_prog, ())):
             GL.glUseProgram(prog)
             for name, unit in samplers:
                 GL.glUniform1i(self._loc(prog, name), unit)
@@ -163,6 +174,20 @@ class FrameRenderer:
         self._psprite_vbo = self._new_dynamic(4 * 4)
         self._psprite_vao = self._make_vao(
             self._psprite_vbo, 4, [(0, 2, 0), (1, 2, 2)], 0)
+        # NOTE: overlay index texture (320x200, refilled per frame)
+        # plus an empty VAO (fullscreen triangle from gl_VertexID).
+        self._overlay_tex = self._new_tex2d(SCREENWIDTH, SCREENHEIGHT,
+                                            GL.GL_R8, GL.GL_RED, None)
+        self._overlay_vao = int(GL.glGenVertexArrays(1))
+        # NOTE: text/automap quads share one dynamic VBO layout
+        # ([ndc2, uv-or-color]); text uses its VAO, automap its own.
+        self._text_vbo = self._new_dynamic(4 * 4)
+        self._text_vao = self._make_vao(
+            self._text_vbo, 4, [(0, 2, 0), (1, 2, 2)], 0)
+        self._text_texs: list = []
+        self._auto_vbo = self._new_dynamic(4096 * 5)
+        self._auto_vao = self._make_vao(
+            self._auto_vbo, 5, [(0, 2, 0), (1, 3, 2)], 0)
         GL.glDisable(GL.GL_DITHER)  # NOTE: LSB-exact readback parity
         GL.glEnable(GL.GL_DEPTH_TEST)
         GL.glDepthFunc(GL.GL_LESS)
@@ -267,11 +292,15 @@ class FrameRenderer:
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
         return vao
 
+    def _pal(self, prog: int, pal_index: int) -> None:
+        from OpenGL import GL
+        GL.glUniform1i(self._loc(prog, "uPalIndex"), int(pal_index))
+
     def render(self, viewx: int, viewy: int, viewz: int,
                angle_bam: int, extra_light: int = 0,
                fullbright: bool = False, sprites=None,
                sky=None, frame_no: int | None = None,
-               psprites=None) -> None:
+               psprites=None, pal_index: int = 0) -> None:
         """Draw sky (optional) + walls + planes (+ optional sprite
         billboards, fuzz last over a complete backdrop, weapon
         psprites on top) for one camera (raises on GL error: silent
@@ -295,8 +324,9 @@ class FrameRenderer:
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         if sky is not None:
-            self.draw_sky(viewx, viewy, viewz, vp, *sky)
+            self.draw_sky(viewx, viewy, viewz, vp, pal_index, *sky)
         GL.glUseProgram(self.wall_prog)
+        self._pal(self.wall_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.wall_prog, "uViewProj"),
                               1, True, vp)
         GL.glUniform2f(self._loc(self.wall_prog, "uViewPos"),
@@ -311,7 +341,7 @@ class FrameRenderer:
         GL.glActiveTexture(GL.GL_TEXTURE2)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.palette_tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
         GL.glBindVertexArray(self._wall_vao)
         for texnum, start, count in res.wall_batches:
             _w, h, wrap = res.wall_info[texnum]
@@ -341,6 +371,7 @@ class FrameRenderer:
                               GL.GL_UNSIGNED_INT,
                               ctypes.c_void_p(start * 4))
         GL.glUseProgram(self.plane_prog)
+        self._pal(self.plane_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.plane_prog, "uViewProj"),
                               1, True, vp)
         GL.glUniform1f(self._loc(self.plane_prog, "uViewZ"),
@@ -358,15 +389,15 @@ class FrameRenderer:
         GL.glActiveTexture(GL.GL_TEXTURE2)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.palette_tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
         GL.glBindVertexArray(self._plane_vao)
         if res.plane_count:
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, res.plane_count)
         if sprites:
-            self.draw_sprites(res, sprites, vp)
+            self.draw_sprites(res, sprites, vp, pal_index)
         if psprites:
             for args in psprites:
-                self.draw_psprite(*args)
+                self.draw_psprite(*args, pal_index)
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
         err = GL.glGetError()
@@ -374,13 +405,14 @@ class FrameRenderer:
             raise RuntimeError(f"GL error {err:#x} in render")
 
     def draw_sky(self, viewx: int, viewy: int, viewz: int, vp,
-                 tex_id: int, tex_h: int) -> None:
+                 pal_index: int, tex_id: int, tex_h: int) -> None:
         """Sky cylinder first (no depth write: walls overdraw it)."""
         from OpenGL import GL
 
         from pydoom.glrender.sky import build_sky_verts
         verts = build_sky_verts(viewx, viewy, viewz)
         GL.glUseProgram(self.sky_prog)
+        self._pal(self.sky_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.sky_prog, "uViewProj"),
                               1, True, vp)
         GL.glUniform1f(self._loc(self.sky_prog, "uViewH"),
@@ -392,7 +424,7 @@ class FrameRenderer:
         GL.glActiveTexture(GL.GL_TEXTURE2)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.palette_tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, self._res.palette_tex)
         GL.glBindVertexArray(self._sky_vao)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._sky_vbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
@@ -406,7 +438,8 @@ class FrameRenderer:
         if err != GL.GL_NO_ERROR:
             raise RuntimeError(f"GL error {err:#x} in draw_sky")
 
-    def draw_sprites(self, res, billboards, vp) -> None:
+    def draw_sprites(self, res, billboards, vp,
+                       pal_index: int = 0) -> None:
         """Fill the dynamic VBO (normal billboards grouped by patch,
         fuzz quads in one trailing range) and draw: normal sprites
         first, then the fuzz pass over a copied index backdrop (the
@@ -452,12 +485,13 @@ class FrameRenderer:
                 emit(bb)
             fuzz_range = (start, pos - start)
         GL.glUseProgram(self.sprite_prog)
+        self._pal(self.sprite_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.sprite_prog, "uViewProj"),
                               1, True, vp)
         GL.glActiveTexture(GL.GL_TEXTURE2)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.palette_tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
         GL.glBindVertexArray(self._sprite_vao)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._sprite_vbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
@@ -478,12 +512,13 @@ class FrameRenderer:
                               GL.GL_UNSIGNED_INT,
                               ctypes.c_void_p(start * 4))
         if fuzz_range is not None:
-            self.draw_fuzz(*fuzz_range, vp)
+            self.draw_fuzz(*fuzz_range, vp, pal_index)
         err = GL.glGetError()
         if err != GL.GL_NO_ERROR:
             raise RuntimeError(f"GL error {err:#x} in draw_sprites")
 
-    def draw_fuzz(self, start: int, count: int, vp) -> None:
+    def draw_fuzz(self, start: int, count: int, vp,
+                    pal_index: int = 0) -> None:
         """Fuzz quads over a copied index backdrop (copy-then-sample:
         sampling the attached target would be a feedback loop)."""
         from OpenGL import GL
@@ -493,6 +528,7 @@ class FrameRenderer:
                                self._w, self._h)
         GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT0)
         GL.glUseProgram(self.fuzz_prog)
+        self._pal(self.fuzz_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.fuzz_prog, "uViewProj"),
                               1, True, vp)
         GL.glUniform1i(self._loc(self.fuzz_prog, "uFrame"),
@@ -506,7 +542,7 @@ class FrameRenderer:
         GL.glActiveTexture(GL.GL_TEXTURE2)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.palette_tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, self._res.palette_tex)
         GL.glBindVertexArray(self._sprite_vao)
         GL.glDrawElements(GL.GL_TRIANGLES, count,
                           GL.GL_UNSIGNED_INT,
@@ -517,7 +553,7 @@ class FrameRenderer:
 
     def draw_psprite(self, tex_id: int, w: int, h: int,
                        leftoff: int, topoff: int, bobx: int,
-                       boby: int) -> None:
+                       boby: int, pal_index: int = 0) -> None:
         """Weapon sprite overdraw (vanilla draw_psprite anchor, raw
         indices, no depth test). x0/y0 live in 320x200 space and scale
         to native like the software blit."""
@@ -536,6 +572,7 @@ class FrameRenderer:
             float(w), float(h),
         ], dtype=np.float32)
         GL.glUseProgram(self.psprite_prog)
+        self._pal(self.psprite_prog, pal_index)
         GL.glUniform1f(self._loc(self.psprite_prog, "uWrap"),
                        float(w))
         GL.glUniform1f(self._loc(self.psprite_prog, "uTexH"),
@@ -543,7 +580,7 @@ class FrameRenderer:
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, tex_id)
         GL.glActiveTexture(GL.GL_TEXTURE3)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, self._res.palette_tex)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, self._res.palette_tex)
         GL.glBindVertexArray(self._psprite_vao)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._psprite_vbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
@@ -555,13 +592,177 @@ class FrameRenderer:
         if err != GL.GL_NO_ERROR:
             raise RuntimeError(f"GL error {err:#x} in draw_psprite")
 
-    def readback(self) -> np.ndarray:
-        """Top-down RGB framebuffer (software-fb layout)."""
+    def blit_world(self) -> None:
+        """Copy the FBO world frame to the window (1:1 NEAREST);
+        overlay/text/automap draw on top of it afterwards."""
         from OpenGL import GL
+        GL.glBindFramebuffer(GL.GL_READ_FRAMEBUFFER, self._fbo)
+        GL.glBindFramebuffer(GL.GL_DRAW_FRAMEBUFFER, 0)
+        GL.glBlitFramebuffer(0, 0, self._w, self._h,
+                             0, 0, self._w, self._h,
+                             GL.GL_COLOR_BUFFER_BIT, GL.GL_NEAREST)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in blit_world")
+
+    def present_overlay(self, fb: np.ndarray, pal_index: int = 0,
+                        ) -> None:
+        """Blit the 320x200 index framebuffer over the world (menu /
+        HUD / statusbar / melt art, palette-flashed uniformly).
+        Index 255 is reserved transparent (verified unused by all
+        overlay art) so sparse art floats over the live world.
+        Draws to the WINDOW (default framebuffer), not the FBO."""
+        from OpenGL import GL
+        assert fb.shape == (SCREENHEIGHT, SCREENWIDTH)
+        assert fb.dtype == np.uint8
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+        GL.glUseProgram(self.overlay_prog)
+        self._pal(self.overlay_prog, pal_index)
+        GL.glUniform1i(self._loc(self.overlay_prog, "uFbW"),
+                       SCREENWIDTH)
+        GL.glUniform1i(self._loc(self.overlay_prog, "uFbH"),
+                       SCREENHEIGHT)
+        GL.glActiveTexture(GL.GL_TEXTURE0)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._overlay_tex)
+        GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, SCREENWIDTH,
+                           SCREENHEIGHT, GL.GL_RED, GL.GL_UNSIGNED_BYTE,
+                           np.ascontiguousarray(fb))
+        GL.glActiveTexture(GL.GL_TEXTURE3)
+        GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, self._res.palette_tex)
+        GL.glBindVertexArray(self._overlay_vao)
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glDepthMask(GL.GL_FALSE)
+        GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+        GL.glDepthMask(GL.GL_TRUE)
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glBindVertexArray(0)
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in present_overlay")
+
+    def upload_text(self, rgba: bytes, w: int, h: int) -> int:
+        """RGBA text image (pygame font surface with baked alpha)."""
+        from OpenGL import GL
+        assert len(rgba) == w * h * 4
+        tex = int(GL.glGenTextures(1))
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER,
+                           GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER,
+                           GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S,
+                           GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T,
+                           GL.GL_CLAMP_TO_EDGE)
+        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, w, h, 0,
+                        GL.GL_RGBA, GL.GL_UNSIGNED_BYTE, rgba)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+        self._text_texs.append(tex)
+        return tex
+
+    def draw_text_quad(self, tex_id: int, x: int, y: int, w: int,
+                       h: int) -> None:
+        """Topdown-pixel RGBA quad on the WINDOW (standard alpha
+        compositing, like a pygame RGBA blit)."""
+        import numpy as np
+        from OpenGL import GL
+        verts = np.array([
+            x / (self._w / 2) - 1.0, 1.0 - y / (self._h / 2), 0.0, 0.0,
+            x / (self._w / 2) - 1.0, 1.0 - (y + h) / (self._h / 2),
+            0.0, 1.0,
+            (x + w) / (self._w / 2) - 1.0, 1.0 - y / (self._h / 2),
+            1.0, 0.0,
+            (x + w) / (self._w / 2) - 1.0,
+            1.0 - (y + h) / (self._h / 2), 1.0, 1.0,
+        ], dtype=np.float32)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+        GL.glUseProgram(self.text_prog)
+        GL.glActiveTexture(GL.GL_TEXTURE0)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, tex_id)
+        GL.glBindVertexArray(self._text_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._text_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
+                        GL.GL_DYNAMIC_DRAW)
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glDepthMask(GL.GL_FALSE)
+        GL.glEnable(GL.GL_BLEND)
+        GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+        GL.glDrawArrays(GL.GL_TRIANGLE_STRIP, 0, 4)
+        GL.glDisable(GL.GL_BLEND)
+        GL.glDepthMask(GL.GL_TRUE)
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glBindVertexArray(0)
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in draw_text_quad")
+
+    def draw_automap(self, segments) -> None:
+        """Vector automap lines on the WINDOW (topdown px + 0-255 RGB
+        tuples)."""
+        import numpy as np
+        from OpenGL import GL
+        segs = list(segments)
+        assert len(segs) * 2 <= 4096  # NOTE: dynamic VAO capacity
+        verts = np.zeros((len(segs) * 2, 5), dtype=np.float32)
+        for i, (x0, y0, x1, y1, r, g, b) in enumerate(segs):
+            verts[i * 2] = (x0 / (self._w / 2) - 1.0,
+                            1.0 - y0 / (self._h / 2),
+                            r / 255.0, g / 255.0, b / 255.0)
+            verts[i * 2 + 1] = (x1 / (self._w / 2) - 1.0,
+                                1.0 - y1 / (self._h / 2),
+                                r / 255.0, g / 255.0, b / 255.0)
+        GL.glUseProgram(self.auto_prog)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+        GL.glBindVertexArray(self._auto_vao)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._auto_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, verts.nbytes, verts,
+                        GL.GL_DYNAMIC_DRAW)
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glDepthMask(GL.GL_FALSE)
+        GL.glDrawArrays(GL.GL_LINES, 0, len(segs) * 2)
+        GL.glDepthMask(GL.GL_TRUE)
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glBindVertexArray(0)
+        err = GL.glGetError()
+        if err != GL.GL_NO_ERROR:
+            raise RuntimeError(f"GL error {err:#x} in draw_automap")
+
+    def clear(self) -> None:
+        """Clear the FBO (world frames start here)."""
+        from OpenGL import GL
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
+        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+
+    def clear_window(self) -> None:
+        """Clear the WINDOW (automap/text-only frames own it)."""
+        from OpenGL import GL
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+        GL.glClearColor(0.0, 0.0, 0.0, 1.0)
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+
+    def readback(self) -> np.ndarray:
+        """Top-down RGB world frame (FBO color target)."""
+        from OpenGL import GL
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
         GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)
         buf = np.zeros((self._h, self._w, 3), dtype=np.uint8)
         GL.glReadPixels(0, 0, self._w, self._h, GL.GL_RGB,
                         GL.GL_UNSIGNED_BYTE, buf)
+        return buf[::-1].copy()
+
+    def readback_window(self) -> np.ndarray:
+        """Top-down RGB presented frame (window backbuffer: world +
+        overlay + text, what flip() shows)."""
+        from OpenGL import GL
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+        GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)
+        buf = np.zeros((self._h, self._w, 3), dtype=np.uint8)
+        GL.glReadPixels(0, 0, self._w, self._h, GL.GL_RGB,
+                        GL.GL_UNSIGNED_BYTE, buf)
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
         return buf[::-1].copy()
 
     def close(self) -> None:
@@ -573,16 +774,28 @@ class FrameRenderer:
             GL.glDeleteProgram(self.fuzz_prog)
             GL.glDeleteProgram(self.psprite_prog)
             GL.glDeleteProgram(self.sky_prog)
+            GL.glDeleteProgram(self.overlay_prog)
+            GL.glDeleteProgram(self.text_prog)
+            GL.glDeleteProgram(self.auto_prog)
             GL.glDeleteVertexArrays(4, [self._wall_vao,
                                         self._plane_vao,
                                         self._sprite_vao,
                                         self._sky_vao])
             GL.glDeleteVertexArrays(1, [self._psprite_vao])
+            GL.glDeleteVertexArrays(1, [self._overlay_vao])
+            GL.glDeleteVertexArrays(1, [self._text_vao])
+            GL.glDeleteVertexArrays(1, [self._auto_vao])
             GL.glDeleteBuffers(4, [self._sprite_vbo,
                                    self._sprite_ibo,
                                    self._sky_vbo,
                                    self._sky_ibo])
             GL.glDeleteBuffers(1, [self._psprite_vbo])
+            GL.glDeleteBuffers(1, [self._text_vbo])
+            GL.glDeleteBuffers(1, [self._auto_vbo])
+            GL.glDeleteTextures(1, [self._overlay_tex])
+            if self._text_texs:
+                GL.glDeleteTextures(len(self._text_texs),
+                                    self._text_texs)
             GL.glDeleteTextures(2, [self._scalelight, self._zlight])
             GL.glDeleteTextures(1, [self._fuzzlut])
             GL.glDeleteTextures(3, [self._fb_color, self._fb_index,

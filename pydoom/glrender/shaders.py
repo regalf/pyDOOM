@@ -25,7 +25,11 @@ negates viewy).
 from __future__ import annotations
 
 __all__ = [
+    "AUTO_FRAG",
+    "AUTO_VERT",
     "FUZZ_FRAG",
+    "OVERLAY_FRAG",
+    "OVERLAY_VERT",
     "PLANE_FRAG",
     "PLANE_VERT",
     "PSPRITE_FRAG",
@@ -34,6 +38,8 @@ __all__ = [
     "SKY_VERT",
     "SPRITE_FRAG",
     "SPRITE_VERT",
+    "TEXT_FRAG",
+    "TEXT_VERT",
     "WALL_FRAG",
     "WALL_VERT",
     "compile_program",
@@ -69,7 +75,8 @@ in vec2 vWorld;
 uniform sampler2D uWallTex;
 uniform sampler2D uScaleLight;
 uniform sampler2D uColormap;
-uniform sampler2D uPalette;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
 uniform vec2 uViewPos;
 uniform vec2 uViewDir;
 uniform int uExtraLight;
@@ -102,7 +109,7 @@ void main() {
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
     }
-    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
     oIndex = float(idx) / 255.0;
 }
 """
@@ -136,7 +143,8 @@ in float vZ;
 uniform sampler2DArray uFlatArray;
 uniform sampler2D uZLight;
 uniform sampler2D uColormap;
-uniform sampler2D uPalette;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
 uniform float uViewZ;
 uniform float uViewH;
 uniform int uExtraLight;
@@ -164,7 +172,7 @@ void main() {
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
     }
-    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
     oIndex = float(idx) / 255.0;
 }
 """
@@ -191,7 +199,8 @@ in vec2 vUv;
 in float vLight;
 uniform sampler2D uSpriteTex;
 uniform sampler2D uColormap;
-uniform sampler2D uPalette;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
 uniform float uWrap;
 uniform float uTexH;
 out vec4 oColor;
@@ -205,7 +214,7 @@ void main() {
     int lit = int(texelFetch(uColormap,
                              ivec2(idx, int(vLight + 0.5)), 0).r
                   * 255.0 + 0.5);
-    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
     oIndex = float(idx) / 255.0;
 }
 """
@@ -228,7 +237,8 @@ SKY_FRAG = """\
 in float vU;
 uniform sampler2D uSkyTex;
 uniform sampler2D uColormap;
-uniform sampler2D uPalette;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
 uniform float uViewH;
 uniform float uTexH;
 out vec4 oColor;
@@ -246,7 +256,7 @@ void main() {
     int idx = int(rg.r * 255.0 + 0.5);
     int lit = int(texelFetch(uColormap, ivec2(idx, 0), 0).r
                   * 255.0 + 0.5);
-    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
     oIndex = float(idx) / 255.0;
 }
 """
@@ -258,7 +268,8 @@ in vec2 vUv;
 in float vLight;
 uniform sampler2D uIndexTex;
 uniform sampler2D uColormap;
-uniform sampler2D uPalette;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
 uniform sampler2D uFuzzTex;
 uniform int uFrame;
 uniform float uViewH;
@@ -277,7 +288,7 @@ void main() {
                    * 255.0 + 0.5);
     int lit = int(texelFetch(uColormap, ivec2(bidx, 6), 0).r
                   * 255.0 + 0.5);
-    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
 }
 """
 
@@ -297,7 +308,8 @@ PSPRITE_FRAG = """\
 #version 330 core
 in vec2 vUv;
 uniform sampler2D uSpriteTex;
-uniform sampler2D uPalette;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
 uniform float uWrap;
 uniform float uTexH;
 out vec4 oColor;
@@ -309,7 +321,85 @@ void main() {
                                int(mod(vUv.y, uTexH))), 0).rg;
     if (rg.g < 0.5) discard;
     int idx = int(rg.r * 255.0 + 0.5);
-    oColor = vec4(texelFetch(uPalette, ivec2(idx, 0), 0).rgb, 1.0);
+    oColor = vec4(texelFetch(uPalette, ivec3(idx, 0, uPalIndex), 0).rgb, 1.0);
+}
+"""
+
+
+OVERLAY_VERT = """\
+#version 330 core
+out vec2 vUv;
+void main() {
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+    vUv = vec2(p.x, 1.0 - p.y);
+}
+"""
+
+OVERLAY_FRAG = """\
+#version 330 core
+in vec2 vUv;
+uniform sampler2D uOverlay;
+uniform sampler2DArray uPalette;
+uniform int uPalIndex;
+uniform int uFbW;
+uniform int uFbH;
+out vec4 oColor;
+void main() {
+    // NOTE: overlay indices are final (software already applied
+    // lighting into the fb); the flash palette tints everything
+    // uniformly. Index 255 is reserved transparent (verified unused
+    // by all overlay art) so menus float over the live world.
+    int idx = int(texelFetch(uOverlay,
+                             ivec2(int(vUv.x * float(uFbW)),
+                                   int(vUv.y * float(uFbH))),
+                             0).r * 255.0 + 0.5);
+    if (idx == 255) discard;
+    oColor = vec4(texelFetch(uPalette, ivec3(idx, 0, uPalIndex), 0)
+                  .rgb, 1.0);
+}
+"""
+
+TEXT_VERT = """\
+#version 330 core
+layout(location = 0) in vec2 aNDC;
+layout(location = 1) in vec2 aUv;
+out vec2 vUv;
+void main() {
+    gl_Position = vec4(aNDC, 0.0, 1.0);
+    vUv = aUv;
+}
+"""
+
+TEXT_FRAG = """\
+#version 330 core
+in vec2 vUv;
+uniform sampler2D uTextTex;
+out vec4 oColor;
+void main() {
+    // NOTE: baked per-pixel alpha (surface alpha folded in at
+    // upload, like a pygame RGBA blit).
+    oColor = texture(uTextTex, vUv);
+}
+"""
+
+AUTO_VERT = """\
+#version 330 core
+layout(location = 0) in vec2 aNDC;
+layout(location = 1) in vec3 aColor;
+out vec3 vColor;
+void main() {
+    gl_Position = vec4(aNDC, 0.0, 1.0);
+    vColor = aColor;
+}
+"""
+
+AUTO_FRAG = """\
+#version 330 core
+in vec3 vColor;
+out vec4 oColor;
+void main() {
+    oColor = vec4(vColor, 1.0);
 }
 """
 
@@ -318,7 +408,6 @@ def compile_program(vert_src: str, frag_src: str) -> int:
     """Compile + link a program (raises RuntimeError with the info
     log; needs a live context)."""
     from OpenGL import GL
-
     def compile_one(kind: int, src: str) -> int:
         sh = GL.glCreateShader(kind)
         GL.glShaderSource(sh, src)

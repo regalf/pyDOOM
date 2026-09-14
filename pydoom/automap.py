@@ -37,8 +37,8 @@ from pydoom.mapdata import (
 from pydoom.palette import load_playpal
 
 __all__ = [
-    "PLAYERRADIUS",
     "MAPBLOCKUNITS",
+    "PLAYERRADIUS",
     "Automap",
     "thing_degrees_to_bam",
 ]
@@ -161,6 +161,10 @@ class Automap:
         self.plr_y = 0
         self.plr_angle = 0
 
+        # NOTE: segment collection for the GL automap path (None =
+        # draw only; a list also appends framebuffer-space segments).
+        self._segments: list | None = None
+
         self.load_map(game_map, player_thing)
 
     # -- setup (AM_LevelInit / AM_initVariables / AM_findMinMaxBoundaries) --
@@ -210,7 +214,7 @@ class Automap:
         self.max_h = max_y - min_y
         a = fixed_div(self.f_w << FRACBITS, self.max_w)
         b = fixed_div(self.f_h << FRACBITS, self.max_h)
-        self.min_scale_mtof = a if a < b else b
+        self.min_scale_mtof = min(b, a)
         self.max_scale_mtof = fixed_div(
             self.f_h << FRACBITS, 2 * PLAYERRADIUS
         )
@@ -461,8 +465,26 @@ class Automap:
             self._draw_things(surface)
         if live:
             self._draw_live(surface, live)
-        surface.set_at((self.f_w // 2, self.f_h // 2), self.palette[XHAIRCOLORS])
+        cx, cy = self.f_w // 2, self.f_h // 2
+        surface.set_at((cx, cy), self.palette[XHAIRCOLORS])
+        if self._segments is not None:
+            # NOTE: GL path crosshair (a plus instead of one pixel;
+            # 2px wider than software, invisible in practice).
+            r, g, b = self.palette[XHAIRCOLORS]
+            self._segments.append((cx - 1, cy, cx + 1, cy, r, g, b))
+            self._segments.append((cx, cy - 1, cx, cy + 1, r, g, b))
         self._draw_marks(surface)
+
+    def collect_segments(self, live=None) -> list:
+        """Framebuffer-space (x0, y0, x1, y1, r, g, b) segments for
+        the GL automap path (same clip/colors as draw, offscreen)."""
+        import pygame
+        self._segments = []
+        try:
+            self.draw(pygame.Surface((self.f_w, self.f_h)), live)
+        finally:
+            segs, self._segments = self._segments, None
+        return segs
 
     def _draw_mline(
         self,
@@ -476,7 +498,10 @@ class Automap:
         clipped = self.clip_mline(ax, ay, bx, by)
         if clipped is not None:
             x1, y1, x2, y2 = clipped
-            pygame.draw.line(surface, self.palette[color], (x1, y1), (x2, y2))
+            rgb = self.palette[color]
+            pygame.draw.line(surface, rgb, (x1, y1), (x2, y2))
+            if self._segments is not None:
+                self._segments.append((x1, y1, x2, y2, *rgb))
 
     def _draw_grid(self, surface: pygame.Surface, color: int) -> None:
         step = MAPBLOCKUNITS << FRACBITS
@@ -620,6 +645,14 @@ class Automap:
             fy = self._cymtof(my)
             if 0 <= fx < self.f_w - 5 and 0 <= fy < self.f_h - 6:
                 pygame.draw.rect(surface, rgb, (fx, fy, 5, 6), 1)
+                if self._segments is not None:
+                    r, g, b = rgb
+                    self._segments.append((fx, fy, fx + 5, fy, r, g, b))
+                    self._segments.append((fx + 5, fy, fx + 5, fy + 6,
+                                           r, g, b))
+                    self._segments.append((fx + 5, fy + 6, fx, fy + 6,
+                                           r, g, b))
+                    self._segments.append((fx, fy + 6, fx, fy, r, g, b))
 
 
 def load_playpal_from_wad(wad) -> list[tuple[int, int, int]]:
