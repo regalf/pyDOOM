@@ -1,11 +1,13 @@
 """OpenGL freecam for visual bug reports (noclip fly camera).
 
 Same GL world as the game (walls/planes/sprites/sky + portal PVS),
-no sim: WASD/arrows to move, SPACE up, SHIFT down, mouse-drag to
-look. P saves a screenshot (with the coords HUD baked in) to
+no sim: WASD/arrows to move, SPACE up, SHIFT down, grabbed mouse to
+look (yaw + pitch: vanilla never pitches, so lighting/sky stay
+yaw-locked while pitched — geometry is exact). P saves a screenshot (with the coords HUD baked in) to
 ./freecam_shots/ so reports carry exact repro coordinates.
 
-Usage: tools/gl_freecam.py [MAP] [WAD] [--pos=x,y,z,ang] [--frames=N]
+Usage: tools/gl_freecam.py [MAP] [WAD] [--pos=x,y,z,ang[,pitch]]
+       [--frames=N]
 """
 
 import math
@@ -19,17 +21,23 @@ WIN_W, WIN_H = 960, 600
 BASE_SPEED = 450.0  # map units/sec
 FAST_MULT = 4.0
 TURN_SPEED = math.radians(140.0)
+MOUSE_SENS = 0.003
+PITCH_LIMIT = 1.45  # NOTE: ~83deg (never quite edge-on)
 
 
 class Camera:
     """Float noclip camera (doom_view convention: 0=east, CCW)."""
 
     def __init__(self, x: float, y: float, angle_deg: float,
-                 viewz: float):
+                 viewz: float, pitch_deg: float = 0.0):
         self.x = x
         self.y = y
         self.angle = math.radians(angle_deg)
         self.viewz = viewz
+        self.pitch = math.radians(pitch_deg)  # NOTE: +up, freecam-only
+        # (vanilla never looks vertically; wall/plane lighting stays
+        # yaw-based, sky stays horizon-locked: geometry is exact,
+        # dressing is approximate when pitched).
 
     @property
     def bam(self) -> int:
@@ -159,18 +167,31 @@ def main() -> int:
                 float(start_thing.angle), floor + 41.0)
     else:
         home = (0.0, 0.0, 90.0, 41.0)
-    if pos is not None and len(pos) == 4:
-        # NOTE: --pos=x,y,z,ang (Camera takes angle before viewz).
-        home = (float(pos[0]), float(pos[1]),
-                float(pos[3]), float(pos[2]))
+    if pos is not None and len(pos) in (4, 5):
+        # NOTE: --pos=x,y,z,ang[,pitch] (Camera takes angle, viewz,
+        # then pitch).
+        home = (float(pos[0]), float(pos[1]), float(pos[3]),
+                float(pos[2]),
+                float(pos[4]) if len(pos) == 5 else 0.0)
     cam = Camera(*home)
     show_things = True
     shots = os.path.join(os.getcwd(), "freecam_shots")
     os.makedirs(shots, exist_ok=True)
-    print("gl freecam controls: WASD/arrows move, mouse-drag looks, "
-          "SPACE up, SHIFT down, CTRL fast, R reset, T things, "
-          "P screenshot, ESC quits")
+    print("gl freecam controls: WASD/arrows move, mouse looks "
+          "(grabbed: click to grab, ESC releases), SPACE up, SHIFT "
+          "down, CTRL fast, R reset, T things, P screenshot, "
+          "ESC quits")
     print(f"gl freecam: screenshots -> {shots}/")
+
+    def _grab(on: bool) -> None:
+        try:
+            pygame.event.set_grab(on)
+            pygame.mouse.set_visible(not on)
+        except Exception:  # noqa: BLE001, S110 - drag-look fallback
+            pass
+
+    _grab(True)
+    grabbed = True
 
     clock = pygame.time.Clock()
     fps_ema = 60.0
@@ -182,17 +203,30 @@ def main() -> int:
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+            elif ev.type == pygame.MOUSEBUTTONDOWN and not grabbed:
+                _grab(True)
+                grabbed = True
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
-                    running = False
+                    if grabbed:
+                        _grab(False)
+                        grabbed = False
+                    else:
+                        running = False
                 elif ev.key == pygame.K_r:
                     cam = Camera(*home)
                 elif ev.key == pygame.K_t:
                     show_things = not show_things
                 elif ev.key in (pygame.K_p, pygame.K_F12):
                     want_shot = True
-            elif ev.type == pygame.MOUSEMOTION and ev.buttons[0]:
-                cam.angle += -ev.rel[0] * 0.004
+            elif ev.type == pygame.MOUSEMOTION:
+                if grabbed:
+                    cam.angle += -ev.rel[0] * MOUSE_SENS
+                    cam.pitch = max(-PITCH_LIMIT, min(
+                        PITCH_LIMIT,
+                        cam.pitch - ev.rel[1] * MOUSE_SENS))
+                elif ev.buttons[0]:
+                    cam.angle += -ev.rel[0] * 0.004
         pressed = pygame.key.get_pressed()
         cam.angle %= 2 * math.pi
         if pressed[pygame.K_LEFT]:
@@ -236,7 +270,7 @@ def main() -> int:
         try:
             fr.render(int(cam.x * 65536), int(cam.y * 65536),
                       int(cam.viewz * 65536), cam.bam,
-                      sprites=bbs, sky=sky)
+                      sprites=bbs, sky=sky, pitch=cam.pitch)
             fr.blit_world()
         except Exception as exc:  # noqa: BLE001 - never die on GL
             print(f"gl freecam: render failed: {exc}")
@@ -246,9 +280,10 @@ def main() -> int:
             hud = (f"{marker} x={cam.x:.0f} y={cam.y:.0f} "
                    f"z={cam.viewz:.0f} "
                    f"a={math.degrees(cam.angle) % 360:.0f} "
+                   f"p={math.degrees(cam.pitch):+.0f} "
                    f"vis={nvis}/{len(game_map.sectors)} "
                    f"{fps_ema:.0f}fps")
-            help_line = ("WASD/arrows move, drag look, SPACE up, "
+            help_line = ("WASD/arrows move, mouse looks, SPACE up, "
                          "SHIFT down, CTRL fast, R reset, T things, "
                          "P shot, ESC quit")
             lines = [(hud, (255, 255, 255), 255, 8, 8),
@@ -277,7 +312,8 @@ def main() -> int:
             want_shot = False
             tag = (f"{marker}_x{cam.x:.0f}_y{cam.y:.0f}_"
                    f"z{cam.viewz:.0f}_"
-                   f"a{math.degrees(cam.angle) % 360:.0f}")
+                   f"a{math.degrees(cam.angle) % 360:.0f}_"
+                   f"p{math.degrees(cam.pitch):+.0f}")
             try:
                 shot = fr.readback_window()
                 surf = pygame.surfarray.make_surface(

@@ -12,6 +12,7 @@ applying the PLAYPAL LUT to the software framebuffer.
 from __future__ import annotations
 
 import ctypes
+import math
 
 import numpy as np
 
@@ -45,22 +46,26 @@ def focal_x_factor() -> float:
 
 
 def camera_frame(viewx: int, viewy: int, viewz: int, angle_bam: int,
-                 w: int, h: int) -> tuple:
+                 w: int, h: int, pitch: float = 0.0) -> tuple:
     """ViewProj matrix + view basis (float64 math, float32 upload).
 
     x_ndc follows the vanilla x mapping (tan-based, x-focal above),
     y_ndc the vanilla y mapping (square pixels: y-focal 160 at
     320x200, i.e. proj11 = w/h for any window of the same aspect).
     Camera looks along +dir with up +z, from the fine tables.
+    pitch (radians, +up) is freecam-only: vanilla has no vertical
+    look, the game always passes 0 (bit-identical matrix).
     """
     dx = tables.finecosine(angle_bam >> 19) / 65536.0
     dy = tables.finesine[angle_bam >> 19] / 65536.0
     rx, ry = dy, -dx  # NOTE: screen-right (d cross up)
     ex, ey, ez = viewx / 65536.0, viewy / 65536.0, viewz / 65536.0
+    cp, sp = math.cos(pitch), math.sin(pitch)
     view = np.array([
         [rx, ry, 0.0, -(rx * ex + ry * ey)],
-        [0.0, 0.0, 1.0, -ez],
-        [-dx, -dy, 0.0, dx * ex + dy * ey],
+        [-sp * dx, -sp * dy, cp, sp * dx * ex + sp * dy * ey - cp * ez],
+        [-cp * dx, -cp * dy, -sp,
+         cp * dx * ex + cp * dy * ey + sp * ez],
         [0.0, 0.0, 0.0, 1.0],
     ], dtype=np.float64)
     fx = focal_x_factor()
@@ -315,7 +320,8 @@ class FrameRenderer:
                angle_bam: int, extra_light: int = 0,
                fullbright: bool = False, sprites=None,
                sky=None, frame_no: int | None = None,
-               psprites=None, pal_index: int = 0) -> None:
+               psprites=None, pal_index: int = 0,
+               pitch: float = 0.0) -> None:
         """Draw sky (optional) + walls + planes (+ optional sprite
         billboards, fuzz last over a complete backdrop, weapon
         psprites on top) for one camera (raises on GL error: silent
@@ -326,7 +332,8 @@ class FrameRenderer:
         (texture_id, tex_height) tuple or None; psprites a list of
         (tex_id, w, h, leftoff, topoff, bobx, boby) tuples in 320x200
         space. frame_no pins the fuzz shimmer counter (tests); None
-        advances it per frame."""
+        advances it per frame. pitch (radians, +up) is freecam-only
+        (vanilla/game never look vertically)."""
         from OpenGL import GL
         res = self._res
         if frame_no is None:
@@ -334,7 +341,7 @@ class FrameRenderer:
         else:
             self._frame = int(frame_no)
         vp, (dx, dy) = camera_frame(viewx, viewy, viewz, angle_bam,
-                                    self._w, self._h)
+                                    self._w, self._h, pitch)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
         GL.glClearColor(0.0, 0.0, 0.0, 1.0)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
