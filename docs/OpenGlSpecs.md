@@ -190,8 +190,11 @@ way**:
      through windows/over walls;
    - **coplanar ties**: depth picks arbitrarily where the software
      painter was deterministic.
-3. **Measured on E1M1** (aerial `outofbounds.png`: x=220 y=−5145
+3. **Measured on E1M1** (aerial shot below: x=220 y=−5145
    z=1215 — 281 units *outside* the north bbox edge, `sec=24`):
+
+   ![aerial E1M1 view from outside the map (freecam z=1215, pitch −44°)](outofbounds.png)
+
    rim sectors `[1,28,62]` are portal-reachable **because id wired
    them up** (real windows), so no static culler may remove them;
    SW grid around void spots = 50–83% uniformly black vs 0–8% for
