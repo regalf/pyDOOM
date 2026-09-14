@@ -1,0 +1,44 @@
+# GL smoke (llvmpipe): exercises the OpenGL path where CI has no GPU.
+#
+# Manual only (Actions -> "GL smoke" -> Run workflow): the normal suite
+# stays software-only and deterministic, so PR runs never depend on
+# rasterizer vagaries. xvfb provides the display, Mesa llvmpipe the GL
+# 3.3+ context, dummy audio keeps the mixer quiet.
+#
+# Fails if: the parity gate (tests/test_gl.py::test_parity_gate_e1m1_walk)
+# drifts past tolerance, any GL slice test breaks, or the viewer/bench/
+# freecam GL entry points stop coming up under a real context.
+
+name: GL smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gl-smoke:
+    runs-on: ubuntu-latest
+    env:
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install Mesa llvmpipe + xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1-mesa-dri mesa-utils
+          glxinfo -B | head -n 5 || true
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: GL test slice (parity gate included)
+        run: xvfb-run -a python -m pytest tests/test_gl*.py -q
+      - name: GL bench smoke
+        run: xvfb-run -a python tools/gl_bench.py --frames=60
+      - name: GL freecam smoke
+        run: xvfb-run -a python tools/gl_freecam.py E1M1 --frames=30
+      - name: Viewer opengl-flag smoke (frames forces software)
+        run: >
+          xvfb-run -a python tools/doom_view.py E1M1
+          --video-api=opengl --extra-hud --frames=30

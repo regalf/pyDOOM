@@ -216,6 +216,17 @@ bit-identical to build_planes; switch flips always resolve.
 
 ### Phase 5 — parity gate, fallback tests, CI
 
+DONE. `tests/test_gl.py::test_parity_gate_e1m1_walk`: fixed E1M1
+scenes (start + 5-view scripted walk, static mobjs, GL 3.3+ or skip)
+compared SW vs GL readback with per-view exact/mean tolerances
+(start .668/5.20 … north-room .278/22.55 known-weak, see
+`docs/DIVERGENCES.md` parity table). Fallback pinned twice:
+`resolve_api` unit rules plus a `--video-api=opengl` + dummy-SDL
+`--frames` subprocess smoke (software path, exit 0) and a blocked-
+OpenGL `_have_gl` probe test. CI: normal jobs stay software-only;
+`.github/workflows/gl-smoke.yml` (manual) runs the GL slice + bench
++ freecam + viewer-flag smokes under xvfb/llvmpipe.
+
 - `tests/test_gl.py` behind `pytest.mark.skipif(no context)`: render a
   fixed scene (fixed sim, fixed camera from `tables`) on both paths and
   compare. Tolerance metric: full exact-match fraction on wall interiors
