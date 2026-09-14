@@ -61,6 +61,7 @@ def main() -> int:
     from pydoom.glrender import draw as gldraw
     from pydoom.glrender import light as gllight
     from pydoom.glrender import preprocess as glpre
+    from pydoom.glrender import sprites as glsprites
     from pydoom.glrender import textures as gltex
     from pydoom.glrender import upload as glup
     t0 = time.perf_counter()
@@ -68,15 +69,25 @@ def main() -> int:
     t_walls = time.perf_counter()
     planes = glpre.build_planes(game_map, skyflat)
     t_planes = time.perf_counter()
-    wtex = gltex.build_wall_textures(
-        texman, gltex.wall_texnums_used(walls))
+    renderer0_tex = None
+    try:
+        from pydoom.renderer import Renderer as _R
+        renderer0_tex = _R(wad, texman).skytexture
+    except Exception:  # noqa: BLE001, S110 - sky optional in bench
+        pass
+    want_tex = set(gltex.wall_texnums_used(walls))
+    if renderer0_tex is not None:
+        want_tex.add(renderer0_tex)
+    wtex = gltex.build_wall_textures(texman, want_tex)
     ftex = gltex.build_flat_textures(texman, gltex.flatnums_used(
         planes))
+    stex = gltex.build_sprite_textures(texman,
+                                       range(texman.numsprites))
     t_tex = time.perf_counter()
     cmap = gllight.colormap_lut(bytes(wad.cache_lump("COLORMAP")))
     pal = gllight.palette_lut(bytes(wad.read_lump("PLAYPAL")))
     res = glup.GlResources.create(walls, planes, wtex, ftex, cmap,
-                                  pal)
+                                  pal, sprite_tex=stex)
     t_up = time.perf_counter()
     fr = gldraw.FrameRenderer(res, WIN_W, WIN_H)
     t_prog = time.perf_counter()
@@ -84,10 +95,15 @@ def main() -> int:
         print("gl bench: upload failed")
         pygame.quit()
         return 2
-    draws = len(res.wall_batches) + 1  # NOTE: batches + planes
+    sky_arg = None
+    if renderer0_tex in res.wall_textures:
+        sky_arg = (res.wall_textures[renderer0_tex],
+                   res.wall_info[renderer0_tex][1])
+    draws = len(res.wall_batches) + len(res.masked_batches) + 2
     print(f"gl bench: {len(walls.quads)} quads, "
           f"{len(planes.tris)} tris, {len(wtex.order)} walltex, "
-          f"{len(ftex.order)} flats, {draws} draws/frame")
+          f"{len(ftex.order)} flats, {len(stex.order)} sprites, "
+          f"{draws}+sprite draws/frame")
     print(f"gl bench: build walls {(t_walls - t0) * 1000:.0f}ms + "
           f"planes {(t_planes - t_walls) * 1000:.0f}ms + "
           f"textures {(t_tex - t_planes) * 1000:.0f}ms + "
@@ -96,6 +112,30 @@ def main() -> int:
 
     from pydoom.renderer import Renderer
     renderer = Renderer(wad, texman)
+    from types import SimpleNamespace
+
+    from pydoom.info import spawn_visual
+    from pydoom.renderer import SKIP_THING_TYPES, init_sprite_defs
+    mobjs = []
+    for thing in game_map.things:
+        if thing.type in SKIP_THING_TYPES:
+            continue
+        visual = spawn_visual(thing.type)
+        if visual is None:
+            continue
+        sprite, frame, flags = visual
+        sub = renderer.sector_at(game_map, thing.x << 16,
+                                 thing.y << 16)
+        if sub.sector is None:
+            continue
+        mobjs.append(SimpleNamespace(
+            dead=False, state=1, flags=flags, sprite=sprite,
+            frame=frame, x=thing.x << 16, y=thing.y << 16,
+            z=sub.sector.floorheight,
+            angle=((thing.angle % 360) * 0x100000000) // 360,
+            sector=sub.sector))
+    feed = glsprites.SpriteFeed(sprites=init_sprite_defs(
+        wad, texman.firstsprite, texman.lastsprite))
     things = game_map.things
     step = max(1, len(things) // 12)
     views = []
@@ -105,15 +145,18 @@ def main() -> int:
             continue
         vz = sub.sector.floorheight + 41 * 65536
         for i in range(2):
-            views.append((t.x << 16, t.y << 16, vz,
-                          (i * 0x80000000) & 0xFFFFFFFF))
+            angle = (i * 0x80000000) & 0xFFFFFFFF
+            bbs = feed.project(mobjs, t.x << 16, t.y << 16, angle,
+                               texman)
+            views.append((t.x << 16, t.y << 16, vz, angle, bbs))
     assert views, "no viewpoints"
     for v in views[:WARMUP]:
-        fr.render(*v)
+        fr.render(*v[:4], sprites=v[4], sky=sky_arg)
     GL.glFinish()
     t0 = time.perf_counter()
     for i in range(frames):
-        fr.render(*views[i % len(views)])
+        v = views[i % len(views)]
+        fr.render(*v[:4], sprites=v[4], sky=sky_arg)
     GL.glFinish()
     dt = time.perf_counter() - t0
     print(f"gl bench: {frames} frames in {dt:.2f}s = "
@@ -122,7 +165,7 @@ def main() -> int:
 
     t0 = time.perf_counter()
     for i in range(frames):
-        x, y, vz, angle = views[i % len(views)]
+        x, y, vz, angle, _bbs = views[i % len(views)]
         renderer.render_view(game_map, x, y, angle, viewz=vz,
                              mobjs=[])
     dt = time.perf_counter() - t0

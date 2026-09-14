@@ -27,6 +27,8 @@ from __future__ import annotations
 __all__ = [
     "PLANE_FRAG",
     "PLANE_VERT",
+    "SKY_FRAG",
+    "SKY_VERT",
     "SPRITE_FRAG",
     "SPRITE_VERT",
     "WALL_FRAG",
@@ -194,6 +196,45 @@ void main() {
     int idx = int(rg.r * 255.0 + 0.5);
     int lit = int(texelFetch(uColormap,
                              ivec2(idx, int(vLight + 0.5)), 0).r
+                  * 255.0 + 0.5);
+    oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
+}
+"""
+
+
+SKY_VERT = """\
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in float aU;
+uniform mat4 uViewProj;
+out float vU;
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vU = aU;
+}
+"""
+
+SKY_FRAG = """\
+#version 330 core
+in float vU;
+uniform sampler2D uSkyTex;
+uniform sampler2D uColormap;
+uniform sampler2D uPalette;
+uniform float uViewH;
+uniform float uTexH;
+out vec4 oColor;
+void main() {
+    // NOTE: software sky column (angle>>22, widthmask-folded) and
+    // row (SKYTEXTUREMID + (row - cy), iscale 1 texel/row); colormap
+    // row 0 like _draw_sky_plane (fullbright-independent).
+    vec2 rg = texelFetch(uSkyTex,
+                         ivec2(int(mod(vU * 256.0, 256.0)),
+                               int(mod(100.0 + (uViewH * 0.5 - 0.5
+                                                - gl_FragCoord.y)
+                                       * 200.0 / uViewH, uTexH))),
+                         0).rg;
+    int idx = int(rg.r * 255.0 + 0.5);
+    int lit = int(texelFetch(uColormap, ivec2(idx, 0), 0).r
                   * 255.0 + 0.5);
     oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb, 1.0);
 }

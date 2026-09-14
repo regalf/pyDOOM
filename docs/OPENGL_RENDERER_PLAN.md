@@ -143,8 +143,10 @@ Once per map load (not per frame; invalidated on level change):
   emit raw indices to an R8 target; fuzz quads then sample backdrop
   + FUZZOFFSETS neighbor + colormap row 6). MF_SHADOW skipped.
 - **Weapon psprite**: NOT DONE (needs viewer bob/frame plumbing).
-- **Sky surface**: NOT DONE (cylinder mesh, CPU-baked u from
-  point_to_angle2 per frame, v from the fragment row).
+- **Sky surface**: DONE (`glrender/sky.py` camera cylinder, one
+  point_to_angle2 anchor +16 cols/segment, v from the fragment row;
+  colormap row 0 like `_draw_sky_plane`, fullbright-independent).
+  Outdoor E1M1 parity gate with zero exclusions.
 
 ### Phase 4 — overlay compositing (keep index path)
 
