@@ -27,6 +27,7 @@ is marked with a `NOTE:` comment at the point of divergence.
 | Area | Status |
 |---|---|
 | Software renderer (320×200, BSP, visplanes, masked sprites, fuzz, sky) | done |
+| OpenGL renderer (native res, palette-index shaders, `--video-api=opengl`, auto-fallback) | done |
 | Physics (clip/slide, lifts, stairs, crushers, teleports) | done |
 | Combat, full Doom 1 bestiary AI, per-episode boss deaths | done |
 | All E1–E3 line/sector specials, keys, secret exits | done |
@@ -39,7 +40,7 @@ is marked with a `NOTE:` comment at the point of divergence.
 | Infrared/allmap as real renderer effects | todo |
 | Doom 2, multiplayer | out of scope |
 
-`350` pytest tests green (`python -m pytest tests/`).
+`489` pytest tests green (`python -m pytest tests/`).
 Deliberate simplifications are catalogued in
 [`docs/DIVERGENCES.md`](docs/DIVERGENCES.md).
 
@@ -74,6 +75,10 @@ python tools/doom_view.py [MAP] [WAD] [--skill=baby|easy|normal|hard|nightmare]
 Python ≥ 3.10, `numpy`, `pygame-ce`, `numba`, `pytest`.
 `PyOPL` is optional: without it the game runs silently, like vanilla
 LinuxDoom without its MUS server.
+`PyOpenGL` enables the OpenGL renderer (`--video-api=opengl`);
+`PyOpenGL_accelerate` is its optional C speed-up (the pure-Python
+core is all the code needs). Without them the viewer auto-falls back
+to the software raster, like headless CI does.
 
 ## License
 
