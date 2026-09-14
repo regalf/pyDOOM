@@ -80,6 +80,17 @@ LinuxDoom without its MUS server.
 core is all the code needs). Without them the viewer auto-falls back
 to the software raster, like headless CI does.
 
+## Acknowledgments
+
+- [id Software](https://github.com/id-software/doom) for the original
+  DOOM engine — this project is an independent clean-room-style port
+  for learning and preservation.
+- [dsda-doom](https://github.com/kraflab/dsda-doom) by kraflab,
+  consulted for the OpenGL renderer design (`gl_main`/`gl_preprocess`
+  model).
+- [Chocolate Doom](https://github.com/chocolate-doom/chocolate-doom),
+  consulted as behavior reference (demo compat, statdump cross-checks).
+
 ## License
 
 GPL-3.0-or-later (see `LICENSE`). Original engine by id Software;
