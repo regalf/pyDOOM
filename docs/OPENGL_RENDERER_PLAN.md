@@ -116,10 +116,10 @@ Once per map load (not per frame; invalidated on level change):
   - `fullbright` (light amplification visor) bypasses colormap;
   - `extralight` (muzzle flash) offsets the colormap row, clamped to
     `NUMCOLORMAPS - 1` like `_init_scalelight`.
-- **Fuzz** (`MF_SHADOW`, spectres): shader stipple using the
-  `FUZZOFFSETS` table expressed as a rotating dither pattern;
-  documented as a tolerance-based divergence (software `draw_fuzz` is
-  defined on the index fb and does not map 1:1 to a fragment program).
+- **Fuzz** (`MF_SHADOW`, spectres): deferred to Phase 3 together
+  with the spectre billboards that use it (untestable without
+  sprites); shader stipple using the `FUZZOFFSETS` table stays the
+  approach, tolerance-based like the software `draw_fuzz`.
 - **Depth / draw order**: depth buffer for plane+wall boundary (with a
   small epsilon for wall/floor abutment, the classic prBoom GL
   problem), painter-order for two-sided masked mids and sprites from

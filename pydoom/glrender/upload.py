@@ -51,6 +51,7 @@ class GlResources:
     wall_ibo: int = 0
     wall_batches: list = field(default_factory=list)
     wall_textures: dict = field(default_factory=dict)  # texnum -> id
+    wall_info: dict = field(default_factory=dict)  # texnum -> (w,h,wrap)
     plane_vbo: int = 0
     plane_count: int = 0
     flat_array: int = 0
@@ -93,11 +94,14 @@ class GlResources:
         from OpenGL import GL
         arr = wall_geo.to_arrays()
         n = len(arr["positions"])
-        inter = np.zeros((n, 6), dtype=np.float32)
+        # NOTE: [x,y,z, u,texbase,light, nx,ny]: V is texbase - z in
+        # the vertex shader (world-pinned, no view math needed).
+        inter = np.zeros((n, 8), dtype=np.float32)
         inter[:, 0:3] = arr["positions"]
         inter[:, 3] = arr["u"]
         inter[:, 4] = arr["texbase"]
         inter[:, 5] = arr["light"]
+        inter[:, 6:8] = arr["normal"]
         created.wall_vbo = cls._new_buffer(
             np.ascontiguousarray(inter),
             GL.GL_ARRAY_BUFFER)
@@ -105,9 +109,10 @@ class GlResources:
         created.wall_ibo = cls._new_buffer(index,
                                            GL.GL_ELEMENT_ARRAY_BUFFER)
         created.wall_batches = batches
-        for texnum, blob, (w, h) in zip(wall_tex.order,
-                                        wall_tex.blobs,
-                                        wall_tex.sizes):
+        for texnum, blob, size, wrap in zip(
+                wall_tex.order, wall_tex.blobs, wall_tex.sizes,
+                wall_tex.wraps):
+            w, h = size
             tex = GL.glGenTextures(1)
             GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
             GL.glTexParameteri(GL.GL_TEXTURE_2D,
@@ -121,18 +126,28 @@ class GlResources:
             GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RG8, w, h, 0,
                             GL.GL_RG, GL.GL_UNSIGNED_BYTE, blob)
             created.wall_textures[texnum] = int(tex)
+            created.wall_info[texnum] = (w, h, wrap)
         GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
 
     @classmethod
     def _upload_planes(cls, created, plane_geo, flat_tex) -> None:
         from OpenGL import GL
         arr = plane_geo.to_arrays()
-        n = len(arr["positions"])
+        # NOTE: flat channel holds flatNUMS; the array wants LAYERs.
+        # Sky tris (flat -1) are dropped here (Phase 3 draws the sky
+        # surface); every tri is uniform so vertex filtering is safe.
+        flats = arr["flat"].astype(np.int32)
+        layers = np.array([flat_tex.index_of.get(int(f), -1)
+                           for f in flats], dtype=np.int32)
+        assert ((layers[0::3] == layers[1::3])
+                & (layers[1::3] == layers[2::3])).all()
+        keep = layers >= 0
+        n = int(keep.sum())
         inter = np.zeros((n, 7), dtype=np.float32)
-        inter[:, 0:3] = arr["positions"]
-        inter[:, 3:5] = arr["uv"]
-        inter[:, 5] = arr["flat"].astype(np.float32)
-        inter[:, 6] = arr["light"]
+        inter[:, 0:3] = arr["positions"][keep]
+        inter[:, 3:5] = arr["uv"][keep]
+        inter[:, 5] = layers[keep].astype(np.float32)
+        inter[:, 6] = arr["light"][keep]
         created.plane_vbo = cls._new_buffer(
             np.ascontiguousarray(inter),
             GL.GL_ARRAY_BUFFER)
@@ -195,6 +210,7 @@ class GlResources:
             self.wall_vbo = self.wall_ibo = self.plane_vbo = 0
             self.wall_batches = []
             self.wall_textures = {}
+            self.wall_info = {}
             self.plane_count = 0
             self.flat_array = 0
             self.flat_layers = {}

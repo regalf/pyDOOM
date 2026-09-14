@@ -325,3 +325,20 @@ def test_light_orientation_tweak():
                              side_kw={"midtexture": "MID"},
                              v1=(0, 0), v2=(128, 0))
     assert build_walls(game_map, texman, 999).quads[0].light == 0
+
+
+@requires_wad
+def test_wall_normals_face_front():
+    """Front-unit normals (front is RIGHT of v1->v2): east-running
+    segs face south, north-running segs face east."""
+    _, texman, _, _ = load_e1m1()
+    game_map, _ = mini_world(texman, side_kw={"midtexture": "MID"},
+                             v1=(0, 0), v2=(128, 0))
+    quad = build_walls(game_map, texman, 999).quads[0]
+    assert (quad.nx, quad.ny) == pytest.approx((0.0, -1.0))
+    game_map, _ = mini_world(texman, side_kw={"midtexture": "MID"},
+                             v1=(0, 0), v2=(0, 128))
+    quad = build_walls(game_map, texman, 999).quads[0]
+    assert (quad.nx, quad.ny) == pytest.approx((1.0, 0.0))
+    arr = build_walls(game_map, texman, 999).to_arrays()
+    assert arr["normal"].shape == (4, 2)

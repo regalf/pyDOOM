@@ -95,7 +95,8 @@ def test_e1m1_golden_surface_counts():
 
 @requires_wad
 def test_e1m1_uv_matches_software_flat_mapping():
-    """R_MapPlane negates viewy: flat row = (-yworld) mod 64."""
+    """R_MapPlane negates viewy: uv holds world rows (x, -y), the
+    shader mods by 64 like (xfrac>>16)&63."""
     _, _texman, game_map, sky = load_e1m1()
     geo = build_planes(game_map, sky)
     arr = geo.to_arrays()
@@ -105,9 +106,9 @@ def test_e1m1_uv_matches_software_flat_mapping():
     assert str(arr["positions"].dtype) == "float32"
     import numpy as np
     assert np.allclose(arr["uv"][:, 0],
-                       arr["positions"][:, 0] / 64.0, atol=1e-6)
+                       arr["positions"][:, 0], atol=1e-6)
     assert np.allclose(arr["uv"][:, 1],
-                       -arr["positions"][:, 1] / 64.0, atol=1e-6)
+                       -arr["positions"][:, 1], atol=1e-6)
 
 
 @requires_wad

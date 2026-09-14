@@ -18,6 +18,8 @@ from pydoom.glrender.light import (
     PALETTE_BYTES,
     colormap_lut,
     palette_lut,
+    scalelight_lut,
+    zlight_lut,
 )
 from pydoom.glrender.preprocess import build_planes, build_walls
 from pydoom.glrender.textures import (
@@ -79,6 +81,26 @@ def test_palette_lut_is_playpal_0():
     assert palette_lut(raw) == raw[:PALETTE_BYTES]
     with pytest.raises(ValueError):
         palette_lut(raw, 99)
+
+
+def test_light_luts_match_renderer_tables():
+    """scalelight/zlight bytes equal the software tables exactly
+    (the shader indexes the same rows/cols as _render_seg_loop and
+    _map_plane)."""
+    from pydoom.renderer import Renderer
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    texman = TextureManager(wad)
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    renderer = Renderer(wad, texman)
+    assert list(scalelight_lut()) == [
+        v for row in renderer.scalelight for v in row]
+    assert list(zlight_lut()) == [
+        v for row in renderer.zlight for v in row]
+    assert len(scalelight_lut()) == 48 * 16
+    assert len(zlight_lut()) == 128 * 16
 
 
 @requires_wad
@@ -150,12 +172,15 @@ def test_create_uploads_byte_exact():
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, res.wall_vbo)
         size = GL.glGetBufferParameteriv(GL.GL_ARRAY_BUFFER,
                                          GL.GL_BUFFER_SIZE)
-        assert size == len(walls.quads) * 4 * 6 * 4
+        assert size == len(walls.quads) * 4 * 8 * 4
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, res.plane_vbo)
         size = GL.glGetBufferParameteriv(GL.GL_ARRAY_BUFFER,
                                          GL.GL_BUFFER_SIZE)
         assert size == res.plane_count * 7 * 4
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+        assert res.wall_info == {
+            t: (wtex.sizes[i][0], wtex.sizes[i][1], wtex.wraps[i])
+            for i, t in enumerate(wtex.order)}
         # NOTE: texture readback equals the assembled blobs (the
         # wall RG texture needs an explicit output array: PyOpenGL
         # 3.1.10 has no GL_RG entry in its format table).

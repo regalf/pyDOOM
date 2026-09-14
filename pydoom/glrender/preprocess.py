@@ -11,9 +11,10 @@ u(P) = texels along the wall from seg v1 + textureoffset + seg.offset
 (the software texturecolumn, minus its view-dependent detour through
 finetangent: both describe the same projective mapping, so
 perspective-correct interpolation of u lands on the same texels).
-v(z) = texbase + (z - viewz) * focal/depth, with texbase the static
-part of the software texturemid (T_static + rowoffset, viewz rides a
-per-frame uniform). World units are map units (fixed >> 16 as float);
+v(z) = texbase - z, with texbase the static part of the software
+texturemid (T_static + rowoffset): wall textures are world-pinned
+(the viewz inside texturemid only cancels the projection's viewz,
+so V is fully static and perspective interpolation lands exact). World units are map units (fixed >> 16 as float);
 1 texel == 1 map unit in both axes, like the software column drawer.
 """
 
@@ -56,6 +57,8 @@ class WallQuad:
     u2: float = 0.0  # texel u at v2
     texbase: float = 0.0  # static part of texturemid (+rowoffset)
     light: int = 0  # base lightnum 0..15 (sector + orient tweak)
+    nx: float = 0.0  # front-unit normal (front is RIGHT of v1->v2)
+    ny: float = 0.0
 
 
 @dataclass
@@ -76,6 +79,7 @@ class StaticGeometry:
         u = np.zeros((n * 4,), dtype=np.float32)
         texbase = np.zeros((n * 4,), dtype=np.float32)
         light = np.zeros((n * 4,), dtype=np.float32)
+        normal = np.zeros((n * 4, 2), dtype=np.float32)
         index = np.zeros((n * 6,), dtype=np.uint32)
         for q, quad in enumerate(self.quads):
             b = q * 4
@@ -86,10 +90,11 @@ class StaticGeometry:
             u[b:b + 4] = (quad.u1, quad.u2, quad.u2, quad.u1)
             texbase[b:b + 4] = quad.texbase
             light[b:b + 4] = quad.light
+            normal[b:b + 4] = (quad.nx, quad.ny)
             ib = q * 6
             index[ib:ib + 6] = (b, b + 1, b + 2, b, b + 2, b + 3)
         return {"positions": pos, "u": u, "texbase": texbase,
-                "light": light, "index": index}
+                "light": light, "normal": normal, "index": index}
 
 
 def _orient_light(seg, front_light: int) -> int:
@@ -107,7 +112,8 @@ def _orient_light(seg, front_light: int) -> int:
 def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
           x1: float, y1: float, x2: float, y2: float,
           zb: int, zt: int, u1: float, length: float,
-          static: int, rowoffset: int, light: int) -> None:
+          static: int, rowoffset: int, light: int,
+          nx: float, ny: float) -> None:
     # NOTE: fixed-point in, floats out; degenerate spans (closed-door
     # masked) are skipped, the software clips those to nothing anyway.
     if texnum and zt > zb:
@@ -117,7 +123,7 @@ def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
             z_bottom=zb / 65536.0, z_top=zt / 65536.0,
             u1=u1, u2=u1 + length,
             texbase=(static + rowoffset) / 65536.0,
-            light=light))
+            light=light, nx=nx, ny=ny))
 
 
 def build_walls(game_map: Map, texman: TextureManager,
@@ -138,6 +144,13 @@ def build_walls(game_map: Map, texman: TextureManager,
         length = math.hypot(x2 - x1, y2 - y1)
         u1 = (side.textureoffset + seg.offset) / 65536.0
         light = _orient_light(seg, front.lightlevel)
+        # NOTE: front-unit normal (front is RIGHT of v1->v2, so the
+        # normal is (dy, -dx)/len); degenerate segs get (0, 0) (their
+        # quads have zero area and rasterize nothing anyway).
+        if length > 1e-9:
+            nx, ny = (y2 - y1) / length, (x1 - x2) / length
+        else:
+            nx, ny = 0.0, 0.0
 
         if back is None:
             if side.midtexture:
@@ -149,7 +162,7 @@ def build_walls(game_map: Map, texman: TextureManager,
                     static = front.ceilingheight
                 _emit(out, si, "mid", side.midtexture, x1, y1, x2, y2,
                       front.floorheight, front.ceilingheight, u1, length,
-                      static, side.rowoffset, light)
+                      static, side.rowoffset, light, nx, ny)
             continue
         # NOTE: outdoor sky hack (both ceilings sky): worldtop drops
         # to worldhigh, which can only kill the top tier below.
@@ -166,7 +179,7 @@ def build_walls(game_map: Map, texman: TextureManager,
                 static = back.ceilingheight + theight
             _emit(out, si, "top", side.toptexture, x1, y1, x2, y2,
                   back.ceilingheight, front.ceilingheight, u1, length,
-                  static, side.rowoffset, light)
+                  static, side.rowoffset, light, nx, ny)
         if back.floorheight > front.floorheight and side.bottomtexture:
             if line.flags & ML_DONTPEGBOTTOM:
                 # NOTE: vanilla quirk kept verbatim: unpegged-bottom
@@ -176,7 +189,7 @@ def build_walls(game_map: Map, texman: TextureManager,
                 static = back.floorheight
             _emit(out, si, "bottom", side.bottomtexture, x1, y1, x2, y2,
                   front.floorheight, back.floorheight, u1, length,
-                  static, side.rowoffset, light)
+                  static, side.rowoffset, light, nx, ny)
         if side.midtexture:
             # NOTE: masked mid (R_RenderMaskedSegRange rule): z spans
             # the opening; texturemid anchors at the lower ceiling,
@@ -190,7 +203,7 @@ def build_walls(game_map: Map, texman: TextureManager,
             _emit(out, si, "masked", side.midtexture, x1, y1, x2, y2,
                   max(front.floorheight, back.floorheight),
                   min(front.ceilingheight, back.ceilingheight), u1,
-                  length, static, side.rowoffset, light)
+                  length, static, side.rowoffset, light, nx, ny)
     return out
 
 
@@ -213,8 +226,9 @@ SURFACES = ("floor", "ceiling", "sky")
 
 @dataclass
 class PlaneTri:
-    """One floor/ceiling/sky triangle (absolute world Z; uv in flat
-    units, i.e. world/64, so a REPEAT sampler lands on vanilla texels).
+    """One floor/ceiling/sky triangle (absolute world Z; uv in world
+    units, i.e. flat ROWS: the shader mods by 64, matching the
+    software (xfrac>>16)&63 / (yfrac>>16)&63 texel selection).
 
     NOTE: v carries vanilla's mirrored Y (R_MapPlane negates viewy:
     flat row = (-yworld) mod 64). Sky tris tag the ceiling hole the
@@ -253,9 +267,9 @@ class PlaneGeometry:
             pos[b + 0] = (tri.x1, tri.y1, tri.z)
             pos[b + 1] = (tri.x2, tri.y2, tri.z)
             pos[b + 2] = (tri.x3, tri.y3, tri.z)
-            uv[b + 0] = (tri.x1 / 64.0, -tri.y1 / 64.0)
-            uv[b + 1] = (tri.x2 / 64.0, -tri.y2 / 64.0)
-            uv[b + 2] = (tri.x3 / 64.0, -tri.y3 / 64.0)
+            uv[b + 0] = (tri.x1, -tri.y1)
+            uv[b + 1] = (tri.x2, -tri.y2)
+            uv[b + 2] = (tri.x3, -tri.y3)
             flat[b:b + 3] = tri.flat
             light[b:b + 3] = tri.light
         return {"positions": pos, "uv": uv, "flat": flat,
