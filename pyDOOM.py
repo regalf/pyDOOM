@@ -95,7 +95,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       debug: bool = False, fast: bool = False,
                       respawn: bool = False, nomonsters: bool = False,
                       kinematic: bool = False,
-                      extra_hud: bool = False) -> list:
+                      extra_hud: bool = False,
+                      video_api: str = "software") -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -118,6 +119,10 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--kinematic")
     if extra_hud:
         args.append("--extra-hud")
+    if video_api == "opengl":
+        # NOTE: milestone H: software stays the default, so only the
+        # non-default backend rides argv (keeps old argv byte-stable).
+        args.append("--video-api=opengl")
     return args
 
 
@@ -179,8 +184,8 @@ class PickList:
 
 def main() -> int:
     import pygame
-    from pydoom.menu import (CONFIG_PATH, Settings, settings_load,
-                             settings_save)
+    from pydoom.menu import (CONFIG_PATH, VIDEO_APIS, Settings,
+                             settings_load, settings_save)
     cfg = Settings()
     settings_load(os.path.join(ROOT, CONFIG_PATH), cfg)
     wads = find_wads()
@@ -210,9 +215,13 @@ def main() -> int:
         map_list.index = maps.index(cfg.last_map)
     skill_list = PickList([s.upper() for s in SKILLS], visible=5)
     skill_list.index = SKILLS.index(skill)
+    video_list = PickList([v.upper() for v in VIDEO_APIS], visible=2)
+    # NOTE: milestone H backend picker (default software, cfg-persisted).
+    video_list.index = VIDEO_APIS.index(cfg.video_api) \
+        if cfg.video_api in VIDEO_APIS else 0
     flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=7)
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
-    sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
+    sfocus = 0  # NOTE: 0 skill, 1 video, 2 flags on the SETTINGS tab
     launch_rect = pygame.Rect(24, 420 - 44, 180, 30)
     quit_rect = pygame.Rect(560 - 204, 420 - 44, 180, 30)
     tab_rects = [pygame.Rect(24 + i * 130, 44, 120, 26) for i in
@@ -253,12 +262,13 @@ def main() -> int:
         cfg.last_wad, cfg.last_skill = wad, SKILLS[skill_list.index]
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
+        cfg.video_api = VIDEO_APIS[video_list.index]
         settings_save(os.path.join(ROOT, CONFIG_PATH), cfg)
         args = build_viewer_args(
             wad, start_map, picked_skill,
             flags["debug"], flags["fast"], flags["respawn"],
             flags["nomonsters"], flags["kinematic"],
-            flags["extra_hud"])
+            flags["extra_hud"], VIDEO_APIS[video_list.index])
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.
@@ -320,12 +330,15 @@ def main() -> int:
                                          True, (90, 90, 90)), (24, 114))
                 screen.blit(small.render("menu picks it otherwise).",
                                          True, (90, 90, 90)), (24, 132))
+            screen.blit(small.render("VIDEO", True, (90, 90, 90)),
+                        (24, 228))
+            video_list.draw(screen, font, 24, 246, 200, sfocus == 1)
             screen.blit(small.render("FLAGS (enter toggles)", True,
                                      (90, 90, 90)), (296, 78))
             y0 = 96
             for slot, name in enumerate(FLAGS):
                 ry = y0 + slot * flag_list.row_h
-                picked = slot == flag_list.index and sfocus == 1
+                picked = slot == flag_list.index and sfocus == 2
                 color = ((255, 220, 120) if picked else (160, 160, 160))
                 if picked:
                     screen.fill((50, 30, 20),
@@ -380,18 +393,21 @@ def main() -> int:
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         launch()
                 else:
-                    if not flags["debug"]:
-                        sfocus = 1  # NOTE: skill hides without debug
+                    order = (0, 1, 2) if flags["debug"] else (1, 2)
+                    if sfocus not in order:
+                        sfocus = order[0]  # NOTE: skill hides w/o debug
+                    focus_lists = (skill_list, video_list, flag_list)
                     if ev.key == pygame.K_UP:
-                        (flag_list if sfocus else skill_list).move(-1)
+                        focus_lists[sfocus].move(-1)
                     elif ev.key == pygame.K_DOWN:
-                        (flag_list if sfocus else skill_list).move(1)
+                        focus_lists[sfocus].move(1)
                     elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                        if flags["debug"]:
-                            sfocus = 1 - sfocus
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        if sfocus:
-                            toggle_flag()
+                        step = 1 if ev.key == pygame.K_RIGHT else -1
+                        sfocus = order[(order.index(sfocus) + step)
+                                       % len(order)]
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) \
+                            and sfocus == 2:
+                        toggle_flag()
             elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 if launch_rect.collidepoint(ev.pos):
                     launch()
@@ -409,8 +425,10 @@ def main() -> int:
                 else:
                     if flags["debug"] and skill_list.click(ev.pos):
                         sfocus = 0
-                    elif flag_list.click(ev.pos):
+                    elif video_list.click(ev.pos):
                         sfocus = 1
+                    elif flag_list.click(ev.pos):
+                        sfocus = 2
                         toggle_flag()
     pygame.quit()
     return 0

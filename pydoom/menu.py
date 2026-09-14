@@ -27,6 +27,11 @@ NOTYET = "not yet implemented"
 # value ranges behind the thermo bars (m_menu.c clamps).
 SFX_MAX, MUS_MAX, SENS_MAX = 15, 15, 8
 
+# NOTE: renderer backend (milestone H): software is the reference raster,
+# opengl is the native-res GL port (auto-falls back to software when the
+# GL context cannot come up: missing PyOpenGL, dummy video, headless).
+VIDEO_APIS = ("software", "opengl")
+
 
 @dataclass
 class Settings:
@@ -44,6 +49,8 @@ class Settings:
     last_wad: str = "DOOM1.WAD"
     last_skill: str = "normal"
     last_map: str = "E1M1"
+    # NOTE: renderer backend, see VIDEO_APIS (default software).
+    video_api: str = "software"
 
 
 CONFIG_PATH = "pydoom.cfg"
@@ -65,6 +72,11 @@ def settings_load(path: str, settings: Settings) -> None:
         if key in ("last_wad", "last_skill", "last_map"):
             # NOTE: launcher strings (validated at launch, not here).
             setattr(settings, key, raw[:32])
+            continue
+        if key == "video_api":
+            # NOTE: string-validated like the launcher prefs above.
+            if raw in VIDEO_APIS:
+                settings.video_api = raw
             continue
         try:
             val = int(raw)
@@ -97,7 +109,8 @@ def settings_save(path: str, settings: Settings) -> None:
                     f"demos {int(settings.demos)}\n"
                     f"last_wad {settings.last_wad}\n"
                     f"last_skill {settings.last_skill}\n"
-                    f"last_map {settings.last_map}\n")
+                    f"last_map {settings.last_map}\n"
+                    f"video_api {settings.video_api}\n")
     except OSError:
         pass
 

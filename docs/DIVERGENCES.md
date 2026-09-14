@@ -224,3 +224,32 @@ than it gives. This file lists every known one, by area. Rules:
   `P_Random`/`M_Random` streams, snapshot/restore for savegames.
   Plat random starts use the game stream (never `random`, which
   would desync demos across processes).
+
+## OpenGL renderer parity (milestone H, phase 5 gate)
+
+- Method: 320×200 GL readback vs PLAYPAL-applied software framebuffer,
+  same fixed camera, same static mobjs (no sim): exact-match fraction
+  + mean abs RGB diff. Gate: `tests/test_gl.py::test_parity_gate_e1m1_walk`
+  (E1M1 start + 5-view scripted walk, GL 3.3+ context or skip).
+- Measured (Mesa-class GL, thresholds in brackets):
+
+| view (x, y, yaw) | exact [min] | mean [max] |
+|---|---|---|
+| start (1056, -3616, 90°) | 0.668 [0.60] | 5.20 [7.5] |
+| pool (1328, -3291, 336°) | 0.630 [0.55] | 7.92 [10.5] |
+| outdoor-sky (2000, -3291, 330°) | 0.563 [0.49] | 8.57 [11.0] |
+| north-room (1169, -2274, 247°) | 0.278 [0.20] | 22.55 [26.0] |
+| corridor (1056, -3000, 270°) | 0.429 [0.35] | 14.05 [17.0] |
+| garden (1500, -3291, 336°) | 0.555 [0.48] | 9.20 [12.0] |
+
+- Known classes (tolerance, not bugs): fuzz shimmer pattern
+  approximated by frame+row (colors match); sky cylinder vs column
+  drawer (horizon-locked, sub-texel edges); distance-light ramp
+  rounding at column granularity; dark-quantization sensitivity
+  (exact-match is brutal below colormap ~10: one row off flips
+  every pixel); masked-post vs quad edges on fences.
+- Accepted: no void concept — from outside the map (noclip/freecam)
+  GL shows the true map where vanilla shows hall-of-mirrors; the
+  player can never get there under collision.
+- Open spots: north-room fence + dark interiors (same geometry,
+  lighting/tier gaps under diagnosis on `opengl-renderer`).
