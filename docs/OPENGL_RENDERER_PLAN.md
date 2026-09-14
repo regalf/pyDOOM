@@ -172,6 +172,11 @@ Once per map load (not per frame; invalidated on level change):
 
 ### Phase 6 — performance
 
+- Measure with `tools/gl_bench.py` (GL fps glFinish-serialized at
+  960x600 plus the software baseline on the same views; needs a
+  display, never runs in CI). Baseline (Intel HD 520): E1M1 1116 fps
+  / 0.90 ms/frame at 33 draws, E2M7 541 fps at 85 draws.
+
 - One draw call per texture-array layer where possible; dynamic sprite
   VBO refilled once per frame from `project_mobjs`.
 - Preprocess cost measured with `--frames` + `--extra-hud` fps readout
