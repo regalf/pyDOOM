@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from pydoom.glrender.dynamic import sector_light_bases
 from pydoom.glrender.light import (
     COLORMAP_BYTES,
     PALETTE_BYTES,
@@ -52,7 +53,7 @@ def load_e1m1_sets():
     ftex = build_flat_textures(texman, flatnums_used(planes))
     cmap = colormap_lut(bytes(wad.cache_lump("COLORMAP")))
     pal = bytes(wad.read_lump("PLAYPAL"))
-    return texman, walls, planes, wtex, ftex, cmap, pal
+    return texman, walls, planes, wtex, ftex, cmap, pal, game_map
 
 
 def test_upload_module_needs_no_gl():
@@ -105,7 +106,8 @@ def test_light_luts_match_renderer_tables():
 
 @requires_wad
 def test_plan_wall_batches_cover_and_group():
-    _texman, walls, _planes, wtex, _ftex, _cmap, _pal = load_e1m1_sets()
+    _texman, walls, _planes, wtex, _ftex, _cmap, _pal, _map = (
+        load_e1m1_sets())
     index, batches, masked = plan_wall_batches(walls.quads)
     opaque_quads = [q for q in walls.quads if q.tier != "masked"]
     masked_quads = [q for q in walls.quads if q.tier == "masked"]
@@ -168,20 +170,26 @@ def test_create_uploads_byte_exact():
     try:
         import numpy as np
         from OpenGL import GL
-        _texman, walls, planes, wtex, ftex, cmap, pal = load_e1m1_sets()
+        _texman, walls, planes, wtex, ftex, cmap, pal, game_map = (
+            load_e1m1_sets())
         res = GlResources.create(walls, planes, wtex, ftex, cmap,
-                                 pal)
+                                 pal,
+                                 sector_lights=sector_light_bases(
+                                     game_map))
         assert res is not None
         assert res.wall_vbo and res.wall_ibo and res.plane_vbo
         assert res.colormap_tex and res.palette_tex
+        assert res.sector_tex and res.sector_count == len(
+            game_map.sectors)
         assert res.flat_array and res.plane_count > 0
         assert len(res.wall_textures) == len(wtex.order)
         assert res.flat_layers == ftex.index_of
-        # NOTE: VBO byte sizes match the interleaved layouts.
+        # NOTE: VBO byte sizes match the interleaved layouts (walls
+        # carry sector+tweak now: 9 floats/vert).
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, res.wall_vbo)
         size = GL.glGetBufferParameteriv(GL.GL_ARRAY_BUFFER,
                                          GL.GL_BUFFER_SIZE)
-        assert size == len(walls.quads) * 4 * 8 * 4
+        assert size == len(walls.quads) * 4 * 9 * 4
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, res.plane_vbo)
         size = GL.glGetBufferParameteriv(GL.GL_ARRAY_BUFFER,
                                          GL.GL_BUFFER_SIZE)
@@ -214,8 +222,34 @@ def test_create_uploads_byte_exact():
                          GL.GL_UNSIGNED_BYTE, out)
         assert out.tobytes() == full
         GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, 0)
+        # NOTE: sector-light texture reads back the base lightnums
+        # (explicit output array, like the wall RG readback above).
+        nsec = len(game_map.sectors)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
+        sout = np.zeros((1, nsec), dtype=np.uint8)
+        GL.glGetTexImage(GL.GL_TEXTURE_2D, 0, GL.GL_RED,
+                         GL.GL_UNSIGNED_BYTE, sout)
+        assert list(sout.tobytes()) == sector_light_bases(game_map)
+        # NOTE: LIGHT refresh re-uploads in place (same texture id,
+        # no error; pixel proof lives in test_gl_dynamic.py, whose
+        # render parity exercises this path. A second readback is
+        # avoided on purpose: PyOpenGL_accelerate's array-form
+        # glGetTexImage on this odd-sized (numsectors x 1) texture
+        # breaks its own subsequent queries, while rendering (the
+        # ground truth) is unaffected.)
+        tid = res.sector_tex
+        before = sector_light_bases(game_map)
+        game_map.sectors[0].lightlevel ^= 0xFF
+        want = sector_light_bases(game_map)
+        assert want != before  # NOTE: refresh uploads changed data
+        res.upload_sector_lights(want)
+        assert res.sector_tex == tid
+        assert res.sector_count == nsec
+        game_map.sectors[0].lightlevel ^= 0xFF  # NOTE: restore map
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
         res.delete()
         assert res.wall_vbo == 0 and res.wall_textures == {}
+        assert res.sector_tex == 0 and res.sector_count == 0
     finally:
         import pygame
         pygame.quit()

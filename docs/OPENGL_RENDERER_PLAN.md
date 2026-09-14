@@ -182,6 +182,25 @@ version, automap.
 - Melt stays in the overlay plane; no GL-specific wipe needed initially
   (parity with current asset behavior).
 
+### Phase 4b — dynamic sectors (doors/plats/lights/switches)
+
+DONE. Static quads baked at load froze doors (physics moved, pixels
+didn't). Per-frame sync in the viewer (`sync_gl_dynamic`, read-only
+w.r.t. the sim): DynamicState snapshots every runtime-mutable baked
+field and classifies drift as CLEAN (zero GL work) / LIGHT (flicker
+and strobe: only the new sector-light texture re-uploads) / GEO
+(heights, flat pics, sidedef texnums: walls rebuilt, planes
+re-emitted from cached Fraction-free fan topology, both VBOs
+re-uploaded in place so VAOs stay valid). Wall/plane shaders read
+the base lightnum from the sector-light texture (orient tweak stays
+a static vertex attr; double-clamped exactly like the old baked
+formula). New textures mid-game are covered three ways: switch
+pairs prebuilt at load (SW1*/SW2* convention), ALL decodable flats
+prebuilt (donut swaps), degenerate-at-load tiers uploaded on demand.
+Parity gates in tests/test_gl_dynamic.py: door-stroke GEO move and
+lightlevel LIGHT swing both match software; emit_planes is
+bit-identical to build_planes; switch flips always resolve.
+
 ### Phase 5 — parity gate, fallback tests, CI
 
 - `tests/test_gl.py` behind `pytest.mark.skipif(no context)`: render a

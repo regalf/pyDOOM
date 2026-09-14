@@ -17,7 +17,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pydoom.glrender.draw import FrameRenderer
-from pydoom.glrender.light import colormap_lut, palette_lut
+from pydoom.glrender.dynamic import sector_light_bases
+from pydoom.glrender.light import colormap_lut
 from pydoom.glrender.preprocess import build_planes, build_walls
 from pydoom.glrender.sprites import SpriteFeed
 from pydoom.glrender.textures import (
@@ -87,7 +88,7 @@ def e1m5fuzz():
     ftex = build_flat_textures(texman, flatnums_used(planes))
     stex = build_sprite_textures(texman, range(texman.numsprites))
     cmap = colormap_lut(bytes(wad.cache_lump("COLORMAP")))
-    pal = palette_lut(bytes(wad.read_lump("PLAYPAL")))
+    pal = bytes(wad.read_lump("PLAYPAL"))
     feed = SpriteFeed(sprites=init_sprite_defs(
         wad, texman.firstsprite, texman.lastsprite))
     mobjs = []
@@ -144,7 +145,8 @@ def _render_both(e1m5fuzz, tx, ty, angle, frame_no):
         res = GlResources.create(
             e1m5fuzz["walls"], e1m5fuzz["planes"], e1m5fuzz["wtex"],
             e1m5fuzz["ftex"], e1m5fuzz["cmap"], e1m5fuzz["pal"],
-            sprite_tex=e1m5fuzz["stex"])
+            sprite_tex=e1m5fuzz["stex"],
+            sector_lights=sector_light_bases(game_map))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:

@@ -105,7 +105,12 @@ def test_e1m1_quad_invariants():
         assert q.tier in TIERS
         assert 0 < q.texnum < ntex
         assert q.z_top > q.z_bottom
-        assert 0 <= q.light <= 15
+        assert q.tweak in (-1, 0, 1)  # NOTE: static orient tweak
+        assert 0 <= q.sector < len(game_map.sectors)  # NOTE: base
+        # lightnum rides the sector-light texture now
+        base = min(max(game_map.sectors[q.sector].lightlevel >> 4,
+                       0), 15)
+        assert 0 <= min(max(base + q.tweak, 0), 15) <= 15
         seg = game_map.segs[q.seg]
         length = ((seg.v2.x - seg.v1.x) ** 2
                   + (seg.v2.y - seg.v1.y) ** 2) ** 0.5 / 65536.0
@@ -135,6 +140,9 @@ def test_to_arrays_shape_and_index():
     assert str(arr["positions"].dtype) == "float32"
     # NOTE: first triangle of quad 0 references its own four verts.
     assert list(arr["index"][:6]) == [0, 1, 2, 0, 2, 3]
+    assert arr["sector"].shape == (n * 4,)
+    assert arr["tweak"].shape == (n * 4,)
+    assert set(arr["tweak"].tolist()) <= {0.0, 1.0, 2.0}  # tweak+1
 
 
 @requires_wad
@@ -312,19 +320,29 @@ def test_closed_door_masked_skipped():
 
 @requires_wad
 def test_light_orientation_tweak():
+    """Orient tweak stays static (-1/0/+1); the sector base rides the
+    sector-light texture (row = base + tweak, clamped, as before:
+    10-1=9, 10+1=11, 0-1->0)."""
+    from pydoom.glrender.dynamic import sector_light_bases
     _, texman, _, _ = load_e1m1()
     game_map, _ = mini_world(texman, front=(0, 128, 160),
                              side_kw={"midtexture": "MID"},
                              v1=(0, 0), v2=(128, 0))
-    assert build_walls(game_map, texman, 999).quads[0].light == 9
+    q = build_walls(game_map, texman, 999).quads[0]
+    assert (q.sector, q.tweak) == (0, -1)
+    assert sector_light_bases(game_map)[0] == 10
     game_map, _ = mini_world(texman, front=(0, 128, 160),
                              side_kw={"midtexture": "MID"},
                              v1=(0, 0), v2=(0, 128))
-    assert build_walls(game_map, texman, 999).quads[0].light == 11
+    q = build_walls(game_map, texman, 999).quads[0]
+    assert (q.sector, q.tweak) == (0, 1)
     game_map, _ = mini_world(texman, front=(0, 128, 8),
                              side_kw={"midtexture": "MID"},
                              v1=(0, 0), v2=(128, 0))
-    assert build_walls(game_map, texman, 999).quads[0].light == 0
+    q = build_walls(game_map, texman, 999).quads[0]
+    assert (q.sector, q.tweak) == (0, -1)
+    base = sector_light_bases(game_map)[0]
+    assert base == 0 and min(max(base - 1, 0), 15) == 0
 
 
 @requires_wad

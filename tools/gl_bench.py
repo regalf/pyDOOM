@@ -59,6 +59,7 @@ def main() -> int:
           f"GL {ver.decode('ascii', 'replace').split(' (')[0]}")
 
     from pydoom.glrender import draw as gldraw
+    from pydoom.glrender import dynamic as gldyn
     from pydoom.glrender import light as gllight
     from pydoom.glrender import preprocess as glpre
     from pydoom.glrender import sprites as glsprites
@@ -85,9 +86,11 @@ def main() -> int:
                                        range(texman.numsprites))
     t_tex = time.perf_counter()
     cmap = gllight.colormap_lut(bytes(wad.cache_lump("COLORMAP")))
-    pal = gllight.palette_lut(bytes(wad.read_lump("PLAYPAL")))
+    pal = bytes(wad.read_lump("PLAYPAL"))
     res = glup.GlResources.create(walls, planes, wtex, ftex, cmap,
-                                  pal, sprite_tex=stex)
+                                  pal, sprite_tex=stex,
+                                  sector_lights=gldyn.sector_light_bases(
+                                      game_map))
     t_up = time.perf_counter()
     fr = gldraw.FrameRenderer(res, WIN_W, WIN_H)
     t_prog = time.perf_counter()

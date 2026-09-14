@@ -50,17 +50,20 @@ WALL_VERT = """\
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in float aU;
 layout(location = 2) in float aTexBase;
-layout(location = 3) in float aLight;
-layout(location = 4) in vec2 aNormal;
+layout(location = 3) in float aSector;
+layout(location = 4) in float aTweak;
+layout(location = 5) in vec2 aNormal;
 uniform mat4 uViewProj;
 out vec2 vUv;
-out float vLight;
+out float vSector;
+out float vTweak;
 out vec2 vNormal;
 out vec2 vWorld;
 void main() {
     gl_Position = uViewProj * vec4(aPos, 1.0);
     vUv = vec2(aU, aTexBase - aPos.z);
-    vLight = aLight;
+    vSector = aSector;
+    vTweak = aTweak;
     vNormal = aNormal;
     vWorld = aPos.xy;
 }
@@ -69,13 +72,15 @@ void main() {
 WALL_FRAG = """\
 #version 330 core
 in vec2 vUv;
-in float vLight;
+in float vSector;
+in float vTweak;
 in vec2 vNormal;
 in vec2 vWorld;
 uniform sampler2D uWallTex;
 uniform sampler2D uScaleLight;
 uniform sampler2D uColormap;
 uniform sampler2DArray uPalette;
+uniform sampler2D uSectorLight;
 uniform int uPalIndex;
 uniform vec2 uViewPos;
 uniform vec2 uViewDir;
@@ -103,7 +108,16 @@ void main() {
         if (den > 0.0)
             li = clamp(int(160.0 * dot(fdir, vNormal) / den * 16.0),
                        0, 47);
-        int row = clamp(int(vLight + 0.5) + uExtraLight, 0, 15);
+        // NOTE: base lightnum from the sector-light texture (dynamic
+        // sectors: flicker/strobe re-upload only that texture).
+        // Double clamp matches the old baked formula verbatim
+        // (clamp(base + tweak) then + extralight, clamped again).
+        float base = texelFetch(uSectorLight,
+                                ivec2(int(vSector + 0.5), 0), 0).r
+                     * 255.0;
+        int row0 = clamp(int(base + 0.5) + int(vTweak + 0.5) - 1,
+                         0, 15);
+        int row = clamp(row0 + uExtraLight, 0, 15);
         int cmap = int(texelFetch(uScaleLight, ivec2(li, row), 0).r
                        * 255.0 + 0.5);
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
@@ -119,17 +133,17 @@ PLANE_VERT = """\
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec2 aUv;
 layout(location = 2) in float aFlat;
-layout(location = 3) in float aLight;
+layout(location = 3) in float aSector;
 uniform mat4 uViewProj;
 out vec2 vUv;
 out float vFlat;
-out float vLight;
+out float vSector;
 out float vZ;
 void main() {
     gl_Position = uViewProj * vec4(aPos, 1.0);
     vUv = aUv;
     vFlat = aFlat;
-    vLight = aLight;
+    vSector = aSector;
     vZ = aPos.z;
 }
 """
@@ -138,12 +152,13 @@ PLANE_FRAG = """\
 #version 330 core
 in vec2 vUv;
 in float vFlat;
-in float vLight;
+in float vSector;
 in float vZ;
 uniform sampler2DArray uFlatArray;
 uniform sampler2D uZLight;
 uniform sampler2D uColormap;
 uniform sampler2DArray uPalette;
+uniform sampler2D uSectorLight;
 uniform int uPalIndex;
 uniform float uViewZ;
 uniform float uViewH;
@@ -166,7 +181,12 @@ void main() {
         float hu = abs(vZ - uViewZ);
         int li = 127;
         if (dy > 1e-6) li = clamp(int(hu * 10.0 / dy), 0, 127);
-        int row = clamp(int(vLight + 0.5) + uExtraLight, 0, 15);
+        // NOTE: base lightnum from the sector-light texture (same
+        // value the old baked vertex attr carried: row identical).
+        float base = texelFetch(uSectorLight,
+                                ivec2(int(vSector + 0.5), 0), 0).r
+                     * 255.0;
+        int row = clamp(int(base + 0.5) + uExtraLight, 0, 15);
         int cmap = int(texelFetch(uZLight, ivec2(li, row), 0).r
                        * 255.0 + 0.5);
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r

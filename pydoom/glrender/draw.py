@@ -110,9 +110,11 @@ class FrameRenderer:
                                        GL.GL_R8, GL.GL_RED)
         for prog, samplers in (
                 (self.wall_prog, (("uWallTex", 0), ("uScaleLight", 1),
-                                  ("uColormap", 2), ("uPalette", 3))),
+                                  ("uColormap", 2), ("uPalette", 3),
+                                  ("uSectorLight", 6))),
                 (self.plane_prog, (("uFlatArray", 0), ("uZLight", 1),
-                                   ("uColormap", 2), ("uPalette", 3))),
+                                   ("uColormap", 2), ("uPalette", 3),
+                                   ("uSectorLight", 6))),
                 (self.sprite_prog, (("uSpriteTex", 0),
                                     ("uColormap", 2),
                                     ("uPalette", 3))),
@@ -143,8 +145,9 @@ class FrameRenderer:
                                             GL.GL_RED, None)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
         self._wall_vao = self._make_vao(
-            res.wall_vbo, 8,
-            [(0, 3, 0), (1, 1, 3), (2, 1, 4), (3, 1, 5), (4, 2, 6)],
+            res.wall_vbo, 9,
+            [(0, 3, 0), (1, 1, 3), (2, 1, 4), (3, 1, 5),
+             (4, 1, 6), (5, 2, 7)],
             res.wall_ibo)
         self._plane_vao = self._make_vao(
             res.plane_vbo, 7,
@@ -342,6 +345,8 @@ class FrameRenderer:
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
         GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
+        GL.glActiveTexture(GL.GL_TEXTURE6)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
         GL.glBindVertexArray(self._wall_vao)
         for texnum, start, count in res.wall_batches:
             _w, h, wrap = res.wall_info[texnum]
@@ -390,6 +395,8 @@ class FrameRenderer:
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.colormap_tex)
         GL.glActiveTexture(GL.GL_TEXTURE3)
         GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
+        GL.glActiveTexture(GL.GL_TEXTURE6)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
         GL.glBindVertexArray(self._plane_vao)
         if res.plane_count:
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, res.plane_count)

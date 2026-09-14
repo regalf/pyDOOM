@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pydoom.glrender.preprocess import build_planes, build_walls
 from pydoom.glrender.textures import (
+    all_flatnums,
     build_flat_textures,
     build_wall_textures,
     flatnums_used,
@@ -137,6 +138,18 @@ def test_flat_manifest_covers_tris():
     assert {t.flat for t in planes.tris if t.flat >= 0} <= set(
         sets.order)
     assert len(sets.blob) == len(used) * FLAT_SIZE
+
+
+@requires_wad
+def test_all_flatnums_skips_empty_markers():
+    """all_flatnums covers every used flat but no zero-length marker
+    lump (dynamic sectors prebuild these: donut swaps resolve)."""
+    texman, _walls, planes = load_e1m1()
+    allf = all_flatnums(texman)
+    assert set(flatnums_used(planes)) <= set(allf)
+    sets = build_flat_textures(texman, allf)  # NOTE: must not assert
+    assert len(sets.blob) == len(allf) * FLAT_SIZE
+    assert len(allf) > len(flatnums_used(planes))  # NOTE: spares exist
 
 
 @requires_wad

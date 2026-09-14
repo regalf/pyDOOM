@@ -41,6 +41,7 @@ __all__ = [
     "FlatTextureSet",
     "SpriteTextureSet",
     "WallTextureSet",
+    "all_flatnums",
     "build_flat_textures",
     "build_sprite_textures",
     "build_wall_textures",
@@ -94,6 +95,16 @@ def flatnums_used(plane_geometry) -> list:
     """Sorted flatnums referenced by plane tris (sky tagged -1 and
     excluded: the sky surface is textured at draw time)."""
     return sorted({t.flat for t in plane_geometry.tris if t.flat >= 0})
+
+
+def all_flatnums(texman: TextureManager) -> list:
+    """Every decodable flat (zero-length marker lumps between
+    F_START/F_END are skipped: no sector can reference them, and
+    build_flat_textures asserts 64x64). The viewer prebuilds all of
+    these (still tiny: ~100x4KB) so donut pic-swaps, which can land
+    on any floorpic, always resolve to a layer at runtime."""
+    return [f for f in range(texman.numflats)
+            if len(texman.get_flat(f)) == FLAT_SIZE]
 
 
 def build_wall_textures(texman: TextureManager,

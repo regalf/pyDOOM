@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pydoom.glrender.draw import FrameRenderer
+from pydoom.glrender.dynamic import sector_light_bases
 from pydoom.glrender.light import colormap_lut
 from pydoom.glrender.preprocess import build_planes, build_walls
 from pydoom.glrender.textures import (
@@ -185,7 +186,9 @@ def test_present_level_parity(e1m1present):
         res = GlResources.create(
             e1m1present["walls"], e1m1present["planes"],
             e1m1present["wtex"], e1m1present["ftex"],
-            e1m1present["cmap"], e1m1present["pal"])
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:
@@ -236,7 +239,9 @@ def test_present_menu_parity(e1m1present):
         res = GlResources.create(
             e1m1present["walls"], e1m1present["planes"],
             e1m1present["wtex"], e1m1present["ftex"],
-            e1m1present["cmap"], e1m1present["pal"])
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:
@@ -284,7 +289,9 @@ def test_gun_under_statusbar_layering(e1m1present):
         res = GlResources.create(
             e1m1present["walls"], e1m1present["planes"],
             e1m1present["wtex"], e1m1present["ftex"],
-            e1m1present["cmap"], e1m1present["pal"])
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:
@@ -358,7 +365,9 @@ def test_gun_under_statusbar_layering(e1m1present):
         res = GlResources.create(
             e1m1present["walls"], e1m1present["planes"],
             e1m1present["wtex"], e1m1present["ftex"],
-            e1m1present["cmap"], e1m1present["pal"])
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:
@@ -402,7 +411,9 @@ def test_version_quad(e1m1present):
         res = GlResources.create(
             e1m1present["walls"], e1m1present["planes"],
             e1m1present["wtex"], e1m1present["ftex"],
-            e1m1present["cmap"], e1m1present["pal"])
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:
@@ -455,7 +466,9 @@ def test_automap_parity(e1m1present):
         res = GlResources.create(
             e1m1present["walls"], e1m1present["planes"],
             e1m1present["wtex"], e1m1present["ftex"],
-            e1m1present["cmap"], e1m1present["pal"])
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:

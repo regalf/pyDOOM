@@ -63,10 +63,11 @@ def test_e1m1_plane_invariants():
     nflat = texman.numflats
     for t in tris:
         assert t.surface in SURFACES
-        assert 0 <= t.light <= 15
+        assert 0 <= t.sector < len(game_map.sectors)  # NOTE: light
+        # rides the sector-light texture now (sector_light_bases)
         sec = game_map.sectors[t.sector]
         if t.surface == "sky":
-            assert t.flat == -1 and t.light == 0
+            assert t.flat == -1
             assert sec.ceilingpic == sky or sec.floorpic == sky
             assert t.z == sec.ceilingheight / 65536.0
         else:
@@ -77,7 +78,6 @@ def test_e1m1_plane_invariants():
             else:
                 assert t.flat == sec.ceilingpic
                 assert t.z == sec.ceilingheight / 65536.0
-            assert t.light == min(max(sec.lightlevel >> 4, 0), 15)
         area2 = abs((t.x2 - t.x1) * (t.y3 - t.y1)
                     - (t.y2 - t.y1) * (t.x3 - t.x1))
         assert area2 > 0  # NOTE: degenerate fan tris are skipped
@@ -103,6 +103,8 @@ def test_e1m1_uv_matches_software_flat_mapping():
     n = len(geo.tris)
     assert arr["positions"].shape == (n * 3, 3)
     assert arr["uv"].shape == (n * 3, 2)
+    assert arr["sector"].shape == (n * 3,)  # NOTE: light rides the
+    # sector-light texture (sector idx per vert, uniform per tri)
     assert str(arr["positions"].dtype) == "float32"
     import numpy as np
     assert np.allclose(arr["uv"][:, 0],

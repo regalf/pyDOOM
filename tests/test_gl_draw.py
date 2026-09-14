@@ -22,7 +22,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pydoom.glrender.draw import FrameRenderer
-from pydoom.glrender.light import colormap_lut, palette_lut
+from pydoom.glrender.dynamic import sector_light_bases
+from pydoom.glrender.light import colormap_lut
 from pydoom.glrender.preprocess import build_planes, build_walls
 from pydoom.glrender.textures import (
     build_flat_textures,
@@ -80,7 +81,7 @@ def e1m1():
     wtex = build_wall_textures(texman, wall_texnums_used(walls))
     ftex = build_flat_textures(texman, flatnums_used(planes))
     cmap = colormap_lut(bytes(wad.cache_lump("COLORMAP")))
-    pal = palette_lut(bytes(wad.read_lump("PLAYPAL")))
+    pal = bytes(wad.read_lump("PLAYPAL"))
     start = next(t for t in game_map.things if t.type == 1)
     return {"wad": wad, "game_map": game_map, "walls": walls,
             "planes": planes, "wtex": wtex, "ftex": ftex,
@@ -134,17 +135,19 @@ def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
         old_wall = shaders.WALL_FRAG
         old_plane = shaders.PLANE_FRAG
         shaders.WALL_FRAG = old_wall.replace(
-            "oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb,"
-            " 1.0);",
+            "oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
+            " 0).rgb, 1.0);",
             "oColor = vec4(vec3(float(lit) / 255.0), 1.0);")
         shaders.PLANE_FRAG = old_plane.replace(
-            "oColor = vec4(texelFetch(uPalette, ivec2(lit, 0), 0).rgb,"
-            " 1.0);",
+            "oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
+            " 0).rgb, 1.0);",
             "oColor = vec4(vec3(float(lit) / 255.0), 1.0);")
     try:
         res = GlResources.create(e1m1["walls"], e1m1["planes"],
                                  e1m1["wtex"], e1m1["ftex"],
-                                 e1m1["cmap"], e1m1["pal"])
+                                 e1m1["cmap"], e1m1["pal"],
+                                 sector_lights=sector_light_bases(
+                                     e1m1["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         try:
@@ -181,7 +184,9 @@ def test_shaders_compile(e1m1):
     try:
         res = GlResources.create(e1m1["walls"], e1m1["planes"],
                                  e1m1["wtex"], e1m1["ftex"],
-                                 e1m1["cmap"], e1m1["pal"])
+                                 e1m1["cmap"], e1m1["pal"],
+                                 sector_lights=sector_light_bases(
+                                     e1m1["game_map"]))
         assert res is not None
         fr = FrameRenderer(res, 320, 200)
         fr.close()

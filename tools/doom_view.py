@@ -318,6 +318,7 @@ def main() -> int:
     gl_res = None  # GlResources for the current map (or None)
     gl_frame = None  # FrameRenderer bound to gl_res (or None)
     gl_feed = None  # SpriteFeed for live-mobj billboards (or None)
+    gl_dyn = None  # DynamicState: per-frame sector-move sync (or None)
 
     def refresh_gl_resources(game_map) -> None:
         """(Re)build GPU resources for game_map (milestone H).
@@ -326,7 +327,7 @@ def main() -> int:
         runs never enter (gl_live False). Never raises: any failure
         drops back to software presentation mid-session.
         """
-        nonlocal gl_res, gl_frame, gl_feed
+        nonlocal gl_res, gl_frame, gl_feed, gl_dyn
         if gl_frame is not None:
             try:
                 gl_frame.close()
@@ -338,12 +339,14 @@ def main() -> int:
             gl_res.delete()
             gl_res = None
         gl_feed = None
+        gl_dyn = None
         if not gl_live or gl_info is None:
             return
         try:
             import time
 
             from pydoom.glrender import draw as gldraw
+            from pydoom.glrender import dynamic as gldyn
             from pydoom.glrender import light as gllight
             from pydoom.glrender import preprocess as glpre
             from pydoom.glrender import sprites as glsprites
@@ -351,16 +354,21 @@ def main() -> int:
             from pydoom.glrender import upload as glup
             from pydoom.renderer import init_sprite_defs
             t0 = time.time()
+            gl_dyn = gldyn.DynamicState.take(game_map)
             walls = glpre.build_walls(game_map, texman,
                                       renderer.skyflatnum)
-            planes = glpre.build_planes(game_map,
-                                        renderer.skyflatnum)
+            planes = glpre.emit_planes(gl_dyn.fans, game_map,
+                                       renderer.skyflatnum)
             wtex = gltex.build_wall_textures(
                 texman,
                 set(gltex.wall_texnums_used(walls))
-                | {renderer.skytexture})
+                | {renderer.skytexture}
+                | gldyn.switch_pair_texnums(game_map, texman))
             ftex = gltex.build_flat_textures(
-                texman, gltex.flatnums_used(planes))
+                texman, gltex.all_flatnums(texman))  # NOTE: ALL
+            # decodable flats (donut pic-swaps land on any floorpic:
+            # ~100x4KB is trivial, so missing-layer drops can never
+            # happen at runtime)
             stex = gltex.build_sprite_textures(
                 texman, range(texman.numsprites))
             cmap = gllight.colormap_lut(bytes(
@@ -368,7 +376,8 @@ def main() -> int:
             pal = bytes(wad.read_lump("PLAYPAL"))
             gl_res = glup.GlResources.create(
                 walls, planes, wtex, ftex, cmap, pal,
-                sprite_tex=stex)
+                sprite_tex=stex,
+                sector_lights=gldyn.sector_light_bases(game_map))
             gl_feed = glsprites.SpriteFeed(sprites=init_sprite_defs(
                 wad, texman.firstsprite, texman.lastsprite))
             if gl_res is not None:
@@ -387,6 +396,7 @@ def main() -> int:
             gl_res = None
             gl_frame = None
             gl_feed = None
+            gl_dyn = None
 
     gl_text_cache: dict = {}  # text key -> (tex_id, w, h)
 
@@ -441,9 +451,44 @@ def main() -> int:
             tex_id, w, h = gl_text_cache[ck]
             gl_frame.draw_text_quad(tex_id, (WIN_W - w) // 2, y, w, h)
 
+    def sync_gl_dynamic() -> None:
+        """Per-frame dynamic-sector sync (doors/plats/lights/switches).
+
+        Diffs the live map against the load-time snapshot: CLEAN does
+        zero GL work, LIGHT re-uploads only the tiny sector-light
+        texture (flicker/strobe), GEO rebuilds walls + re-emits planes
+        from the cached fan topology and re-uploads both VBOs in
+        place (VAOs stay valid). Read-only w.r.t. the sim (demo
+        checksums untouched). Raises on GL error: gl_present_all
+        catches it and falls back to software for the frame.
+        """
+        if gl_dyn is None or gl_res is None or gl_frame is None:
+            return
+        from pydoom.glrender import dynamic as gldyn
+        from pydoom.glrender import preprocess as glpre
+        from pydoom.glrender import textures as gltex
+        kind = gl_dyn.diff(game_map)
+        if kind == gldyn.CLEAN:
+            return
+        if kind == gldyn.GEO:
+            walls = glpre.build_walls(game_map, texman,
+                                      renderer.skyflatnum)
+            planes = glpre.emit_planes(gl_dyn.fans, game_map,
+                                       renderer.skyflatnum)
+            missing = (set(gltex.wall_texnums_used(walls))
+                       - set(gl_res.wall_textures))
+            if missing:
+                gl_res.upload_wall_textures(
+                    gltex.build_wall_textures(texman, missing))
+            gl_res.reupload_walls(walls)
+            gl_res.reupload_planes(planes, gl_res.flat_layers)
+        gl_res.upload_sector_lights(
+            gldyn.sector_light_bases(game_map))
+
     def gl_present_all(fb, pal_idx) -> None:
         """GL present: live world (level/menu) + overlay + text."""
         if has_level and gamestate in ("level", "menu"):
+            sync_gl_dynamic()
             bbs = gl_feed.project(
                 mobjs, int(cam.x * 65536), int(cam.y * 65536),
                 cam.bam, texman) if gl_feed is not None else []

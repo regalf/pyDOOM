@@ -33,7 +33,6 @@ from pydoom.mapdata import (
     Map,
     Sector,
 )
-from pydoom.renderer import LIGHTLEVELS, LIGHTSEGSHIFT
 from pydoom.textures import TextureManager, texture_height_fixed
 
 TIERS = ("mid", "top", "bottom", "masked")
@@ -56,7 +55,10 @@ class WallQuad:
     u1: float = 0.0  # texel u at v1 (offsets included)
     u2: float = 0.0  # texel u at v2
     texbase: float = 0.0  # static part of texturemid (+rowoffset)
-    light: int = 0  # base lightnum 0..15 (sector + orient tweak)
+    sector: int = 0  # frontsector index (its base lightnum rides the
+    # sector-light texture, so flicker/strobe/movers never rebuild)
+    tweak: int = 0  # vanilla orient tweak -1/0/+1 (static, folded
+    # into the shader row next to the sector base)
     nx: float = 0.0  # front-unit normal (front is RIGHT of v1->v2)
     ny: float = 0.0
 
@@ -78,7 +80,8 @@ class StaticGeometry:
         pos = np.zeros((n * 4, 3), dtype=np.float32)
         u = np.zeros((n * 4,), dtype=np.float32)
         texbase = np.zeros((n * 4,), dtype=np.float32)
-        light = np.zeros((n * 4,), dtype=np.float32)
+        sector = np.zeros((n * 4,), dtype=np.float32)
+        tweak = np.zeros((n * 4,), dtype=np.float32)
         normal = np.zeros((n * 4, 2), dtype=np.float32)
         index = np.zeros((n * 6,), dtype=np.uint32)
         for q, quad in enumerate(self.quads):
@@ -89,30 +92,33 @@ class StaticGeometry:
             pos[b + 3] = (quad.x1, quad.y1, quad.z_top)
             u[b:b + 4] = (quad.u1, quad.u2, quad.u2, quad.u1)
             texbase[b:b + 4] = quad.texbase
-            light[b:b + 4] = quad.light
+            sector[b:b + 4] = quad.sector
+            tweak[b:b + 4] = quad.tweak + 1  # NOTE: 0/1/2, never
+            # negative (GLSL int() truncates toward zero)
             normal[b:b + 4] = (quad.nx, quad.ny)
             ib = q * 6
             index[ib:ib + 6] = (b, b + 1, b + 2, b, b + 2, b + 3)
         return {"positions": pos, "u": u, "texbase": texbase,
-                "light": light, "normal": normal, "index": index}
+                "sector": sector, "tweak": tweak, "normal": normal,
+                "index": index}
 
 
-def _orient_light(seg, front_light: int) -> int:
-    """scalelight row base: sector lightlevel plus the vanilla
-    horizontal-dark / vertical-bright tweak (static part only;
-    extralight/fullbright ride per-frame uniforms in Phase 2)."""
-    lightnum = front_light >> LIGHTSEGSHIFT
+def _orient_tweak(seg) -> int:
+    """Vanilla horizontal-dark / vertical-bright tweak (-1/0/+1,
+    the static part of _orient_light; the sector base lightnum rides
+    the sector-light texture now, so movers never rebuild geometry
+    for light changes)."""
     if seg.v1.y == seg.v2.y:
-        lightnum -= 1
-    elif seg.v1.x == seg.v2.x:
-        lightnum += 1
-    return min(max(lightnum, 0), LIGHTLEVELS - 1)
+        return -1
+    if seg.v1.x == seg.v2.x:
+        return 1
+    return 0
 
 
 def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
           x1: float, y1: float, x2: float, y2: float,
           zb: int, zt: int, u1: float, length: float,
-          static: int, rowoffset: int, light: int,
+          static: int, rowoffset: int, sector: int, tweak: int,
           nx: float, ny: float) -> None:
     # NOTE: fixed-point in, floats out; degenerate spans (closed-door
     # masked) are skipped, the software clips those to nothing anyway.
@@ -123,7 +129,7 @@ def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
             z_bottom=zb / 65536.0, z_top=zt / 65536.0,
             u1=u1, u2=u1 + length,
             texbase=(static + rowoffset) / 65536.0,
-            light=light, nx=nx, ny=ny))
+            sector=sector, tweak=tweak, nx=nx, ny=ny))
 
 
 def build_walls(game_map: Map, texman: TextureManager,
@@ -131,6 +137,7 @@ def build_walls(game_map: Map, texman: TextureManager,
     """Wall quads for every seg, tier rules verbatim from
     _store_wall_range (fixed-point comparisons, float output)."""
     out = StaticGeometry()
+    sector_index = {id(s): i for i, s in enumerate(game_map.sectors)}
     for si, seg in enumerate(game_map.segs):
         assert seg.v1 is not None and seg.v2 is not None
         assert seg.sidedef is not None and seg.linedef is not None
@@ -143,7 +150,8 @@ def build_walls(game_map: Map, texman: TextureManager,
         y2 = seg.v2.y / 65536.0
         length = math.hypot(x2 - x1, y2 - y1)
         u1 = (side.textureoffset + seg.offset) / 65536.0
-        light = _orient_light(seg, front.lightlevel)
+        fsi = sector_index[id(front)]
+        tweak = _orient_tweak(seg)
         # NOTE: front-unit normal (front is RIGHT of v1->v2, so the
         # normal is (dy, -dx)/len); degenerate segs get (0, 0) (their
         # quads have zero area and rasterize nothing anyway).
@@ -162,7 +170,7 @@ def build_walls(game_map: Map, texman: TextureManager,
                     static = front.ceilingheight
                 _emit(out, si, "mid", side.midtexture, x1, y1, x2, y2,
                       front.floorheight, front.ceilingheight, u1, length,
-                      static, side.rowoffset, light, nx, ny)
+                      static, side.rowoffset, fsi, tweak, nx, ny)
             continue
         # NOTE: outdoor sky hack (both ceilings sky): worldtop drops
         # to worldhigh, which can only kill the top tier below.
@@ -179,7 +187,7 @@ def build_walls(game_map: Map, texman: TextureManager,
                 static = back.ceilingheight + theight
             _emit(out, si, "top", side.toptexture, x1, y1, x2, y2,
                   back.ceilingheight, front.ceilingheight, u1, length,
-                  static, side.rowoffset, light, nx, ny)
+                  static, side.rowoffset, fsi, tweak, nx, ny)
         if back.floorheight > front.floorheight and side.bottomtexture:
             if line.flags & ML_DONTPEGBOTTOM:
                 # NOTE: vanilla quirk kept verbatim: unpegged-bottom
@@ -189,7 +197,7 @@ def build_walls(game_map: Map, texman: TextureManager,
                 static = back.floorheight
             _emit(out, si, "bottom", side.bottomtexture, x1, y1, x2, y2,
                   front.floorheight, back.floorheight, u1, length,
-                  static, side.rowoffset, light, nx, ny)
+                  static, side.rowoffset, fsi, tweak, nx, ny)
         if side.midtexture:
             # NOTE: masked mid (R_RenderMaskedSegRange rule): z spans
             # the opening; texturemid anchors at the lower ceiling,
@@ -203,7 +211,7 @@ def build_walls(game_map: Map, texman: TextureManager,
             _emit(out, si, "masked", side.midtexture, x1, y1, x2, y2,
                   max(front.floorheight, back.floorheight),
                   min(front.ceilingheight, back.ceilingheight), u1,
-                  length, static, side.rowoffset, light, nx, ny)
+                  length, static, side.rowoffset, fsi, tweak, nx, ny)
     return out
 
 
@@ -216,6 +224,8 @@ __all__ = [
     "WallQuad",
     "build_planes",
     "build_walls",
+    "emit_planes",
+    "leaf_sector_fans",
 ]
 
 
@@ -245,8 +255,9 @@ class PlaneTri:
     x3: float = 0.0
     y3: float = 0.0
     z: float = 0.0
-    light: int = 0  # sector lightlevel>>4 clamped (sky forces 0,
-    # like _find_plane; distance grading is shader-side via depth)
+    # NOTE: no light field (planes are lit by their own sector: the
+    # shader reads the base lightnum from the sector-light texture
+    # via tri.sector, so flicker/strobe never rebuild geometry).
 
 
 @dataclass
@@ -261,7 +272,7 @@ class PlaneGeometry:
         pos = np.zeros((n * 3, 3), dtype=np.float32)
         uv = np.zeros((n * 3, 2), dtype=np.float32)
         flat = np.zeros((n * 3,), dtype=np.int32)
-        light = np.zeros((n * 3,), dtype=np.float32)
+        sector = np.zeros((n * 3,), dtype=np.float32)
         for t, tri in enumerate(self.tris):
             b = t * 3
             pos[b + 0] = (tri.x1, tri.y1, tri.z)
@@ -271,9 +282,9 @@ class PlaneGeometry:
             uv[b + 1] = (tri.x2, -tri.y2)
             uv[b + 2] = (tri.x3, -tri.y3)
             flat[b:b + 3] = tri.flat
-            light[b:b + 3] = tri.light
+            sector[b:b + 3] = tri.sector
         return {"positions": pos, "uv": uv, "flat": flat,
-                "light": light}
+                "sector": sector}
 
 
 def _leaf_polys(game_map: Map) -> dict:
@@ -353,29 +364,73 @@ def _area2(loop: list) -> int:
 
 
 def _surface_tris(si: int, sector: Sector, skyflat: int,
-                  p1: tuple, p2: tuple, p3: tuple) -> list:
-    """Floor tri plus ceiling (or sky-tagged) tri for one triangle."""
-    light = min(max(sector.lightlevel >> 4, 0), 15)
+                   p1: tuple, p2: tuple, p3: tuple) -> list:
+    """Floor tri plus ceiling (or sky-tagged) tri for one triangle
+    (live heights/pics: the caller re-emits from cached fans on
+    sector moves; light rides the sector-light texture)."""
     fl = [(p[0] / 65536.0, p[1] / 65536.0) for p in (p1, p2, p3)]
     out = [PlaneTri(sector=si, surface="floor", flat=sector.floorpic,
                     x1=fl[0][0], y1=fl[0][1], x2=fl[1][0],
                     y2=fl[1][1], x3=fl[2][0], y3=fl[2][1],
-                    z=sector.floorheight / 65536.0, light=light)]
+                    z=sector.floorheight / 65536.0)]
     if sector.ceilingpic == skyflat or sector.floorpic == skyflat:
         # NOTE: vanilla draws any sky visplane (floor or ceiling)
         # through the sky column drawer, fullbright.
         out.append(PlaneTri(sector=si, surface="sky", flat=-1,
                             x1=fl[0][0], y1=fl[0][1], x2=fl[1][0],
                             y2=fl[1][1], x3=fl[2][0], y3=fl[2][1],
-                            z=sector.ceilingheight / 65536.0,
-                            light=0))
+                            z=sector.ceilingheight / 65536.0))
     else:
         out.append(PlaneTri(sector=si, surface="ceiling",
                             flat=sector.ceilingpic,
                             x1=fl[0][0], y1=fl[0][1], x2=fl[1][0],
                             y2=fl[1][1], x3=fl[2][0], y3=fl[2][1],
-                            z=sector.ceilingheight / 65536.0,
-                            light=light))
+                            z=sector.ceilingheight / 65536.0))
+    return out
+
+
+def leaf_sector_fans(game_map: Map) -> list:
+    """Cached plane topology (BSP-only, live-state-free).
+
+    [(sector_idx, fan tris as fixed-point triples)]: the Fraction
+    clipping runs once per map here; per-frame refresh re-emits
+    floats via emit_planes (no Fractions, no leaf walk). Fan order
+    matches build_planes exactly (same leaf walk, same skips)."""
+    sector_index = {id(s): i for i, s in enumerate(game_map.sectors)}
+    out = []
+    for leaf, poly in _leaf_polys(game_map).items():
+        if len(poly) < 3:
+            continue  # NOTE: degenerate sliver leaf, no pixels
+        sector = game_map.subsectors[leaf].sector
+        assert sector is not None
+        si = sector_index[id(sector)]
+        p0 = poly[0]
+        fans = []
+        for i in range(1, len(poly) - 1):
+            a, b, c = p0, poly[i], poly[i + 1]
+            if (b[0] - a[0]) * (c[1] - a[1]) == \
+                    (b[1] - a[1]) * (c[0] - a[0]):
+                continue  # NOTE: collinear fan tri, no pixels
+            fans.append((a, b, c))
+        if fans:
+            out.append((si, fans))
+    return out
+
+
+def emit_planes(fans: list, game_map: Map,
+                skyflat: int) -> PlaneGeometry:
+    """Float emission from cached fans + LIVE sector state.
+
+    Bit-identical to build_planes on an unmutated map (same order,
+    same floats); sector movers (doors/plats/donuts) re-emit through
+    here per frame instead of re-clipping the BSP."""
+    out = PlaneGeometry()
+    sectors = game_map.sectors
+    for si, tris in fans:
+        sector = sectors[si]
+        for a, b, c in tris:
+            out.tris.extend(_surface_tris(si, sector, skyflat,
+                                          a, b, c))
     return out
 
 
@@ -387,20 +442,4 @@ def build_planes(game_map: Map, skyflat: int) -> PlaneGeometry:
     Leaves tile the map, so pillars, islands, disjoint parts and
     overlapping oddities all land correctly with no loop walking,
     no winding rules and no gap heuristics."""
-    out = PlaneGeometry()
-    sector_index = {id(s): i for i, s in enumerate(game_map.sectors)}
-    for leaf, poly in _leaf_polys(game_map).items():
-        if len(poly) < 3:
-            continue  # NOTE: degenerate sliver leaf, no pixels
-        sector = game_map.subsectors[leaf].sector
-        assert sector is not None
-        si = sector_index[id(sector)]
-        p0 = poly[0]
-        for i in range(1, len(poly) - 1):
-            a, b, c = p0, poly[i], poly[i + 1]
-            if (b[0] - a[0]) * (c[1] - a[1]) == \
-                    (b[1] - a[1]) * (c[0] - a[0]):
-                continue  # NOTE: collinear fan tri, no pixels
-            out.tris.extend(_surface_tris(si, sector, skyflat,
-                                          a, b, c))
-    return out
+    return emit_planes(leaf_sector_fans(game_map), game_map, skyflat)
