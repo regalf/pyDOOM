@@ -118,16 +118,15 @@ class FrameRenderer:
         for prog, samplers in (
                 (self.wall_prog, (("uWallTex", 0), ("uScaleLight", 1),
                                   ("uColormap", 2), ("uPalette", 3),
-                                  ("uSectorLight", 6), ("uVisible", 7))),
+                                  ("uSectorLight", 6))),
                 (self.wall_double_prog, (("uWallTex", 0),
                                          ("uScaleLight", 1),
                                          ("uColormap", 2),
                                          ("uPalette", 3),
-                                         ("uSectorLight", 6),
-                                         ("uVisible", 7))),
+                                         ("uSectorLight", 6))),
                 (self.plane_prog, (("uFlatArray", 0), ("uZLight", 1),
                                    ("uColormap", 2), ("uPalette", 3),
-                                   ("uSectorLight", 6), ("uVisible", 7))),
+                                   ("uSectorLight", 6))),
                 (self.sprite_prog, (("uSpriteTex", 0),
                                     ("uColormap", 2),
                                     ("uPalette", 3))),
@@ -366,8 +365,6 @@ class FrameRenderer:
         GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
         GL.glActiveTexture(GL.GL_TEXTURE6)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
-        GL.glActiveTexture(GL.GL_TEXTURE7)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.visible_tex)
         GL.glBindVertexArray(self._wall_vao)
         # NOTE: wall quads wind CCW seen from their front side
         # ((v1,bottom) (v2,bottom) (v2,top) with front RIGHT of
@@ -420,8 +417,6 @@ class FrameRenderer:
         GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
         GL.glActiveTexture(GL.GL_TEXTURE6)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
-        GL.glActiveTexture(GL.GL_TEXTURE7)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.visible_tex)
         GL.glBindVertexArray(self._wall_vao)
         _run(self.wall_double_prog, res.single_batches)
         GL.glUseProgram(self.plane_prog)
@@ -446,8 +441,6 @@ class FrameRenderer:
         GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
         GL.glActiveTexture(GL.GL_TEXTURE6)
         GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
-        GL.glActiveTexture(GL.GL_TEXTURE7)
-        GL.glBindTexture(GL.GL_TEXTURE_2D, res.visible_tex)
         GL.glBindVertexArray(self._plane_vao)
         if res.plane_count:
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, res.plane_count)

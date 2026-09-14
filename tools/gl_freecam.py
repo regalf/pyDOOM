@@ -94,7 +94,6 @@ def main() -> int:
     from pydoom.glrender import sprites as glsprites
     from pydoom.glrender import textures as gltex
     from pydoom.glrender import upload as glup
-    from pydoom.glrender import visibility as glvis
     from pydoom.info import spawn_visual
     from pydoom.renderer import (
         SKIP_THING_TYPES,
@@ -249,22 +248,11 @@ def main() -> int:
         try:
             sub = renderer.sector_at(game_map, int(cam.x * 65536),
                                      int(cam.y * 65536))
-            start = (sec_index.get(id(sub.sector))
-                     if sub.sector is not None else None)
-        except Exception:  # noqa: BLE001 - void edge shows all
-            start = None
-        if start is None:
-            nvis = len(game_map.sectors)
-            res.upload_visible([1] * nvis)
-            live = mobjs
-        else:
-            mask = glvis.visible_mask(game_map, start)
-            res.upload_visible(mask)
-            vis = {i for i, v in enumerate(mask) if v}
-            nvis = len(vis)
-            live = [mo for mo in mobjs
-                    if sec_index.get(id(mo.sector)) in vis]
-        bbs = (feed.project(live, int(cam.x * 65536),
+            camsec = (sec_index.get(id(sub.sector))
+                      if sub.sector is not None else None)
+        except Exception:  # noqa: BLE001 - void edge, HUD shows none
+            camsec = None
+        bbs = (feed.project(mobjs, int(cam.x * 65536),
                             int(cam.y * 65536), cam.bam, texman)
                if show_things else [])
         try:
@@ -281,7 +269,7 @@ def main() -> int:
                    f"z={cam.viewz:.0f} "
                    f"a={math.degrees(cam.angle) % 360:.0f} "
                    f"p={math.degrees(cam.pitch):+.0f} "
-                   f"vis={nvis}/{len(game_map.sectors)} "
+                   f"sec={camsec} "
                    f"{fps_ema:.0f}fps")
             help_line = ("WASD/arrows move, mouse looks, SPACE up, "
                          "SHIFT down, CTRL fast, R reset, T things, "

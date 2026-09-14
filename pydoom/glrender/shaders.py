@@ -82,7 +82,6 @@ uniform sampler2D uScaleLight;
 uniform sampler2D uColormap;
 uniform sampler2DArray uPalette;
 uniform sampler2D uSectorLight;
-uniform sampler2D uVisible;
 uniform int uPalIndex;
 uniform vec2 uViewPos;
 uniform vec2 uViewDir;
@@ -93,8 +92,6 @@ uniform float uTexH;
 out vec4 oColor;
 layout(location = 1) out float oIndex;
 void main() {
-    if (texelFetch(uVisible,
-                   ivec2(int(vSector + 0.5), 0), 0).r < 0.5) discard;
     vec2 rg = texelFetch(uWallTex,
                          ivec2(int(mod(vUv.x, uWrap)),
                                int(mod(vUv.y, uTexH))), 0).rg;
@@ -180,7 +177,6 @@ uniform sampler2D uZLight;
 uniform sampler2D uColormap;
 uniform sampler2DArray uPalette;
 uniform sampler2D uSectorLight;
-uniform sampler2D uVisible;
 uniform int uPalIndex;
 uniform float uViewZ;
 uniform float uViewH;
@@ -189,8 +185,6 @@ uniform int uFullbright;
 out vec4 oColor;
 layout(location = 1) out float oIndex;
 void main() {
-    if (texelFetch(uVisible,
-                   ivec2(int(vSector + 0.5), 0), 0).r < 0.5) discard;
     vec4 t = texelFetch(uFlatArray,
                         ivec3(int(mod(vUv.x, 64.0)),
                               int(mod(vUv.y, 64.0)),

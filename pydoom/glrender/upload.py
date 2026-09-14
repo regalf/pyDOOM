@@ -89,11 +89,6 @@ class GlResources:
     # (walls/planes sample it; flicker/strobe/movers re-upload only
     # this, never the geometry VBOs, for light changes)
     sector_count: int = 0
-    visible_tex: int = 0  # R8 W=numsectors x1: 1 = portal-reachable
-    # from the camera sector (visibility.py flood), 0 = culled margin
-    # geometry the software BSP never visits (walls/planes discard
-    # invisible fragments; per-frame upload, like sector lights)
-    visible_count: int = 0
 
     @classmethod
     def create(cls, wall_geo, plane_geo, wall_tex, flat_tex,
@@ -118,18 +113,6 @@ class GlResources:
                 colormap, 256, 32, GL.GL_R8, GL.GL_RED)
             created.palette_tex = cls._upload_palette(playpal)
             created.upload_sector_lights(sector_lights or [0])
-            # NOTE: visible-texture width must cover every sector idx
-            # the geometry references (tests may pass short lights);
-            # the viewer always uploads len(sectors) per frame.
-            top = created.sector_count
-            try:
-                top = max(
-                    [top]
-                    + [int(q.sector) + 1 for q in wall_geo.quads]
-                    + [int(t.sector) + 1 for t in plane_geo.tris])
-            except Exception:  # noqa: BLE001, S110 - best-effort sizing
-                pass
-            created.upload_visible([1] * top if top else [1])
         except Exception:  # noqa: BLE001 - any GL failure falls back
             created.delete()
             return None
@@ -295,41 +278,6 @@ class GlResources:
                                GL.GL_RED, GL.GL_UNSIGNED_BYTE, data)
             GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
 
-    def upload_visible(self, mask) -> None:
-        """(Re)upload portal visibility (R8 W=numsectors x1; 255 keeps
-        the sector, 0 discards its walls/planes in-shader: normalized
-        sampling needs the full byte range, a 1 would read 1/255 and
-        discard everything). Called once at create (all visible) and
-        per frame from the live portal flood (tiny: sectors << VBOs)."""
-        from OpenGL import GL
-        data = bytes(255 if v else 0 for v in mask)
-        assert data, "map has no sectors"
-        if not self.visible_tex:
-            tex = GL.glGenTextures(1)
-            GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D,
-                               GL.GL_TEXTURE_MIN_FILTER, GL.GL_NEAREST)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D,
-                               GL.GL_TEXTURE_MAG_FILTER, GL.GL_NEAREST)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D,
-                               GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D,
-                               GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
-            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_R8,
-                            len(data), 1, 0,
-                            GL.GL_RED, GL.GL_UNSIGNED_BYTE, data)
-            GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
-            self.visible_tex = int(tex)
-            self.visible_count = len(data)
-        else:
-            assert len(data) == self.visible_count, (
-                len(data), self.visible_count)
-            GL.glBindTexture(GL.GL_TEXTURE_2D, self.visible_tex)
-            GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0,
-                               len(data), 1,
-                               GL.GL_RED, GL.GL_UNSIGNED_BYTE, data)
-            GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
-
     def reupload_walls(self, wall_geo) -> None:
         """GEO refresh: orphan + refill the wall VBO/IBO in place (same
         buffer ids, so the wall VAO stays valid) and re-plan batches
@@ -439,8 +387,7 @@ class GlResources:
             tids = (list(self.wall_textures.values())
                     + list(self.sprite_textures.values())
                     + [self.flat_array, self.colormap_tex,
-                        self.palette_tex, self.sector_tex,
-                        self.visible_tex])
+                        self.palette_tex, self.sector_tex])
             tids = [t for t in tids if t]
             if tids:
                 GL.glDeleteTextures(len(tids), tids)
@@ -461,5 +408,3 @@ class GlResources:
             self.colormap_tex = self.palette_tex = 0
             self.sector_tex = 0
             self.sector_count = 0
-            self.visible_tex = 0
-            self.visible_count = 0

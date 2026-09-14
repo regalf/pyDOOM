@@ -575,37 +575,8 @@ def main() -> int:
         """GL present: live world (level/menu) + overlay + text."""
         if has_level and gamestate in ("level", "menu"):
             sync_gl_dynamic()
-            # NOTE: portal PVS (visibility.py flood): sectors unreachable
-            # without crossing a solid/closed line discard their walls
-            # + planes in-shader (mapper margin the SW BSP never visits).
-            # Unknown camera sector (void/noclip edge) shows all (safe).
-            from pydoom.glrender import visibility as glvis
-            try:
-                sub = renderer.sector_at(
-                    game_map, int(cam.x * 65536),
-                    int(cam.y * 65536))
-                start = (ctx.sector_index.get(id(sub.sector))
-                         if sub.sector is not None else None)
-            except Exception:  # noqa: BLE001 - void edge shows all
-                start = None
-            vis_set = None
-            if start is None:
-                gl_res.upload_visible([1] * len(game_map.sectors))
-            else:
-                mask = glvis.visible_mask(game_map, start)
-                gl_res.upload_visible(mask)
-                vis_set = {i for i, v in enumerate(mask) if v}
-            live = mobjs
-            if vis_set is not None:
-                live = [
-                    mo for mo in mobjs
-                    if (getattr(mo, "sector", None) is None
-                        or ctx.sector_index.get(
-                            id(mo.sector)) is None
-                        or ctx.sector_index.get(
-                            id(mo.sector)) in vis_set)]
             bbs = gl_feed.project(
-                live, int(cam.x * 65536), int(cam.y * 65536),
+                mobjs, int(cam.x * 65536), int(cam.y * 65536),
                 cam.bam, texman) if gl_feed is not None else []
             if renderer.skytexture in gl_res.wall_textures:
                 sky = (gl_res.wall_textures[renderer.skytexture],
