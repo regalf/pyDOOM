@@ -28,6 +28,10 @@ from pydoom.glrender.preprocess import (
     build_walls,
     emit_planes,
     leaf_sector_fans,
+    refresh_planes,
+    refresh_walls,
+    sec_tri_positions,
+    seg_quad_positions,
 )
 from pydoom.glrender.textures import (
     build_flat_textures,
@@ -368,6 +372,303 @@ def test_light_refresh_parity():
             assert exact > 0.45, (exact, mean)
             assert mean < 16.0, (exact, mean)
             assert dyn.diff(game_map) == CLEAN  # NOTE: steady: idle
+        finally:
+            fr.close()
+            res.delete()
+    finally:
+        import pygame
+        pygame.quit()
+
+
+def test_diff_records_changed_sets():
+    """diff() reports which sectors/sides moved (incremental GEO)."""
+    game_map = _mini_map()
+    dyn = DynamicState.take(game_map)
+    assert dyn.diff(game_map) == CLEAN
+    assert dyn.changed_sectors == set()
+    assert dyn.changed_sides == set()
+    game_map.sectors[0].ceilingheight -= 1
+    assert dyn.diff(game_map) == GEO
+    assert dyn.changed_sectors == {0}
+    assert dyn.changed_sides == set()
+    game_map.sides[0].midtexture = 99
+    assert dyn.diff(game_map) == GEO
+    assert dyn.changed_sectors == set()
+    assert dyn.changed_sides == {0}
+    assert dyn.diff(game_map) == CLEAN
+
+
+def _quad_key(q):
+    return (q.seg, q.tier, q.texnum, q.z_bottom, q.z_top, q.u1,
+            q.u2, q.texbase, q.sector, q.tweak, q.twosided,
+            q.nx, q.ny, q.x1, q.y1, q.x2, q.y2)
+
+
+def _tri_key(t):
+    return (t.sector, t.surface, t.flat, t.x1, t.y1, t.x2, t.y2,
+            t.x3, t.y3, t.z)
+
+
+@requires_wad
+def test_refresh_walls_matches_full_build():
+    """Sliding a ceiling (door travel) refreshes spans in place,
+    quad-for-quad identical to a full rebuild, fast path all along."""
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    texman = TextureManager(wad)
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    sky = texman.flat_num_for_name("F_SKY1")
+    dyn = DynamicState.take(game_map)
+    walls = build_walls(game_map, texman, sky)
+    seg_quadpos = seg_quad_positions(walls)
+    sec = game_map.sectors[14]
+    for _ in range(5):
+        sec.ceilingheight -= 8 << 16  # NOTE: mid-travel, tiers persist
+        assert dyn.diff(game_map) == GEO
+        stable, texmoved, touched = refresh_walls(
+            walls, seg_quadpos, game_map, texman, sky,
+            dyn.changed_sectors, dyn.changed_sides)
+        assert stable and not texmoved
+        assert touched  # NOTE: the mover's segs moved
+        full = build_walls(game_map, texman, sky)
+        assert [_quad_key(q) for q in walls.quads] == [
+            _quad_key(q) for q in full.quads]
+
+
+@requires_wad
+def test_refresh_walls_slow_on_topology_change():
+    """Crushing a sector past degenerate kills tiers: refresh says
+    slow (single-sided mids of the crushed sector vanish), and the
+    slow full rebuild reflects exactly that."""
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    texman = TextureManager(wad)
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    sky = texman.flat_num_for_name("F_SKY1")
+    dyn = DynamicState.take(game_map)
+    walls = build_walls(game_map, texman, sky)
+    seg_quadpos = seg_quad_positions(walls)
+    sec = game_map.sectors[14]
+    cand = [si for si, s in enumerate(game_map.segs)
+            if s.frontsector is sec and s.backsector is None
+            and s.sidedef.midtexture]
+    assert cand, "need a crushed single-sided mid to vanish"
+    si = cand[0]
+    assert [walls.quads[q].tier for q in seg_quadpos[si]] == ["mid"]
+    sec.floorheight = sec.ceilingheight + (8 << 16)
+    assert dyn.diff(game_map) == GEO
+    stable, _, _ = refresh_walls(
+        walls, seg_quadpos, game_map, texman, sky,
+        dyn.changed_sectors, dyn.changed_sides)
+    assert not stable
+    slow = build_walls(game_map, texman, sky)
+    assert [q.tier for q in slow.quads if q.seg == si] == []
+
+
+@requires_wad
+def test_refresh_planes_matches_emit():
+    """Sliding heights re-emits only moved sectors, tri-for-tri
+    identical to a full emission (counts stable by construction)."""
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    texman = TextureManager(wad)
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    sky = texman.flat_num_for_name("F_SKY1")
+    dyn = DynamicState.take(game_map)
+    planes = emit_planes(dyn.fans, game_map, sky)
+    sec_tripos = sec_tri_positions(planes)
+    sec = game_map.sectors[14]
+    for _ in range(3):
+        sec.ceilingheight -= 8 << 16
+        sec.floorheight += 4 << 16
+        assert dyn.diff(game_map) == GEO
+        touched = refresh_planes(planes, dyn.fans, game_map, sky,
+                                 dyn.changed_sectors, sec_tripos)
+        assert touched
+        full = emit_planes(dyn.fans, game_map, sky).tris
+        assert [_tri_key(t) for t in planes.tris] == [
+            _tri_key(t) for t in full]
+
+
+@requires_wad
+def test_row_helpers_match_interleave():
+    """_wall_rows/_plane_rows equal the full-interleave slices (the
+    fast path patches exactly what a rebuild would upload)."""
+    import numpy as np
+
+    from pydoom.glrender.upload import GlResources
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    wad = WadFile(WAD_PATH)
+    texman = TextureManager(wad)
+    game_map = Map.from_wad(wad, "E1M1")
+    texman.resolve_map(game_map)
+    sky = texman.flat_num_for_name("F_SKY1")
+    walls = build_walls(game_map, texman, sky)
+    inter = GlResources._wall_interleaved(walls)
+    for q, quad in enumerate(walls.quads):
+        want = GlResources._wall_rows(quad)
+        assert np.array_equal(inter[q * 4:q * 4 + 4], want), q
+    dyn = DynamicState.take(game_map)
+    planes = emit_planes(dyn.fans, game_map, sky)
+    layers = dict.fromkeys(
+        {t.flat for t in planes.tris if t.flat >= 0}, 3)
+    inter, _ = GlResources._plane_interleaved(planes, layers)
+    rowpos = GlResources._plane_row_positions(planes, layers)
+    for t, tri in enumerate(planes.tris):
+        row = rowpos[t]
+        if tri.flat < 0:  # NOTE: sky-cut tris own no VBO rows
+            assert row is None
+            continue
+        assert row is not None
+        assert np.array_equal(
+            inter[row:row + 3],
+            GlResources._plane_rows(tri, 3)), t
+
+
+@requires_wad
+def test_fast_geo_parity():
+    """Door-stroke GEO change through the FAST path (span refresh +
+    VBO row patch, no rebuild) renders like software."""
+    import numpy as np
+
+    from pydoom.glrender.light import colormap_lut
+    from pydoom.palette import load_playpal
+    from pydoom.renderer import Renderer
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    if _open_window() is None:
+        return
+    try:
+        wad = WadFile(WAD_PATH)
+        texman = TextureManager(wad)
+        game_map = Map.from_wad(wad, "E1M1")
+        texman.resolve_map(game_map)
+        sky = texman.flat_num_for_name("F_SKY1")
+        renderer = Renderer(wad, texman)
+        dyn = DynamicState.take(game_map)
+        walls = build_walls(game_map, texman, sky)
+        planes = emit_planes(dyn.fans, game_map, sky)
+        seg_quadpos = seg_quad_positions(walls)
+        sec_tripos = sec_tri_positions(planes)
+        wtex = build_wall_textures(texman,
+                                   wall_texnums_used(walls))
+        ftex = build_flat_textures(texman, flatnums_used(planes))
+        cmap = colormap_lut(bytes(wad.cache_lump("COLORMAP")))
+        pal = bytes(wad.read_lump("PLAYPAL"))
+        lut = np.array(load_playpal(
+            wad.read_lump("PLAYPAL")), dtype=np.uint8)
+        res = GlResources.create(
+            walls, planes, wtex, ftex, cmap, pal,
+            sector_lights=sector_light_bases(game_map))
+        assert res is not None
+        from pydoom.glrender.draw import FrameRenderer
+        fr = FrameRenderer(res, 320, 200)
+        try:
+            start = next(t for t in game_map.things if t.type == 1)
+            x, y, angle = (start.x << 16, start.y << 16, 0x0)
+            sec = renderer.sector_at(game_map, x, y).sector
+            assert sec is not None
+            sec.ceilingheight -= 8 << 16
+            assert dyn.diff(game_map) == GEO
+            stable, texmoved, touched = refresh_walls(
+                walls, seg_quadpos, game_map, texman, sky,
+                dyn.changed_sectors, dyn.changed_sides)
+            assert stable and not texmoved and touched
+            touched_tris = refresh_planes(
+                planes, dyn.fans, game_map, sky,
+                dyn.changed_sectors, sec_tripos)
+            assert touched_tris  # NOTE: mover sector has fan tris
+            res.reupload_walls_fast(walls.quads, touched)
+            assert res.reupload_planes_fast(
+                planes.tris, res.flat_layers, touched_tris)
+            res.upload_sector_lights(sector_light_bases(game_map))
+            fb1, excl1, viewz = _software_view(renderer, game_map,
+                                               x, y, angle)
+            fr.render(x, y, viewz, angle)
+            exact, mean = _metrics(fr.readback(), lut[fb1], excl1)
+            assert exact > 0.45, (exact, mean)
+            assert mean < 16.0, (exact, mean)
+        finally:
+            fr.close()
+            res.delete()
+    finally:
+        import pygame
+        pygame.quit()
+
+
+@requires_wad
+def test_texnum_flip_replans_index():
+    """Sidedef texnum swap (switch-style) flags texmoved: spans stay,
+    only the IBO needs re-planning, then pixels match software."""
+    import numpy as np
+
+    from pydoom.glrender.light import colormap_lut
+    from pydoom.palette import load_playpal
+    from pydoom.renderer import Renderer
+    from pydoom.textures import TextureManager
+    from pydoom.wad import WadFile
+    if _open_window() is None:
+        return
+    try:
+        wad = WadFile(WAD_PATH)
+        texman = TextureManager(wad)
+        game_map = Map.from_wad(wad, "E1M1")
+        texman.resolve_map(game_map)
+        sky = texman.flat_num_for_name("F_SKY1")
+        renderer = Renderer(wad, texman)
+        dyn = DynamicState.take(game_map)
+        walls = build_walls(game_map, texman, sky)
+        planes = emit_planes(dyn.fans, game_map, sky)
+        seg_quadpos = seg_quad_positions(walls)
+        used = sorted(t for t in wall_texnums_used(walls) if t > 0)
+        assert len(used) > 1
+        # NOTE: nonzero->nonzero flip (tier sets provably persist:
+        # guards key on truthiness, heights untouched).
+        pick = next(s for s in game_map.sides if s.midtexture > 0)
+        old_mid = pick.midtexture
+        new_mid = used[0] if used[0] != old_mid else used[1]
+        side_idx = game_map.sides.index(pick)
+        pick.midtexture = new_mid
+        assert dyn.diff(game_map) == GEO
+        assert dyn.changed_sides == {side_idx}
+        before = [(q.z_bottom, q.z_top) for q in walls.quads]
+        stable, texmoved, touched = refresh_walls(
+            walls, seg_quadpos, game_map, texman, sky,
+            dyn.changed_sectors, dyn.changed_sides)
+        assert stable and texmoved and touched
+        assert [(q.z_bottom, q.z_top) for q in walls.quads] == before
+        wtex = build_wall_textures(texman,
+                                   wall_texnums_used(walls))
+        ftex = build_flat_textures(texman, flatnums_used(planes))
+        cmap = colormap_lut(bytes(wad.cache_lump("COLORMAP")))
+        pal = bytes(wad.read_lump("PLAYPAL"))
+        lut = np.array(load_playpal(
+            wad.read_lump("PLAYPAL")), dtype=np.uint8)
+        res = GlResources.create(
+            walls, planes, wtex, ftex, cmap, pal,
+            sector_lights=sector_light_bases(game_map))
+        assert res is not None
+        from pydoom.glrender.draw import FrameRenderer
+        fr = FrameRenderer(res, 320, 200)
+        try:
+            # NOTE: resources created post-flip, so only the IBO
+            # replan path is exercised (VBO spans identical).
+            res.replan_wall_index(walls.quads)
+            start = next(t for t in game_map.things if t.type == 1)
+            x, y, angle = (start.x << 16, start.y << 16, 0x0)
+            fb1, excl1, viewz = _software_view(renderer, game_map,
+                                               x, y, angle)
+            fr.render(x, y, viewz, angle)
+            exact, mean = _metrics(fr.readback(), lut[fb1], excl1)
+            assert exact > 0.45, (exact, mean)
+            assert mean < 16.0, (exact, mean)
         finally:
             fr.close()
             res.delete()

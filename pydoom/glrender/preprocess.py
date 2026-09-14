@@ -136,6 +136,96 @@ def _emit(out: StaticGeometry, si: int, tier: str, texnum: int,
             nx=nx, ny=ny))
 
 
+def _seg_tier_args(si: int, seg, texman: TextureManager,
+                    skyflat: int, sector_index: dict) -> list:
+    """_emit-ready tier tuples for one seg (no output object).
+
+    Same code path as build_walls (tier rules verbatim from
+    _store_wall_range); factored out so GEO refresh recomputes only
+    segs touching moved sectors/sides. Each tuple is the _emit tail
+    (tier, texnum, x1, y1, x2, y2, zb, zt, u1, length, static,
+    rowoffset, fsi, tweak, nx, ny, twosided).
+    """
+    assert seg.v1 is not None and seg.v2 is not None
+    assert seg.sidedef is not None and seg.linedef is not None
+    assert seg.frontsector is not None
+    side, line, front = seg.sidedef, seg.linedef, seg.frontsector
+    back = seg.backsector
+    x1 = seg.v1.x / 65536.0
+    y1 = seg.v1.y / 65536.0
+    x2 = seg.v2.x / 65536.0
+    y2 = seg.v2.y / 65536.0
+    length = math.hypot(x2 - x1, y2 - y1)
+    u1 = (side.textureoffset + seg.offset) / 65536.0
+    fsi = sector_index[id(front)]
+    tweak = _orient_tweak(seg)
+    # NOTE: front-unit normal (front is RIGHT of v1->v2, so the
+    # normal is (dy, -dx)/len); degenerate segs get (0, 0) (their
+    # quads have zero area and rasterize nothing anyway).
+    if length > 1e-9:
+        nx, ny = (y2 - y1) / length, (x1 - x2) / length
+    else:
+        nx, ny = 0.0, 0.0
+    tiers = []
+    if back is None:
+        if side.midtexture:
+            theight = texture_height_fixed(
+                texman.textures[side.midtexture])
+            if line.flags & ML_DONTPEGBOTTOM:
+                static = front.floorheight + theight
+            else:
+                static = front.ceilingheight
+            tiers.append(("mid", side.midtexture, x1, y1, x2, y2,
+                          front.floorheight, front.ceilingheight,
+                          u1, length, static, side.rowoffset, fsi,
+                          tweak, nx, ny, False))
+        return tiers
+    # NOTE: outdoor sky hack (both ceilings sky): worldtop drops
+    # to worldhigh, which can only kill the top tier below.
+    worldtop = front.ceilingheight
+    if (front.ceilingpic == skyflat
+            and back.ceilingpic == skyflat):
+        worldtop = back.ceilingheight
+    if back.ceilingheight < worldtop and side.toptexture:
+        theight = texture_height_fixed(
+            texman.textures[side.toptexture])
+        if line.flags & ML_DONTPEGTOP:
+            static = front.ceilingheight
+        else:
+            static = back.ceilingheight + theight
+        tiers.append(("top", side.toptexture, x1, y1, x2, y2,
+                      back.ceilingheight, front.ceilingheight,
+                      u1, length, static, side.rowoffset, fsi,
+                      tweak, nx, ny, True))
+    if back.floorheight > front.floorheight and side.bottomtexture:
+        if line.flags & ML_DONTPEGBOTTOM:
+            # NOTE: vanilla quirk kept verbatim: unpegged-bottom
+            # bottoms anchor at the FRONT CEILING, not the floor.
+            static = front.ceilingheight
+        else:
+            static = back.floorheight
+        tiers.append(("bottom", side.bottomtexture, x1, y1, x2, y2,
+                      front.floorheight, back.floorheight,
+                      u1, length, static, side.rowoffset, fsi,
+                      tweak, nx, ny, True))
+    if side.midtexture:
+        # NOTE: masked mid (R_RenderMaskedSegRange rule): z spans
+        # the opening; texturemid anchors at the lower ceiling,
+        # or the taller floor + texture height when unpegged.
+        if line.flags & ML_DONTPEGBOTTOM:
+            static = max(front.floorheight,
+                         back.floorheight) + texture_height_fixed(
+                texman.textures[side.midtexture])
+        else:
+            static = min(front.ceilingheight, back.ceilingheight)
+        tiers.append(("masked", side.midtexture, x1, y1, x2, y2,
+                      max(front.floorheight, back.floorheight),
+                      min(front.ceilingheight, back.ceilingheight),
+                      u1, length, static, side.rowoffset, fsi,
+                      tweak, nx, ny, True))
+    return tiers
+
+
 def build_walls(game_map: Map, texman: TextureManager,
                 skyflat: int) -> StaticGeometry:
     """Wall quads for every seg, tier rules verbatim from
@@ -143,81 +233,70 @@ def build_walls(game_map: Map, texman: TextureManager,
     out = StaticGeometry()
     sector_index = {id(s): i for i, s in enumerate(game_map.sectors)}
     for si, seg in enumerate(game_map.segs):
-        assert seg.v1 is not None and seg.v2 is not None
-        assert seg.sidedef is not None and seg.linedef is not None
-        assert seg.frontsector is not None
-        side, line, front = seg.sidedef, seg.linedef, seg.frontsector
-        back = seg.backsector
-        x1 = seg.v1.x / 65536.0
-        y1 = seg.v1.y / 65536.0
-        x2 = seg.v2.x / 65536.0
-        y2 = seg.v2.y / 65536.0
-        length = math.hypot(x2 - x1, y2 - y1)
-        u1 = (side.textureoffset + seg.offset) / 65536.0
-        fsi = sector_index[id(front)]
-        tweak = _orient_tweak(seg)
-        # NOTE: front-unit normal (front is RIGHT of v1->v2, so the
-        # normal is (dy, -dx)/len); degenerate segs get (0, 0) (their
-        # quads have zero area and rasterize nothing anyway).
-        if length > 1e-9:
-            nx, ny = (y2 - y1) / length, (x1 - x2) / length
-        else:
-            nx, ny = 0.0, 0.0
-
-        if back is None:
-            if side.midtexture:
-                theight = texture_height_fixed(
-                    texman.textures[side.midtexture])
-                if line.flags & ML_DONTPEGBOTTOM:
-                    static = front.floorheight + theight
-                else:
-                    static = front.ceilingheight
-                _emit(out, si, "mid", side.midtexture, x1, y1, x2, y2,
-                      front.floorheight, front.ceilingheight, u1, length,
-                      static, side.rowoffset, fsi, tweak, nx, ny,
-                      twosided=False)
-            continue
-        # NOTE: outdoor sky hack (both ceilings sky): worldtop drops
-        # to worldhigh, which can only kill the top tier below.
-        worldtop = front.ceilingheight
-        if (front.ceilingpic == skyflat
-                and back.ceilingpic == skyflat):
-            worldtop = back.ceilingheight
-        if back.ceilingheight < worldtop and side.toptexture:
-            theight = texture_height_fixed(
-                texman.textures[side.toptexture])
-            if line.flags & ML_DONTPEGTOP:
-                static = front.ceilingheight
-            else:
-                static = back.ceilingheight + theight
-            _emit(out, si, "top", side.toptexture, x1, y1, x2, y2,
-                  back.ceilingheight, front.ceilingheight, u1, length,
-                  static, side.rowoffset, fsi, tweak, nx, ny)
-        if back.floorheight > front.floorheight and side.bottomtexture:
-            if line.flags & ML_DONTPEGBOTTOM:
-                # NOTE: vanilla quirk kept verbatim: unpegged-bottom
-                # bottoms anchor at the FRONT CEILING, not the floor.
-                static = front.ceilingheight
-            else:
-                static = back.floorheight
-            _emit(out, si, "bottom", side.bottomtexture, x1, y1, x2, y2,
-                  front.floorheight, back.floorheight, u1, length,
-                  static, side.rowoffset, fsi, tweak, nx, ny)
-        if side.midtexture:
-            # NOTE: masked mid (R_RenderMaskedSegRange rule): z spans
-            # the opening; texturemid anchors at the lower ceiling,
-            # or the taller floor + texture height when unpegged.
-            if line.flags & ML_DONTPEGBOTTOM:
-                static = max(front.floorheight,
-                             back.floorheight) + texture_height_fixed(
-                    texman.textures[side.midtexture])
-            else:
-                static = min(front.ceilingheight, back.ceilingheight)
-            _emit(out, si, "masked", side.midtexture, x1, y1, x2, y2,
-                  max(front.floorheight, back.floorheight),
-                  min(front.ceilingheight, back.ceilingheight), u1,
-                  length, static, side.rowoffset, fsi, tweak, nx, ny)
+        for args in _seg_tier_args(si, seg, texman, skyflat,
+                                   sector_index):
+            _emit(out, si, *args)
     return out
+
+
+def seg_quad_positions(walls: StaticGeometry) -> dict:
+    """seg idx -> quad positions in walls.quads order (stable while
+    no tier set changes: the fast GEO path only mutates spans)."""
+    pos: dict = {}
+    for q, quad in enumerate(walls.quads):
+        pos.setdefault(quad.seg, []).append(q)
+    return pos
+
+
+def refresh_walls(walls: StaticGeometry, seg_quadpos: dict,
+                  game_map: Map, texman: TextureManager,
+                  skyflat: int, changed_secs: set,
+                  changed_sides: set) -> tuple:
+    """In-place span refresh for segs touching moved sectors/sides.
+
+    Returns (stable, texmoved, touched): stable False means a tier
+    set appeared/vanished (door fully closed/opened: caller must take
+    the slow full-rebuild path); texmoved means only texnums changed
+    (switch flip: spans identical, caller replans the IBO); touched
+    lists quad positions whose z spans moved (VBO row patch).
+    Untouched segs keep bit-identical quads (no tier math at all).
+    """
+    sector_index = {id(s): i for i, s in enumerate(game_map.sectors)}
+    side_index = {id(s): i for i, s in enumerate(game_map.sides)}
+    touched: list = []
+    texmoved = False
+    for si, seg in enumerate(game_map.segs):
+        assert seg.sidedef is not None and seg.frontsector is not None
+        fsi = sector_index[id(seg.frontsector)]
+        bsi = (sector_index[id(seg.backsector)]
+               if seg.backsector is not None else None)
+        sdi = side_index[id(seg.sidedef)]
+        if (fsi not in changed_secs and bsi not in changed_secs
+                and sdi not in changed_sides):
+            continue
+        new = _seg_tier_args(si, seg, texman, skyflat, sector_index)
+        # NOTE: same degenerate filter as _emit (texnum + zt > zb):
+        # closed-door masked entries never become quads, so they must
+        # not count as tier changes either. Tuple layout is (tier,
+        # texnum, x1, y1, x2, y2, zb, zt, u1, length, static,
+        # rowoffset, fsi, tweak, nx, ny, twosided).
+        new = [t for t in new if t[1] and t[7] > t[6]]
+        old = [walls.quads[q] for q in seg_quadpos.get(si, [])]
+        if [t[0] for t in new] != [q.tier for q in old]:
+            return False, False, []
+        for args, quad in zip(new, old):
+            (tier, texnum, _x1, _y1, _x2, _y2, zb, zt, _u1,
+             _length, static, rowoffset, _fsi, _tweak, _nx, _ny,
+             _twosided) = args
+            assert tier == quad.tier
+            if texnum != quad.texnum:
+                quad.texnum = texnum
+                texmoved = True
+            quad.z_bottom = zb / 65536.0
+            quad.z_top = zt / 65536.0
+            quad.texbase = (static + rowoffset) / 65536.0
+        touched.extend(seg_quadpos.get(si, []))
+    return True, texmoved, touched
 
 
 __all__ = [
@@ -231,6 +310,10 @@ __all__ = [
     "build_walls",
     "emit_planes",
     "leaf_sector_fans",
+    "refresh_planes",
+    "refresh_walls",
+    "sec_tri_positions",
+    "seg_quad_positions",
 ]
 
 
@@ -437,6 +520,47 @@ def emit_planes(fans: list, game_map: Map,
             out.tris.extend(_surface_tris(si, sector, skyflat,
                                           a, b, c))
     return out
+
+
+def sec_tri_positions(planes: PlaneGeometry) -> dict:
+    """sector idx -> tri positions in planes.tris order (stable
+    forever: fan topology is load-time fixed, refresh only mutates
+    z/flat in place, so the map is built once per level)."""
+    pos: dict = {}
+    for t, tri in enumerate(planes.tris):
+        pos.setdefault(tri.sector, []).append(t)
+    return pos
+
+
+def refresh_planes(planes: PlaneGeometry, fans: list,
+                   game_map: Map, skyflat: int,
+                   changed_secs: set, sec_tripos: dict) -> list:
+    """In-place re-emission for moved sectors (same tri count per
+    sector by construction: _surface_tris always yields floor +
+    ceiling/sky per fan tri).
+
+    Returns touched tri positions (VBO row patch). Counts are
+    asserted stable; a sky-tag flip keeps the count too (sky tri
+    replaces the ceiling tri one for one)."""
+    if not changed_secs:
+        return []
+    sectors = game_map.sectors
+    fresh: dict = {}
+    for si, tris in fans:
+        if si not in changed_secs:
+            continue
+        sector = sectors[si]
+        buf = fresh.setdefault(si, [])
+        for a, b, c in tris:
+            buf.extend(_surface_tris(si, sector, skyflat, a, b, c))
+    touched: list = []
+    for si, tris in fresh.items():
+        dest = sec_tripos.get(si, [])
+        assert len(dest) == len(tris), (si, len(dest), len(tris))
+        for d, tri in zip(dest, tris):
+            planes.tris[d] = tri
+        touched.extend(dest)
+    return touched
 
 
 def build_planes(game_map: Map, skyflat: int) -> PlaneGeometry:

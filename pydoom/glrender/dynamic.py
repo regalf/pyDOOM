@@ -83,6 +83,8 @@ class DynamicState:
     side_top: list = field(default_factory=list)
     side_mid: list = field(default_factory=list)
     side_bot: list = field(default_factory=list)
+    changed_sectors: set = field(default_factory=set)
+    changed_sides: set = field(default_factory=set)
 
     @classmethod
     def take(cls, game_map) -> DynamicState:
@@ -107,33 +109,40 @@ class DynamicState:
         frame is CLEAN unless the sim moves something again).
 
         Reads only (never mutates the sim: demo checksums and the
-        software path are untouched)."""
-        geo = (
-            [s.floorheight for s in game_map.sectors]
-            != self.sec_floor
-            or [s.ceilingheight for s in game_map.sectors]
-            != self.sec_ceil
-            or [s.floorpic for s in game_map.sectors]
-            != self.sec_floorpic
-            or [s.ceilingpic for s in game_map.sectors]
-            != self.sec_ceilpic
-            or [s.toptexture for s in game_map.sides]
-            != self.side_top
-            or [s.midtexture for s in game_map.sides]
-            != self.side_mid
-            or [s.bottomtexture for s in game_map.sides]
-            != self.side_bot
-        )
+        software path are untouched). Also records changed_sectors /
+        changed_sides (indices into sectors/sides) so GEO refreshes
+        rebuild only affected geometry instead of the whole map."""
+        sec_floor = [s.floorheight for s in game_map.sectors]
+        sec_ceil = [s.ceilingheight for s in game_map.sectors]
+        sec_floorpic = [s.floorpic for s in game_map.sectors]
+        sec_ceilpic = [s.ceilingpic for s in game_map.sectors]
+        side_top = [s.toptexture for s in game_map.sides]
+        side_mid = [s.midtexture for s in game_map.sides]
+        side_bot = [s.bottomtexture for s in game_map.sides]
+        self.changed_sectors = {
+            i for i, (a, b, c, d, e, f, g, h) in enumerate(zip(
+                sec_floor, self.sec_floor, sec_ceil, self.sec_ceil,
+                sec_floorpic, self.sec_floorpic,
+                sec_ceilpic, self.sec_ceilpic))
+            if a != b or c != d or e != f or g != h
+        }
+        self.changed_sides = {
+            i for i, (a, b, c, d, e, f) in enumerate(zip(
+                side_top, self.side_top, side_mid, self.side_mid,
+                side_bot, self.side_bot))
+            if a != b or c != d or e != f
+        }
+        geo = bool(self.changed_sectors or self.changed_sides)
         light = ([s.lightlevel for s in game_map.sectors]
                  != self.sec_light)
-        self.sec_floor = [s.floorheight for s in game_map.sectors]
-        self.sec_ceil = [s.ceilingheight for s in game_map.sectors]
+        self.sec_floor = sec_floor
+        self.sec_ceil = sec_ceil
         self.sec_light = [s.lightlevel for s in game_map.sectors]
-        self.sec_floorpic = [s.floorpic for s in game_map.sectors]
-        self.sec_ceilpic = [s.ceilingpic for s in game_map.sectors]
-        self.side_top = [s.toptexture for s in game_map.sides]
-        self.side_mid = [s.midtexture for s in game_map.sides]
-        self.side_bot = [s.bottomtexture for s in game_map.sides]
+        self.sec_floorpic = sec_floorpic
+        self.sec_ceilpic = sec_ceilpic
+        self.side_top = side_top
+        self.side_mid = side_mid
+        self.side_bot = side_bot
         if geo:
             return GEO
         if light:

@@ -89,6 +89,9 @@ class GlResources:
     # (walls/planes sample it; flicker/strobe/movers re-upload only
     # this, never the geometry VBOs, for light changes)
     sector_count: int = 0
+    _wall_array: object = None  # cached wall interleave (fast GEO patch)
+    _plane_array: object = None  # cached plane interleave (fast GEO)
+    _plane_rowpos: object = None  # tri idx -> VBO row (None = sky-cut)
 
     @classmethod
     def create(cls, wall_geo, plane_geo, wall_tex, flat_tex,
@@ -126,6 +129,53 @@ class GlResources:
         GL.glBufferData(target, data.nbytes, data, GL.GL_STATIC_DRAW)
         GL.glBindBuffer(target, 0)
         return int(buf)
+
+    @staticmethod
+    def _wall_rows(quad) -> np.ndarray:
+        """One quad's 4 VBO rows ([x,y,z, u,texbase, sector,tweak01,
+        nx,ny]): identical slice to _wall_interleaved's per-quad block
+        (pinned equal by test), used to patch cached arrays on the
+        fast GEO path without rebuilding the whole interleave."""
+        rows = np.zeros((4, 9), dtype=np.float32)
+        rows[:, 0] = (quad.x1, quad.x2, quad.x2, quad.x1)
+        rows[:, 1] = (quad.y1, quad.y2, quad.y2, quad.y1)
+        rows[:, 2] = (quad.z_bottom, quad.z_bottom,
+                      quad.z_top, quad.z_top)
+        rows[:, 3] = (quad.u1, quad.u2, quad.u2, quad.u1)
+        rows[:, 4] = quad.texbase
+        rows[:, 5] = quad.sector
+        rows[:, 6] = quad.tweak + 1  # NOTE: 0/1/2, never negative
+        rows[:, 7] = quad.nx
+        rows[:, 8] = quad.ny
+        return rows
+
+    @staticmethod
+    def _plane_rows(tri, layer: int) -> np.ndarray:
+        """One tri's 3 VBO rows ([x,y,z, u,v, layer, sector]): matches
+        _plane_interleaved's per-tri block (pinned equal by test)."""
+        rows = np.zeros((3, 7), dtype=np.float32)
+        rows[:, 0] = (tri.x1, tri.x2, tri.x3)
+        rows[:, 1] = (tri.y1, tri.y2, tri.y3)
+        rows[:, 2] = tri.z
+        rows[:, 3] = (tri.x1, tri.x2, tri.x3)
+        rows[:, 4] = (-tri.y1, -tri.y2, -tri.y3)
+        rows[:, 5] = layer
+        rows[:, 6] = tri.sector
+        return rows
+
+    @staticmethod
+    def _plane_row_positions(plane_geo, flat_layers: dict) -> list:
+        """tri idx -> VBO start row (None for sky-cut tris): mirrors
+        _plane_interleaved's keep rule (layer >= 0) with no floats."""
+        pos: list = []
+        row = 0
+        for tri in plane_geo.tris:
+            if flat_layers.get(int(tri.flat), -1) >= 0:
+                pos.append(row)
+                row += 3
+            else:
+                pos.append(None)
+        return pos
 
     @staticmethod
     def _wall_interleaved(wall_geo) -> np.ndarray:
@@ -176,6 +226,7 @@ class GlResources:
         inter = cls._wall_interleaved(wall_geo)
         created.wall_vbo = cls._new_buffer(inter,
                                            GL.GL_ARRAY_BUFFER)
+        created._wall_array = inter
         index, batches, singles, masked = plan_wall_batches(
             wall_geo.quads)
         created.wall_ibo = cls._new_buffer(index,
@@ -224,6 +275,9 @@ class GlResources:
                                           flat_tex.index_of)
         created.plane_vbo = cls._new_buffer(inter,
                                             GL.GL_ARRAY_BUFFER)
+        created._plane_array = inter
+        created._plane_rowpos = cls._plane_row_positions(
+            plane_geo, flat_tex.index_of)
         created.plane_count = n
         layers = len(flat_tex.order)
         if layers:
@@ -285,12 +339,18 @@ class GlResources:
         falls back to software for the frame)."""
         from OpenGL import GL
         inter = self._wall_interleaved(wall_geo)
+        self._wall_array = inter
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.wall_vbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, inter.nbytes, inter,
                         GL.GL_STATIC_DRAW)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
-        index, batches, singles, masked = plan_wall_batches(
-            wall_geo.quads)
+        self.replan_wall_index(wall_geo.quads)
+
+    def replan_wall_index(self, quads) -> None:
+        """IBO-only refresh (texnum-only tier moves, e.g. switch flips:
+        spans identical, VBO untouched). Raises on GL error."""
+        from OpenGL import GL
+        index, batches, singles, masked = plan_wall_batches(quads)
         GL.glBindBuffer(GL.GL_ELEMENT_ARRAY_BUFFER, self.wall_ibo)
         GL.glBufferData(GL.GL_ELEMENT_ARRAY_BUFFER, index.nbytes,
                         index, GL.GL_STATIC_DRAW)
@@ -299,6 +359,21 @@ class GlResources:
         self.single_batches = singles
         self.masked_batches = masked
 
+    def reupload_walls_fast(self, quads, touched: list) -> None:
+        """Fast GEO refresh: patch cached VBO rows for touched quads
+        (spans moved, tier set identical: quad order/count stable, so
+        the IBO and batches stay valid), then orphan + refill the VBO
+        in place. Raises on GL error."""
+        from OpenGL import GL
+        assert self._wall_array is not None
+        for q in touched:
+            self._wall_array[q * 4:q * 4 + 4] = self._wall_rows(
+                quads[q])
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.wall_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._wall_array.nbytes,
+                        self._wall_array, GL.GL_STATIC_DRAW)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+
     def reupload_planes(self, plane_geo, flat_layers: dict) -> None:
         """GEO refresh: orphan + refill the plane VBO in place (same
         id, VAO stays valid). flat_layers is the stable flatnum ->
@@ -306,11 +381,37 @@ class GlResources:
         sky-tag flips resolve without new textures)."""
         from OpenGL import GL
         inter, n = self._plane_interleaved(plane_geo, flat_layers)
+        self._plane_array = inter
+        self._plane_rowpos = self._plane_row_positions(
+            plane_geo, flat_layers)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.plane_vbo)
         GL.glBufferData(GL.GL_ARRAY_BUFFER, inter.nbytes, inter,
                         GL.GL_STATIC_DRAW)
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
         self.plane_count = n
+
+    def reupload_planes_fast(self, tris, flat_layers: dict,
+                             touched: list) -> bool:
+        """Fast GEO refresh: patch cached VBO rows for touched tris,
+        then orphan + refill in place. Returns False when a tri flips
+        sky-cut membership (row mapping shifts: caller must take the
+        slow full path instead). Raises on GL error."""
+        from OpenGL import GL
+        assert self._plane_array is not None
+        assert self._plane_rowpos is not None
+        for t in touched:
+            layer = flat_layers.get(int(tris[t].flat), -1)
+            row = self._plane_rowpos[t]
+            if (layer < 0) != (row is None):
+                return False
+            if row is not None:
+                self._plane_array[row:row + 3] = self._plane_rows(
+                    tris[t], layer)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.plane_vbo)
+        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._plane_array.nbytes,
+                        self._plane_array, GL.GL_STATIC_DRAW)
+        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+        return True
 
     @classmethod
     def _upload_sprites(cls, created, sprite_tex) -> None:
@@ -408,3 +509,6 @@ class GlResources:
             self.colormap_tex = self.palette_tex = 0
             self.sector_tex = 0
             self.sector_count = 0
+            self._wall_array = None
+            self._plane_array = None
+            self._plane_rowpos = None

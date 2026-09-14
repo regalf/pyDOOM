@@ -163,10 +163,14 @@ it).
 Snapshot of every baked mutable field (heights, pics, lights, sidedef
 texnums + fan topology) classified per frame, read-only w.r.t. the
 sim: `CLEAN` (zero GL work), `LIGHT` (re-upload the light texture
-only), `GEO` (rebuild walls + re-emit planes from the fans, VBOs
-refilled in place under the same ids so VAOs stay valid). New
-textures mid-game: prebuilt switch pairs (`SW1*`/`SW2*`), ALL flats
-prebuilt (donuts), load-degenerate tiers uploaded on demand.
+only), `GEO` (incremental: `diff` records moved sectors/sides,
+`refresh_walls`/`refresh_planes` recompute only affected segs/fans in
+place — same tiers, VBO rows patched, VAOs and IBO untouched;
+tier-set changes like fully closed/opened doors take the slow full
+rebuild for that frame, texnum-only flips just re-plan the IBO).
+New textures mid-game: prebuilt switch pairs (`SW1*`/`SW2*`), ALL
+flats prebuilt (donuts), load-degenerate tiers uploaded on demand.
+Measured E1M1: ~1ms vs ~24ms CPU per GEO frame.
 
 ## 10. Why OOB shows (windows onto the void)
 

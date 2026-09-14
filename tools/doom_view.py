@@ -319,6 +319,7 @@ def main() -> int:
     gl_frame = None  # FrameRenderer bound to gl_res (or None)
     gl_feed = None  # SpriteFeed for live-mobj billboards (or None)
     gl_dyn = None  # DynamicState: per-frame sector-move sync (or None)
+    gl_geo = None  # incremental GEO cache: walls/planes + pos maps
 
     def refresh_gl_resources(game_map) -> None:
         """(Re)build GPU resources for game_map (milestone H).
@@ -327,7 +328,7 @@ def main() -> int:
         runs never enter (gl_live False). Never raises: any failure
         drops back to software presentation mid-session.
         """
-        nonlocal gl_res, gl_frame, gl_feed, gl_dyn
+        nonlocal gl_res, gl_frame, gl_feed, gl_dyn, gl_geo
         if gl_frame is not None:
             try:
                 gl_frame.close()
@@ -340,10 +341,12 @@ def main() -> int:
             gl_res = None
         gl_feed = None
         gl_dyn = None
+        gl_geo = None
         if not gl_live or gl_info is None:
             return
         try:
             import time
+            from types import SimpleNamespace
 
             from pydoom.glrender import draw as gldraw
             from pydoom.glrender import dynamic as gldyn
@@ -382,6 +385,10 @@ def main() -> int:
                 wad, texman.firstsprite, texman.lastsprite))
             if gl_res is not None:
                 gl_frame = gldraw.FrameRenderer(gl_res, WIN_W, WIN_H)
+            gl_geo = SimpleNamespace(
+                walls=walls, planes=planes,
+                seg_quadpos=glpre.seg_quad_positions(walls),
+                sec_tripos=glpre.sec_tri_positions(planes))
             dt = (time.time() - t0) * 1000
             if gl_res is None or gl_frame is None:
                 print("gl resources: upload failed "
@@ -397,6 +404,7 @@ def main() -> int:
             gl_frame = None
             gl_feed = None
             gl_dyn = None
+            gl_geo = None
 
     gl_text_cache: dict = {}  # text key -> (tex_id, w, h)
 
@@ -542,11 +550,13 @@ def main() -> int:
 
         Diffs the live map against the load-time snapshot: CLEAN does
         zero GL work, LIGHT re-uploads only the tiny sector-light
-        texture (flicker/strobe), GEO rebuilds walls + re-emits planes
-        from the cached fan topology and re-uploads both VBOs in
-        place (VAOs stay valid). Read-only w.r.t. the sim (demo
-        checksums untouched). Raises on GL error: gl_present_all
-        catches it and falls back to software for the frame.
+        texture (flicker/strobe), GEO refreshes only affected walls +
+        planes in place (fast path: same tiers, VBO rows patched, VAOs
+        stay valid; tier-set changes like fully closed/opened doors
+        take the slow full rebuild for that frame). Read-only w.r.t.
+        the sim (demo checksums untouched). Raises on GL error:
+        gl_present_all catches it and falls back to software for the
+        frame.
         """
         if gl_dyn is None or gl_res is None or gl_frame is None:
             return
@@ -557,19 +567,62 @@ def main() -> int:
         if kind == gldyn.CLEAN:
             return
         if kind == gldyn.GEO:
-            walls = glpre.build_walls(game_map, texman,
-                                      renderer.skyflatnum)
-            planes = glpre.emit_planes(gl_dyn.fans, game_map,
-                                       renderer.skyflatnum)
-            missing = (set(gltex.wall_texnums_used(walls))
-                       - set(gl_res.wall_textures))
-            if missing:
-                gl_res.upload_wall_textures(
-                    gltex.build_wall_textures(texman, missing))
-            gl_res.reupload_walls(walls)
-            gl_res.reupload_planes(planes, gl_res.flat_layers)
+            if gl_geo is not None:
+                stable, texmoved, touched = glpre.refresh_walls(
+                    gl_geo.walls, gl_geo.seg_quadpos, game_map,
+                    texman, renderer.skyflatnum,
+                    gl_dyn.changed_sectors, gl_dyn.changed_sides)
+                touched_tris = glpre.refresh_planes(
+                    gl_geo.planes, gl_dyn.fans, game_map,
+                    renderer.skyflatnum, gl_dyn.changed_sectors,
+                    gl_geo.sec_tripos)
+                if stable:
+                    missing = (
+                        set(gltex.wall_texnums_used(gl_geo.walls))
+                        - set(gl_res.wall_textures))
+                    if missing:
+                        gl_res.upload_wall_textures(
+                            gltex.build_wall_textures(texman,
+                                                      missing))
+                    if texmoved:
+                        gl_res.replan_wall_index(gl_geo.walls.quads)
+                    if touched:
+                        gl_res.reupload_walls_fast(gl_geo.walls.quads,
+                                                   touched)
+                    if touched_tris and not gl_res.reupload_planes_fast(
+                            gl_geo.planes.tris, gl_res.flat_layers,
+                            touched_tris):
+                        gl_res.reupload_planes(gl_geo.planes,
+                                               gl_res.flat_layers)
+                else:
+                    slow_geo_sync()
+            else:
+                slow_geo_sync()
         gl_res.upload_sector_lights(
             gldyn.sector_light_bases(game_map))
+
+    def slow_geo_sync() -> None:
+        """Full GEO rebuild (cold path: tier sets changed, e.g. a door
+        fully closed/opened, or no incremental cache). Re-plans the
+        seg->quad map after (quad order/count moved)."""
+        from pydoom.glrender import preprocess as glpre
+        from pydoom.glrender import textures as gltex
+        walls = glpre.build_walls(game_map, texman,
+                                  renderer.skyflatnum)
+        planes = glpre.emit_planes(gl_dyn.fans, game_map,
+                                   renderer.skyflatnum)
+        missing = (set(gltex.wall_texnums_used(walls))
+                   - set(gl_res.wall_textures))
+        if missing:
+            gl_res.upload_wall_textures(
+                gltex.build_wall_textures(texman, missing))
+        gl_res.reupload_walls(walls)
+        gl_res.reupload_planes(planes, gl_res.flat_layers)
+        if gl_geo is not None:
+            gl_geo.walls = walls
+            gl_geo.planes = planes
+            gl_geo.seg_quadpos = glpre.seg_quad_positions(walls)
+            # NOTE: sec_tripos never changes (fan topology is fixed).
 
     def gl_present_all(fb, pal_idx) -> None:
         """GL present: live world (level/menu) + overlay + text."""
