@@ -130,7 +130,11 @@ void main() {
                   * 255.0 + 0.5);
     }
     oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
-    oIndex = float(idx) / 255.0;
+    // NOTE: the index target feeds the fuzz backdrop (R_DrawFuzzColumn
+    // remaps DRAWN pixels): store the lit index like the framebuffer
+    // holds, not the raw texel (single-darkening would wash spectres
+    // out to gray).
+    oIndex = float(lit) / 255.0;
 }
 """
 
@@ -211,7 +215,9 @@ void main() {
                   * 255.0 + 0.5);
     }
     oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
-    oIndex = float(idx) / 255.0;
+    // NOTE: index target feeds the fuzz backdrop (vanilla remaps DRAWN
+    // pixels through row 6): store lit like the framebuffer holds.
+    oIndex = float(lit) / 255.0;
 }
 """
 
@@ -253,7 +259,8 @@ void main() {
                              ivec2(idx, int(vLight + 0.5)), 0).r
                   * 255.0 + 0.5);
     oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
-    oIndex = float(idx) / 255.0;
+    // NOTE: index target feeds the fuzz backdrop: store lit.
+    oIndex = float(lit) / 255.0;
 }
 """
 
@@ -295,7 +302,8 @@ void main() {
     int lit = int(texelFetch(uColormap, ivec2(idx, 0), 0).r
                   * 255.0 + 0.5);
     oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
-    oIndex = float(idx) / 255.0;
+    // NOTE: index target feeds the fuzz backdrop: store lit.
+    oIndex = float(lit) / 255.0;
 }
 """
 
@@ -317,10 +325,14 @@ void main() {
     // (FUZZOFFSETS cycling, 50x1 LUT: PyOpenGL uniform arrays only
     // upload their first element here) through colormap row 6; the
     // software global pixel counter is approximated by frame + row.
+    // NOTE: the LUT is R8 (255 for +1, 0 for -1) so the fetch
+    // normalizes to 1.0/0.0: decode without the *255 (that mapped
+    // +1 to +509, clamping half the rows to the top edge and
+    // striping spectres).
     ivec2 px = ivec2(gl_FragCoord.xy);
     int off = int(texelFetch(uFuzzTex,
                              ivec2((uFrame + px.y) % 50, 0), 0).r
-                  * 255.0 + 0.5) * 2 - 1;
+                  + 0.5) * 2 - 1;
     int yy = clamp(px.y + off, 0, int(uViewH) - 1);
     int bidx = int(texelFetch(uIndexTex, ivec2(px.x, yy), 0).r
                    * 255.0 + 0.5);

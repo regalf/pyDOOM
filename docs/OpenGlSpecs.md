@@ -137,8 +137,8 @@ pass.
 
 wall, wall_double (same frag with an `abs(den)` guard), plane,
 sprite, fuzz, sky, psprite, overlay, text, auto. Every main program
-also emits the raw index to the second target (the fuzz pass needs
-it).
+also emits the lit index to the second target (like the framebuffer
+holds: the fuzz pass remaps DRAWN pixels through row 6).
 
 ## 8. Lighting (formulas)
 
