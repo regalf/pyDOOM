@@ -439,6 +439,58 @@ def test_version_quad(e1m1present):
 
 
 @requires_wad
+def test_hud_text_upload_draw_delete(e1m1present):
+    """Per-frame HUD lines (--extra-hud readout + help): upload +
+    draw + delete puts pixels on screen with no texture leak (the
+    viewer runs this trio every frame; values change too fast to
+    cache, unlike the version tag)."""
+    import numpy as np
+    import pygame
+    if _open_window() is None:
+        return
+    try:
+        font = pygame.font.SysFont(None, 18)
+        res = GlResources.create(
+            e1m1present["walls"], e1m1present["planes"],
+            e1m1present["wtex"], e1m1present["ftex"],
+            e1m1present["cmap"], e1m1present["pal"],
+            sector_lights=sector_light_bases(
+                e1m1present["game_map"]))
+        assert res is not None
+        fr = FrameRenderer(res, 320, 200)
+        try:
+            fr.clear_window()
+            n0 = len(fr._text_texs)
+            for text, rgb, alpha, x, y in (
+                    ("E1M1 x=1056 y=-3200 a=90 60fps clip AI:LIVE",
+                     (255, 255, 255), 96, 8, 8),
+                    ("WASD/arrows move+turn, mouse look, Shift run",
+                     (180, 180, 180), 255, 8, 184)):
+                img = font.render(text, True, rgb)
+                w, h = img.get_width(), img.get_height()
+                arr = np.frombuffer(
+                    pygame.image.tobytes(img, "RGBA"),
+                    dtype=np.uint8).reshape(h, w, 4).copy()
+                arr[:, :, 3] = (arr[:, :, 3].astype(np.uint16)
+                                * alpha // 255).astype(np.uint8)
+                tid = fr.upload_text(arr.tobytes(), w, h)
+                try:
+                    fr.draw_text_quad(tid, x, y, w, h)
+                finally:
+                    fr.delete_text(tid)
+            assert len(fr._text_texs) == n0  # NOTE: no per-frame leak
+            fr.delete_text(123456789)  # NOTE: double delete no-op
+            rgb = fr.readback_window()
+            assert (rgb[8:24, 8:200].sum(axis=2) > 0).sum() > 20
+            assert (rgb[184:200, 8:300].sum(axis=2) > 0).sum() > 20
+        finally:
+            fr.close()
+            res.delete()
+    finally:
+        pygame.quit()
+
+
+@requires_wad
 def test_automap_parity(e1m1present):
     """Collected segments rasterize like the software draw."""
     import numpy as np

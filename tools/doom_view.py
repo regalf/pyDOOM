@@ -451,6 +451,92 @@ def main() -> int:
             tex_id, w, h = gl_text_cache[ck]
             gl_frame.draw_text_quad(tex_id, (WIN_W - w) // 2, y, w, h)
 
+    def hud_lines() -> list:
+        """[(text, rgb, alpha, x, y)] for the readout block + help
+        line, shared by the software blits and the GL text quads
+        (same strings, colors, ghost alpha and positions both ways).
+
+        Read-only w.r.t. the sim (f-strings over live state only).
+        """
+        lines = []
+        if gamestate in ("level", "menu", "wipe") and has_level:
+            # NOTE: readout block (coords, AI, fps, version) shows with
+            # --extra-hud (or --debug, as before), translucent, below
+            # the red message line when one is up.
+            show_hud = extra_hud or debug
+            hy = 56 if (show_hud and message is not None
+                        and msettings.messages) else 8
+            if show_hud:
+                hud = (f"{game_map.marker} x={cam.x:.0f} y={cam.y:.0f} "
+                       f"a={math.degrees(cam.angle) % 360:.0f} "
+                       f"{fps_ema:.0f}fps "
+                       f"{'noclip' if noclip else 'clip'} "
+                       f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
+                       f"{skill.upper()}{'+FAST' if fast else ''}")
+                if debug:
+                    # NOTE: song-thread health for low-fps music reports.
+                    ms = audio.music_status()
+                    hud += (f" MUS:{ms.get('backend', '?')} "
+                            f"q{ms.get('queue', '?')} "
+                            f"p{ms.get('pumped', '?')}/"
+                            f"s{ms.get('starved', '?')}")
+                    if not ms.get("alive", True) or ms.get("error"):
+                        hud += f" DEAD:{ms.get('error')}"
+                lines.append((hud, (255, 255, 255), 96, 8, hy))
+            if show_hud and show_ai:
+                # NOTE: nearest-monster AI readout, X only (--debug):
+                # --extra-hud keeps just the white coords line above.
+                best, bestd = None, None
+                for mo in mobjs:
+                    if (mo is player_mo or mo.dead or mo.health <= 0
+                            or mo.type == MT_INDEX["PLAYER"]):
+                        continue
+                    d = abs(mo.x - player_mo.x) + abs(mo.y - player_mo.y)
+                    if bestd is None or d < bestd:
+                        best, bestd = mo, d
+                if best is not None:
+                    sight = check_sight(best, player_mo, ctx)
+                    ai_line = (
+                        f"AI {MT_NAMES[best.type]} "
+                        f"st={state_names.get(best.state, best.state)} "
+                        f"tgt={'Y' if best.target is player_mo else 'N'} "
+                        f"sight={'Y' if sight else 'N'} "
+                        f"d={bestd // 65536} "
+                        f"r={best.reactiontime} m={best.movecount}")
+                    lines.append((ai_line, (100, 255, 100), 96,
+                                  8, hy + 20))
+            help_line = (
+                "WASD/arrows move+turn, mouse look, Shift run, E use, "
+                "1-7 weapons, TAB map, M sound/mark, P pause, F1 help, "
+                "F6/F9 quicksave, Esc menu"
+            )
+            if debug:
+                help_line += " [N noclip F freeze X AI PgUp/PgDn G mouse]"
+            lines.append((help_line, (180, 180, 180), 255,
+                          8, WIN_H - 120))
+        return lines
+
+    def gl_draw_hud() -> None:
+        """Readout block + help line as GL text quads (same layout as
+        the software blits). Per-frame upload + delete: values change
+        every frame (coords, fps), so nothing is cached (raises on GL
+        error: the present fallback covers the frame)."""
+        if font is None or gl_frame is None:
+            return
+        import numpy as np
+        for text, rgb, alpha, x, y in hud_lines():
+            img = font.render(text, True, rgb)
+            w, h = img.get_width(), img.get_height()
+            arr = np.frombuffer(pygame.image.tobytes(img, "RGBA"),
+                                dtype=np.uint8).reshape(h, w, 4).copy()
+            arr[:, :, 3] = (arr[:, :, 3].astype(np.uint16)
+                            * alpha // 255).astype(np.uint8)
+            tex_id = gl_frame.upload_text(arr.tobytes(), w, h)
+            try:
+                gl_frame.draw_text_quad(tex_id, x, y, w, h)
+            finally:
+                gl_frame.delete_text(tex_id)
+
     def sync_gl_dynamic() -> None:
         """Per-frame dynamic-sector sync (doors/plats/lights/switches).
 
@@ -1996,6 +2082,7 @@ def main() -> int:
             # buffer, so recovery is clean).
             try:
                 gl_present_all(fb, palette_index(state["ps"]))
+                gl_draw_hud()
             except Exception as exc:  # noqa: BLE001 - frame fallback
                 print(f"gl present: {exc} (software fallback)")
                 use_gl = False
@@ -2006,67 +2093,13 @@ def main() -> int:
             )
             screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)),
                         (0, 0))
-        if not use_gl and font is not None and gamestate in (
-                "level", "menu", "wipe") and has_level:
-            # NOTE: readout block + help line stay software-only (dev
-            # aids; the version tag and finale text ride GL quads).
-            # NOTE: readout block (coords, AI, fps, version) shows with
-            # --extra-hud (or --debug, as before), translucent, below
-            # the red message line when one is up.
-            show_hud = extra_hud or debug
-            hy = 56 if (show_hud and message is not None
-                        and msettings.messages) else 8
-            if show_hud:
-                hud = (f"{game_map.marker} x={cam.x:.0f} y={cam.y:.0f} "
-                       f"a={math.degrees(cam.angle) % 360:.0f} "
-                       f"{fps_ema:.0f}fps "
-                       f"{'noclip' if noclip else 'clip'} "
-                       f"AI:{'FROZEN' if ctx.ai_frozen else 'LIVE'} "
-                       f"{skill.upper()}{'+FAST' if fast else ''}")
-                if debug:
-                    # NOTE: song-thread health for low-fps music reports.
-                    ms = audio.music_status()
-                    hud += (f" MUS:{ms.get('backend', '?')} "
-                            f"q{ms.get('queue', '?')} "
-                            f"p{ms.get('pumped', '?')}/"
-                            f"s{ms.get('starved', '?')}")
-                    if not ms.get("alive", True) or ms.get("error"):
-                        hud += f" DEAD:{ms.get('error')}"
-                hud_img = font.render(hud, True, (255, 255, 255))
-                hud_img.set_alpha(96)  # NOTE: ~38% ghost readout
-                screen.blit(hud_img, (8, hy))
-            if show_hud and show_ai:
-                # NOTE: nearest-monster AI readout, X only (--debug):
-                # --extra-hud keeps just the white coords line above.
-                best, bestd = None, None
-                for mo in mobjs:
-                    if (mo is player_mo or mo.dead or mo.health <= 0
-                            or mo.type == MT_INDEX["PLAYER"]):
-                        continue
-                    d = abs(mo.x - player_mo.x) + abs(mo.y - player_mo.y)
-                    if bestd is None or d < bestd:
-                        best, bestd = mo, d
-                if best is not None:
-                    sight = check_sight(best, player_mo, ctx)
-                    ai_line = (
-                        f"AI {MT_NAMES[best.type]} "
-                        f"st={state_names.get(best.state, best.state)} "
-                        f"tgt={'Y' if best.target is player_mo else 'N'} "
-                        f"sight={'Y' if sight else 'N'} "
-                        f"d={bestd // 65536} "
-                        f"r={best.reactiontime} m={best.movecount}")
-                    ai_img = font.render(ai_line, True, (100, 255, 100))
-                    ai_img.set_alpha(96)
-                    screen.blit(ai_img, (8, hy + 20))
-            help_line = (
-                "WASD/arrows move+turn, mouse look, Shift run, E use, "
-                "1-7 weapons, TAB map, M sound/mark, P pause, F1 help, "
-                "F6/F9 quicksave, Esc menu"
-            )
-            if debug:
-                help_line += " [N noclip F freeze X AI PgUp/PgDn G mouse]"
-            screen.blit(font.render(help_line, True, (180, 180, 180)),
-                        (8, WIN_H - 120))
+        if not use_gl and font is not None:
+            # NOTE: readout block + help line (same strings/positions
+            # as the GL text quads above, via hud_lines()).
+            for text, rgb, alpha, x, y in hud_lines():
+                img = font.render(text, True, rgb)
+                img.set_alpha(alpha)
+                screen.blit(img, (x, y))
         if not use_gl and font is not None and gamestate == "finale":
             big = font.render("EPISODE 1 COMPLETE", True, (255, 255, 0))
             screen.blit(big, (WIN_W // 2 - big.get_width() // 2,

@@ -706,6 +706,17 @@ class FrameRenderer:
         self._text_texs.append(tex)
         return tex
 
+    def delete_text(self, tex_id: int) -> None:
+        """Delete one upload_text texture (per-frame lines like the
+        extra-HUD readout: values change every frame, so nothing is
+        cached and the id must not linger in _text_texs)."""
+        from OpenGL import GL
+        GL.glDeleteTextures(1, [int(tex_id)])
+        try:
+            self._text_texs.remove(int(tex_id))
+        except ValueError:  # NOTE: double delete is a no-op
+            pass
+
     def draw_text_quad(self, tex_id: int, x: int, y: int, w: int,
                        h: int) -> None:
         """Topdown-pixel RGBA quad on the WINDOW (standard alpha
