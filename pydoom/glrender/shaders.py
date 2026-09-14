@@ -312,6 +312,7 @@ FUZZ_FRAG = """\
 #version 330 core
 in vec2 vUv;
 in float vLight;
+uniform sampler2D uSpriteTex;
 uniform sampler2D uIndexTex;
 uniform sampler2D uColormap;
 uniform sampler2DArray uPalette;
@@ -319,8 +320,17 @@ uniform int uPalIndex;
 uniform sampler2D uFuzzTex;
 uniform int uFrame;
 uniform float uViewH;
+uniform float uWrap;
+uniform float uTexH;
 out vec4 oColor;
 void main() {
+    // NOTE: silhouette mask first like the software masked posts:
+    // transparent texels are skipped, only the monster shape
+    // shimmers (otherwise the whole billboard rectangle fuzzes).
+    vec2 rg = texelFetch(uSpriteTex,
+                         ivec2(int(mod(vUv.x, uWrap)),
+                               int(mod(vUv.y, uTexH))), 0).rg;
+    if (rg.g < 0.5) discard;
     // NOTE: vanilla fuzz reads the backdrop index one row off
     // (FUZZOFFSETS cycling, 50x1 LUT: PyOpenGL uniform arrays only
     // upload their first element here) through colormap row 6; the

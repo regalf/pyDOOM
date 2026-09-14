@@ -130,10 +130,11 @@ class FrameRenderer:
                 (self.sprite_prog, (("uSpriteTex", 0),
                                     ("uColormap", 2),
                                     ("uPalette", 3))),
-                (self.fuzz_prog, (("uIndexTex", 4),
-                                  ("uColormap", 2),
-                                  ("uPalette", 3),
-                                  ("uFuzzTex", 5))),
+                (self.fuzz_prog, (("uSpriteTex", 0),
+                                   ("uIndexTex", 4),
+                                   ("uColormap", 2),
+                                   ("uPalette", 3),
+                                   ("uFuzzTex", 5))),
                 (self.sky_prog, (("uSkyTex", 0),
                                  ("uColormap", 2),
                                  ("uPalette", 3))),
@@ -492,17 +493,19 @@ class FrameRenderer:
     def draw_sprites(self, res, billboards, vp,
                        pal_index: int = 0) -> None:
         """Fill the dynamic VBO (normal billboards grouped by patch,
-        fuzz quads in one trailing range) and draw: normal sprites
-        first, then the fuzz pass over a copied index backdrop (the
-        copy avoids a feedback loop on the attached target)."""
+        fuzz quads grouped by patch in a trailing block) and draw:
+        normal sprites first, then the fuzz pass over a copied index
+        backdrop (the copy avoids a feedback loop on the attached
+        target; one copy for all fuzz groups so overlapping spectres
+        sample the same clean backdrop)."""
         import numpy as np
         from OpenGL import GL
         assert len(billboards) <= MAXVISSPRITES
         groups: dict = {}
-        fuzz: list = []
+        fuzz_groups: dict = {}
         for bb in billboards:
             if bb.fuzz:
-                fuzz.append(bb)
+                fuzz_groups.setdefault(bb.lump, []).append(bb)
             else:
                 groups.setdefault(bb.lump, []).append(bb)
         verts = np.zeros((len(billboards) * 4, 6), dtype=np.float32)
@@ -529,12 +532,13 @@ class FrameRenderer:
             for bb in groups[lump]:
                 emit(bb)
             ranges.append((lump, start, pos - start))
-        fuzz_range = None
-        if fuzz:
-            start = pos
-            for bb in fuzz:
-                emit(bb)
-            fuzz_range = (start, pos - start)
+        fuzz_ranges = []
+        if fuzz_groups:
+            for lump in sorted(fuzz_groups):
+                start = pos
+                for bb in fuzz_groups[lump]:
+                    emit(bb)
+                fuzz_ranges.append((lump, start, pos - start))
         GL.glUseProgram(self.sprite_prog)
         self._pal(self.sprite_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.sprite_prog, "uViewProj"),
@@ -562,22 +566,36 @@ class FrameRenderer:
             GL.glDrawElements(GL.GL_TRIANGLES, count,
                               GL.GL_UNSIGNED_INT,
                               ctypes.c_void_p(start * 4))
-        if fuzz_range is not None:
-            self.draw_fuzz(*fuzz_range, vp, pal_index)
+        if fuzz_ranges:
+            self._copy_fuzz_backdrop()
+            for lump, start, count in fuzz_ranges:
+                self.draw_fuzz(lump, start, count, vp, pal_index,
+                               copy=False)
         err = GL.glGetError()
         if err != GL.GL_NO_ERROR:
             raise RuntimeError(f"GL error {err:#x} in draw_sprites")
 
-    def draw_fuzz(self, start: int, count: int, vp,
-                    pal_index: int = 0) -> None:
-        """Fuzz quads over a copied index backdrop (copy-then-sample:
-        sampling the attached target would be a feedback loop)."""
+    def _copy_fuzz_backdrop(self) -> None:
+        """Copy the index target to the spare texture (one copy for
+        all fuzz groups: sampling the attached target would be a
+        feedback loop, and re-copying per group would let later
+        spectres sample earlier fuzz)."""
         from OpenGL import GL
         GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._spare_index)
         GL.glCopyTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
                                self._w, self._h)
         GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT0)
+
+    def draw_fuzz(self, lump: int, start: int, count: int, vp,
+                    pal_index: int = 0, copy: bool = True) -> None:
+        """Fuzz quads of one patch over the copied index backdrop.
+        Transparent texels discard (software masked posts: only the
+        monster shape shimmers). copy=False skips the backdrop copy
+        (draw_sprites copies once for all groups)."""
+        from OpenGL import GL
+        if copy:
+            self._copy_fuzz_backdrop()
         GL.glUseProgram(self.fuzz_prog)
         self._pal(self.fuzz_prog, pal_index)
         GL.glUniformMatrix4fv(self._loc(self.fuzz_prog, "uViewProj"),
@@ -586,6 +604,12 @@ class FrameRenderer:
                        int(self._frame))
         GL.glUniform1f(self._loc(self.fuzz_prog, "uViewH"),
                        float(self._h))
+        w, h = self._res.sprite_info[int(lump)]
+        GL.glActiveTexture(GL.GL_TEXTURE0)
+        GL.glBindTexture(GL.GL_TEXTURE_2D,
+                         self._res.sprite_textures[int(lump)])
+        GL.glUniform1f(self._loc(self.fuzz_prog, "uWrap"), float(w))
+        GL.glUniform1f(self._loc(self.fuzz_prog, "uTexH"), float(h))
         GL.glActiveTexture(GL.GL_TEXTURE4)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._spare_index)
         GL.glActiveTexture(GL.GL_TEXTURE5)
