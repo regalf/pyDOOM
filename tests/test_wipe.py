@@ -77,3 +77,33 @@ def test_wipe_idle_frames_hold_last_step():
     assert shown  # melted something
     assert all(b >= a for a, b in zip(shown, shown[1:]))  # never jumps back
     assert shown[-1] == H * W  # ends on the new frame
+
+
+def test_start_rejects_wrong_shapes():
+    """Garbage-sized frames fail loud, never silent tiling downstream."""
+    import pytest
+
+    wipe = MeltWipe()
+    good = np.zeros((H, W), dtype=np.uint8)
+    with pytest.raises(ValueError):
+        wipe.start(np.zeros((100, 100), dtype=np.uint8), good)
+    with pytest.raises(ValueError):
+        wipe.start(good, np.zeros((H, W + 1), dtype=np.uint8))
+    with pytest.raises(ValueError):
+        # NOTE: transposed dims hold the same byte count (the silent
+        # footgun: uploads would succeed with swapped axes).
+        wipe.start(np.zeros((W, H), dtype=np.uint8), good)
+
+
+def test_tick_frames_stay_index_320x200():
+    """Every composed frame keeps presentable shape and dtype."""
+    old = np.zeros((H, W), dtype=np.uint8)
+    new = np.full((H, W), 7, dtype=np.uint8)
+    wipe = MeltWipe()
+    wipe.start(old, new)
+    while True:
+        cur = wipe.tick(3)
+        if cur is None:
+            break
+        assert cur.shape == (H, W)
+        assert cur.dtype == np.uint8

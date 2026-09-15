@@ -46,3 +46,41 @@ def test_menu_skull_needs_eight_ui_tics():
     assert m.which_skull == 0
     m.tick()
     assert m.which_skull == 1  # NOTE: flips every 8 ticks (M_Ticker)
+
+
+def test_step_wipe_clock_runs_then_lands():
+    import numpy as np
+    from tools.doom_view import step_wipe_clock
+    from pydoom.wipe import H, W, MeltWipe
+    wipe = MeltWipe()
+    wipe.start(np.zeros((H, W), dtype=np.uint8),
+               np.full((H, W), 7, dtype=np.uint8))
+    acc, seen, landed = 0.0, 0, False
+    for _ in range(600):  # NOTE: 1/60 frames, melt needs ~1.2s
+        frame, acc, landed = step_wipe_clock(wipe, acc, 1.0 / 60)
+        if landed:
+            break
+        seen += 1
+        assert frame.shape == (H, W)
+    assert landed and seen > 10
+
+
+def test_step_wipe_clock_broken_frame_lands():
+    import numpy as np
+    from tools.doom_view import step_wipe_clock
+    from pydoom.wipe import H, W
+
+    class Broken:
+        def __init__(self):
+            self.steps = None
+
+        def tick(self, steps):
+            self.steps = steps
+            return np.zeros((10, 10), dtype=np.uint8)
+
+        frame = None
+
+    broken = Broken()
+    frame, _acc, landed = step_wipe_clock(broken, 0.0, 1.0)
+    assert broken.steps == 35  # NOTE: ~1s worth of steps in one call
+    assert landed and frame is None  # NOTE: never presented

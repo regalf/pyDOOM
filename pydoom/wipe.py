@@ -25,9 +25,20 @@ class MeltWipe:
         self.done = True
 
     def start(self, old: np.ndarray, new: np.ndarray) -> None:
-        """Begin melting from old to new (both (200, 320) uint8)."""
-        self.old = np.ascontiguousarray(old, dtype=np.uint8).copy()
-        self.new = np.ascontiguousarray(new, dtype=np.uint8).copy()
+        """Begin melting from old to new (both (200, 320) uint8).
+
+        Shapes are enforced loudly: a wrong-size frame would silently
+        broadcast into tiling/garbage downstream (numpy never raises
+        for those), which is worse than refusing the wipe.
+        """
+        old = np.ascontiguousarray(old, dtype=np.uint8)
+        new = np.ascontiguousarray(new, dtype=np.uint8)
+        if old.shape != (H, W) or new.shape != (H, W):
+            raise ValueError(
+                f"melt needs (200, 320) frames, got {old.shape} "
+                f"and {new.shape}")
+        self.old = old.copy()
+        self.new = new.copy()
         # NOTE: random-walk heads on the menu stream (M_Random): the
         # first sits in [-15, 0] and each next steps -1/0/+1, clamped
         # back, so the front melts as one wavy curtain (f_wipe.c).

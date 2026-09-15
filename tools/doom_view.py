@@ -178,6 +178,25 @@ def step_ui_clock(acc: float, dt: float) -> tuple:
     return acc, n
 
 
+def step_wipe_clock(melt, acc: float, dt: float) -> tuple:
+    """Advance the melt accumulator one frame (pure part, unit tested).
+
+    Returns (frame_or_None, new_acc, landed): landed True ends the
+    wipe (caller switches to wipe_after). A shape-broken melt frame
+    also lands immediately instead of presenting tiling/garbage (or
+    crashing the blit/upload downstream).
+    """
+    acc += dt * TICRATE
+    steps, acc = int(acc), acc - int(acc)
+    frame = melt.tick(steps) if steps else melt.frame
+    if frame is None:
+        return None, acc, True
+    if getattr(frame, "shape", None) != (SCREENHEIGHT, SCREENWIDTH) \
+            or getattr(frame, "dtype", None) != np.uint8:
+        return None, acc, True
+    return frame, acc, False
+
+
 def video_geom(settings, want_gl: bool) -> tuple:
     """(w, h, flags, display) for the current video settings.
 
@@ -2314,12 +2333,12 @@ def main() -> int:
             fb = np.zeros((200, 320), dtype=np.uint8)
             inter.draw(fb, game_menu)
         elif gamestate == "wipe":
-            melt_acc += dt * TICRATE  # NOTE: 35Hz wall-clock, like asset
-            steps, melt_acc = int(melt_acc), melt_acc - int(melt_acc)
             # NOTE: idle frames re-show the last melt step (vanilla
             # keeps wipe_scr); re-rendering would flash the end scene.
-            stepped = melt.tick(steps) if steps else melt.frame
-            if stepped is None:
+            # A broken melt frame lands instantly (never tiling/black).
+            stepped, melt_acc, landed = step_wipe_clock(
+                melt, melt_acc, dt)
+            if landed:
                 gamestate = wipe_after
             else:
                 fb = stepped

@@ -701,6 +701,10 @@ class FrameRenderer:
                        SCREENHEIGHT)
         GL.glActiveTexture(GL.GL_TEXTURE0)
         GL.glBindTexture(GL.GL_TEXTURE_2D, self._overlay_tex)
+        # NOTE: pixel-store hygiene (upload_text sets UNPACK_ALIGNMENT
+        # for RGBA rows; the overlay needs 1 here regardless of who ran
+        # last, or odd-width rows would stride-shift into tiling).
+        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
         GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, SCREENWIDTH,
                            SCREENHEIGHT, GL.GL_RED, GL.GL_UNSIGNED_BYTE,
                            np.ascontiguousarray(fb))
