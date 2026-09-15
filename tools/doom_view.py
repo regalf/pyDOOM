@@ -1026,6 +1026,37 @@ def main() -> int:
             draws.append((flash, "A", bobx, boby + yoff))
         return draws
 
+    def begin_wipe(old, new, after=None) -> None:
+        """Start a melt (every transition funnels here).
+
+        after lands the wipe (None keeps the current wipe_after, like
+        the menu path always did). A malformed pair lands immediately
+        instead of raising mid-transition. With --debug, every start
+        (and landing, in the wipe branch) logs frame + shapes; a start
+        while the previous wipe never landed prints RESTARTED, which is
+        the tripwire for duplicated-bar artifacts (two live melt
+        generations blending would stack status bars).
+        """
+        nonlocal gamestate, wipe_after
+        if debug:
+            print(f"melt: start after={after} "
+                  f"old={None if old is None else getattr(old, 'shape', '?')} "
+                  f"new={None if new is None else getattr(new, 'shape', '?')} "
+                  f"frame={frames} "
+                  f"{'RESTARTED-MID-WIPE' if not melt.done else 'clean'}")
+        if old is None or new is None:
+            gamestate = after if after is not None else "level"
+            return
+        try:
+            melt.start(old, new)
+        except Exception as exc:  # noqa: BLE001 - land, never crash/artifacts
+            print(f"melt: refused ({exc}), landing")
+            gamestate = after if after is not None else "level"
+            return
+        if after is not None:
+            wipe_after = after
+        gamestate = "wipe"
+
     def render_scene(with_view: bool = True):
         """One frozen-sim scene frame (psprites + status bar included).
 
@@ -1129,9 +1160,7 @@ def main() -> int:
         if old is None:
             gamestate = "level"
         else:  # NOTE: vanilla melts into the loaded game
-            melt.start(old, render_scene())
-            wipe_after = "level"
-            gamestate = "wipe"
+            begin_wipe(old, render_scene(), "level")
 
     def apply_menu_event(mev):
         """Menu selections: quit, or a wiped fresh start on E1M1."""
@@ -1193,8 +1222,8 @@ def main() -> int:
             if old is None:
                 gamestate = "level"
             else:
-                melt.start(old, render_scene())  # menu melts away
-                gamestate = "wipe"
+                # NOTE: menu melts away (wipe_after untouched, as before).
+                begin_wipe(old, render_scene(), None)
 
     pygame.init()
     # NOTE: milestone H phase 0: backend selection lives in
@@ -1785,9 +1814,7 @@ def main() -> int:
             if old is None:
                 gamestate = "level"
             else:
-                melt.start(old, render_scene())
-                wipe_after = "level"
-                gamestate = "wipe"
+                begin_wipe(old, render_scene(), "level")
         tic_acc += dt
         if gamestate != "level" or paused:
             tic_acc = 0  # NOTE: no catch-up burst when unpausing
@@ -2043,9 +2070,7 @@ def main() -> int:
                     # The reloaded world starts thinking next tic, like
                     # vanilla's tick-boundary ga_loadlevel.
                     old = last_fb.copy() if last_fb is not None else None
-                    melt.start(old, render_scene())
-                    wipe_after = "level"
-                    gamestate = "wipe"
+                    begin_wipe(old, render_scene(), "level")
                     continue
                 else:
                     # NOTE: corpse waits for USE (vanilla P_DeathThink):
@@ -2217,10 +2242,9 @@ def main() -> int:
                     if demo_play is not None:
                         end_demo_playback("victory")
                         continue
-                    melt.start(old, np.zeros((200, 320), dtype=np.uint8))
+                    begin_wipe(old, np.zeros((200, 320), dtype=np.uint8),
+                               "finale")
                     audio.music_play(FINALE_SONG, "exit-finale")
-                    wipe_after = "finale"
-                    gamestate = "wipe"
                 else:
                     tk, ti, ts = world.totals
                     inter = interm.Intermission(
@@ -2230,10 +2254,8 @@ def main() -> int:
                     next_map, next_keep, next_hp = nxt, ps_exit, hp_exit
                     first = np.zeros((200, 320), dtype=np.uint8)
                     inter.draw(first, game_menu)
-                    melt.start(old, first)
+                    begin_wipe(old, first, "inter")
                     audio.music_play(INTER_SONG, "exit-inter")
-                    wipe_after = "inter"
-                    gamestate = "wipe"
             # Ease viewz toward standing height on the current floor
             # (legacy/ noclip only: the vanilla path sets cam.viewz from
             # P_CalcHeight every tic, no smoothing like vanilla).
@@ -2339,6 +2361,9 @@ def main() -> int:
             stepped, melt_acc, landed = step_wipe_clock(
                 melt, melt_acc, dt)
             if landed:
+                if debug:
+                    print(f"melt: landed after={wipe_after} "
+                          f"frame={frames}")
                 gamestate = wipe_after
             else:
                 fb = stepped
