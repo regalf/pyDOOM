@@ -118,19 +118,21 @@ def _video_menu():
 
 def test_choice_stages_without_event_and_wraps():
     # NOTE: rows only stage values now; APPLY commits (video_changed).
+    # First row is fps_limit (backend/sizes live in the launcher tab).
     m = _video_menu()
     assert m.key("right") == []
-    assert m.settings.video_api == "opengl"
-    assert m.key("right") == []
-    assert m.settings.video_api == "software"  # NOTE: wrapped
+    assert m.settings.fps_limit == 120
+    for _ in range(6):
+        assert m.key("right") == []
+    assert m.settings.fps_limit == 60  # NOTE: wrapped past UNLIMITED
     assert m.key("left") == []
-    assert m.settings.video_api == "opengl"
+    assert m.settings.fps_limit == 30
 
 
 def test_choice_enter_stages_without_event():
     m = _video_menu()
     assert m.key("enter") == []
-    assert m.settings.video_api == "opengl"
+    assert m.settings.fps_limit == 120
 
 
 def test_apply_emits_event_and_esc_restores():
@@ -141,11 +143,11 @@ def test_apply_emits_event_and_esc_restores():
     assert m.key("enter") == []
     assert m.current == "video"
     assert m._video_snapshot is not None
-    assert m.key("right") == []  # stage opengl
-    assert m.settings.video_api == "opengl"
+    assert m.key("right") == []  # stage fps 120
+    assert m.settings.fps_limit == 120
     assert m.key("esc") == []  # NOTE: leave without APPLY restores
     assert m.current == "options"
-    assert m.settings.video_api == "software"
+    assert m.settings.fps_limit == 60
     # NOTE: stage again, then APPLY commits and emits.
     m.current = "video"
     m._video_snapshot = m._staged_video()
@@ -154,7 +156,7 @@ def test_apply_emits_event_and_esc_restores():
     m.menus["video"].last_on = [it.action for it in items].index(
         "apply_video")
     assert m.key("enter") == [("video_changed",)]
-    assert m.settings.video_api == "opengl"
+    assert m.settings.fps_limit == 120
 
 
 def test_all_choice_rows_stage():

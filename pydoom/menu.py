@@ -284,21 +284,19 @@ def build_menus() -> dict:
             MenuItem("sound", "M_SVOL", shortcut="s"),
         ], 60, 37, "main", 0),
         # NOTE: graphics settings (labels draw big like menu art, see
-        # draw_text_big: no M_* patches exist for these rows).
-        # "resolution" applies to OpenGL only, "scale" to software
-        # only; rows only stage values, APPLY recreates the window once
-        # (leaving via esc restores the staged snapshot).
+        # draw_text_big: no M_* patches exist for these rows). Backend
+        # and sizes live in the launcher VIDEO tab (window recreation
+        # proved unreliable live on some drivers); the in-game rows are
+        # all live-safe. APPLY recreates the window once for the staged
+        # rows (leaving via esc restores the entry snapshot).
         "video": MenuDef("video", None, [
-            MenuItem("video_api", None, "choice", "a"),
-            MenuItem("gl_resolution", None, "choice", "r"),
-            MenuItem("sw_scale", None, "choice", "s"),
             MenuItem("fps_limit", None, "choice", "f"),
             MenuItem("vsync", None, "choice", "v"),
             MenuItem("display_mode", None, "choice", "d"),
             MenuItem("display_index", None, "choice", "c"),
             MenuItem("show_fps", None, "choice", "p"),
             MenuItem("apply_video", None, "action", "y"),
-        ], 36, 21, "options", 0),
+        ], 36, 53, "options", 0),
         "sound": MenuDef("sound", None, [
             MenuItem("sfx", "M_SFXVOL", "slider", "s"),
             MenuItem("mus", "M_MUSVOL", "slider", "m"),

@@ -462,7 +462,7 @@ def main() -> int:
 
     def video_summary() -> str:
         """HUD line for the current video state (all-caps: STCFN-safe)."""
-        if applied_api == "opengl":
+        if msettings.video_api == "opengl":
             head = f"OPENGL {WIN_W}X{WIN_H}"
         else:
             head = f"SOFTWARE {msettings.sw_scale * 100}%"
@@ -474,26 +474,18 @@ def main() -> int:
     def apply_video_settings() -> None:
         """Staged APPLY from the video menu (menu ("video_changed",)).
 
-        Backend switches go through restart_video (full stack reboot);
-        same-backend geometry changes take the light path below. Never
-        raises: any failure keeps a presenting window + HUD message.
-        """
-        if (msettings.video_api == "opengl") != (applied_api == "opengl"):
-            restart_video()
-            return
-        apply_video_geometry()
-
-    def apply_video_geometry() -> None:
-        """Same-backend window recreate (res/scale/mode/screen/vsync).
-
-        GPU teardown happens BEFORE set_mode kills the context (clean
-        free on a live context); refresh rebuilds after. Never raises.
+        Same-backend geometry only (fps/vsync/mode/screen/show-fps):
+        backend and sizes are boot-time settings (launcher VIDEO tab),
+        since live window recreation proved unreliable on some drivers.
+        GPU teardown runs BEFORE set_mode kills the context; refresh
+        rebuilds after. Never raises: any failure keeps a presenting
+        window + HUD message.
         """
         global WIN_W, WIN_H
         nonlocal screen, gl_live, gl_info, amap, message, message_tics
-        nonlocal win_backend, applied_api
+        nonlocal win_backend
         from pydoom.glrender import state as _glstate
-        want_gl = applied_api == "opengl"  # NOTE: backend fixed here
+        want_gl = msettings.video_api == "opengl"
         drop_gl_resources()
         w, h, flags, disp = video_geom(msettings, want_gl)
         vsync = int(bool(msettings.vsync))
@@ -552,7 +544,7 @@ def main() -> int:
     def _gl_fallback_to_software(note: str) -> None:
         """After a dead GL rebuild: software window at SW geometry."""
         global WIN_W, WIN_H
-        nonlocal screen, gl_live, win_backend, applied_api
+        nonlocal screen, gl_live, win_backend
         nonlocal message, message_tics
         from pydoom.glrender import state as _glstate
         w2, h2, f2, d2 = video_geom(msettings, False)
@@ -563,60 +555,8 @@ def main() -> int:
             pass  # per-frame heal below retries the downgrade
         WIN_W, WIN_H = screen.get_width(), screen.get_height()
         gl_live = False
-        applied_api = "software"
-        msettings.video_api = "software"
         message = note
         message_tics = 3 * TICRATE
-
-    def restart_video() -> None:
-        """Full video stack reboot for backend switches (soft restart).
-
-        Same sequence as boot (teardown on the live context, fresh
-        try_init with full checks, rebuild): the new backend starts
-        from exactly the state a fresh boot would have, while sim, map
-        and mobjs stay untouched. Never raises.
-        """
-        global WIN_W, WIN_H
-        nonlocal screen, gl_live, gl_info, amap, message, message_tics
-        nonlocal win_backend, applied_api
-        from pydoom.glrender import state as _glstate
-        want_gl = msettings.video_api == "opengl"
-        drop_gl_resources()
-        gl_live = False
-        w, h, flags, disp = video_geom(msettings, want_gl)
-        screen, gl_info, effective, _why = _glstate.try_init(
-            w, h, "opengl" if want_gl else "software",
-            None, False, flags=flags,
-            vsync=int(bool(msettings.vsync)), display=disp)
-        WIN_W, WIN_H = screen.get_width(), screen.get_height()
-        pygame.display.set_caption(f"pydoom - {game_map.marker}")
-        pygame.mouse.set_visible(False)
-        try:
-            pygame.event.set_grab(True)
-        except Exception:  # noqa: BLE001 - some WMs refuse grabs
-            pass
-        if effective == "opengl":
-            gl_live = True
-            win_backend = "opengl"
-            applied_api = "opengl"
-            refresh_gl_resources(game_map)
-        else:
-            gl_live = False
-            win_backend = "software"
-            applied_api = "software"
-        if want_gl and gl_frame is None:
-            _gl_fallback_to_software("OPENGL UNAVAILABLE")
-        else:
-            if want_gl and effective != "opengl":
-                msettings.video_api = "software"
-                applied_api = "software"
-                message = "OPENGL UNAVAILABLE"
-            else:
-                message = video_summary()
-            message_tics = 3 * TICRATE
-        menu.settings_save(menu.CONFIG_PATH, msettings)
-        amap = None
-        print(f"video: {message} ({WIN_W}x{WIN_H})")
 
     gl_text_cache: dict = {}  # text key -> (tex_id, w, h)
 
@@ -1240,9 +1180,6 @@ def main() -> int:
     # NOTE: which window type backs `screen` (software 2D blits onto a
     # GL window present black, so the loop self-heals that mismatch).
     win_backend = "opengl" if gl_live else "software"
-    # NOTE: backend the video stack was built for (APPLY routes backend
-    # switches through restart_video, geometry stays on the light path).
-    applied_api = "opengl" if gl_live else "software"
     win_heal_failed = False  # NOTE: stop retrying a dead downgrade
     if gl_live:
         refresh_gl_resources(game_map)  # NOTE: boot map loaded above
