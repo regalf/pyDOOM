@@ -230,6 +230,43 @@ def test_video_geom_fullscreen_linux_is_windowed():
     assert video_geom(s, True) == (960, 600, 0, 0)
 
 
+def _force_dummy_video():
+    """Switch SDL to dummy for window-matrix tests (no visible win)."""
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    pygame.display.quit()
+    pygame.display.init()
+
+
+def test_window_matrix_never_raises():
+    # NOTE: every mode/api/display combo must return a window (real or
+    # fallback), never raise, and restore the SDL position hint.
+    from pydoom.glrender import state as glstate
+    _force_dummy_video()
+    try:
+        assert os.environ.get("SDL_VIDEO_WINDOW_POS") is None
+        for flags in (0, pygame.NOFRAME, pygame.FULLSCREEN):
+            for vsync in (0, 1):
+                for disp in (0, 5):
+                    scr = glstate.positioned_set_mode(
+                        (320, 200), flags, disp, vsync)
+                    assert scr is not None
+                    if not flags:
+                        # NOTE: dummy honors plain sizes; fullscreen
+                        # drivers may substitute (dummy gives 1024x768).
+                        assert scr.get_size() == (320, 200)
+                    for want in ("software", "opengl"):
+                        out = glstate.try_init(
+                            320, 200, want, None, False,
+                            flags=flags, vsync=vsync, display=disp)
+                        assert len(out) == 4
+                        assert out[0] is not None
+                        # NOTE: dummy video has no GL: always software.
+                        assert out[2] == "software"
+        assert os.environ.get("SDL_VIDEO_WINDOW_POS") is None
+    finally:
+        pygame.display.quit()
+
+
 def test_options_has_video_row():
     m = Menu(None, Settings())
     m.current = "options"
