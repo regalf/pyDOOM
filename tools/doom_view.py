@@ -160,6 +160,39 @@ def song_for_map(marker: str) -> str:
     return MAP_SONGS.get(marker.upper(), "D_E1M1")
 
 
+def desktop_size() -> tuple:
+    """Primary desktop size, guarded (headless-safe 960x600 fallback)."""
+    try:
+        sizes = pygame.display.get_desktop_sizes()
+        if sizes:
+            return int(sizes[0][0]), int(sizes[0][1])
+    except Exception:  # noqa: BLE001 - dummy video has no desktop
+        pass
+    return 960, 600
+
+
+def video_geom(settings, want_gl: bool) -> tuple:
+    """(w, h, flags) for the current video settings (touches nothing).
+
+    GL renders natively at the chosen resolution; software renders
+    320x200 and only scales the window. Fullscreen-exclusive exists on
+    Windows only (callers on other platforms never offer it, and cfg
+    validation already maps strays away); borderless fills the desktop
+    on every platform."""
+    if want_gl:
+        parsed = menu.parse_resolution(settings.gl_resolution)
+        w, h = parsed if parsed is not None else (960, 600)
+    else:
+        w, h = menu.sw_window_size(settings.sw_scale)
+    mode = settings.display_mode
+    if mode == "fullscreen" and sys.platform == "win32":
+        return w, h, pygame.FULLSCREEN
+    if mode == "borderless":
+        dw, dh = desktop_size()
+        return dw, dh, pygame.NOFRAME
+    return w, h, 0
+
+
 def set_noclip(on: bool, player_mo, cam, phys) -> None:
     """Shared N-key/idclip toggle: MF_NOCLIP flag plus a floor resync
     when clipping back in (so the body never hovers over the void)."""
@@ -178,6 +211,7 @@ def set_noclip(on: bool, player_mo, cam, phys) -> None:
 
 
 def main() -> int:
+    global WIN_W, WIN_H
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     frames_opt = None
     skill = "normal"
@@ -406,6 +440,103 @@ def main() -> int:
             gl_dyn = None
             gl_geo = None
 
+    def apply_video_settings() -> None:
+        """Re-apply msettings video live (menu ("video_changed",)).
+
+        Recreates the window (size/flags/vsync), rebuilds GPU resources
+        when entering GL (the context dies with set_mode, so a full
+        refresh is required) or tears them down when leaving it, drops
+        the automap (rebuilt at the new size on next open), persists
+        pydoom.cfg and notes the mode on the HUD. Never raises: any
+        failure keeps the old window and reports on the HUD instead.
+        """
+        global WIN_W, WIN_H
+        nonlocal screen, gl_live, gl_info, amap, message, message_tics
+        want_gl = msettings.video_api == "opengl"
+        w, h, flags = video_geom(msettings, want_gl)
+        vsync = int(bool(msettings.vsync))
+        new_screen = None
+        new_gl_info = None
+        if want_gl:
+            try:
+                new_screen = pygame.display.set_mode(
+                    (w, h), flags | pygame.OPENGL | pygame.DOUBLEBUF,
+                    vsync=vsync)
+            except Exception:  # noqa: BLE001 - retry without vsync
+                try:
+                    new_screen = pygame.display.set_mode(
+                        (w, h), flags | pygame.OPENGL | pygame.DOUBLEBUF)
+                except Exception:  # noqa: BLE001 - GL unavailable
+                    new_screen = None
+            if new_screen is not None:
+                from pydoom.glrender import state as _glstate
+                new_gl_info = _glstate._gl_version()
+                if new_gl_info is None:
+                    new_screen = None
+        if new_screen is None and not want_gl:
+            try:
+                new_screen = pygame.display.set_mode((w, h), flags,
+                                                     vsync=vsync)
+            except Exception:  # noqa: BLE001 - retry plain
+                try:
+                    new_screen = pygame.display.set_mode((w, h), flags)
+                except Exception:  # noqa: BLE001 - keep old window
+                    new_screen = None
+        if new_screen is None:
+            if want_gl:
+                # NOTE: GL switch failed: stay on the old window in
+                # software (the cfg keeps opengl for next boot).
+                msettings.video_api = "software"
+                menu.settings_save(menu.CONFIG_PATH, msettings)
+                message = "OPENGL UNAVAILABLE"
+                message_tics = 3 * TICRATE
+            else:
+                message = "VIDEO MODE FAILED"
+                message_tics = 3 * TICRATE
+            return
+        screen = new_screen
+        WIN_W, WIN_H = screen.get_width(), screen.get_height()
+        pygame.display.set_caption(f"pydoom - {game_map.marker}")
+        pygame.mouse.set_visible(False)
+        try:
+            pygame.event.set_grab(True)
+        except Exception:  # noqa: BLE001 - some WMs refuse grabs
+            pass
+        if want_gl and new_gl_info is not None:
+            gl_live = True
+            gl_info = new_gl_info
+        else:
+            gl_live = False
+        # NOTE: teardown always, rebuild iff gl_live (refresh covers
+        # both; a dead GL context makes the old ids invalid anyway).
+        refresh_gl_resources(game_map)
+        if want_gl and gl_frame is None:
+            # NOTE: GPU rebuild failed after a live context: fall back
+            # to a software window at the software geometry.
+            w2, h2, f2 = video_geom(msettings, False)
+            try:
+                screen = pygame.display.set_mode((w2, h2), f2)
+            except Exception:  # noqa: BLE001 - keep the GL window
+                pass
+            WIN_W, WIN_H = screen.get_width(), screen.get_height()
+            gl_live = False
+            msettings.video_api = "software"
+            message = "OPENGL UNAVAILABLE"
+            message_tics = 3 * TICRATE
+        else:
+            if want_gl:
+                summary = (f"OPENGL {WIN_W}X{WIN_H}")
+            else:
+                summary = (f"SOFTWARE {msettings.sw_scale * 100}%")
+            summary += (f" {msettings.display_mode.upper()}"
+                        f" {msettings.fps_limit or 'UNLIMITED'}FPS"
+                        f" VSYNC {'ON' if msettings.vsync else 'OFF'}")
+            message = summary
+            message_tics = 3 * TICRATE
+        menu.settings_save(menu.CONFIG_PATH, msettings)
+        amap = None
+        print(f"video: {message} ({WIN_W}x{WIN_H})")
+
     gl_text_cache: dict = {}  # text key -> (tex_id, w, h)
 
     def gl_text_line(text: str, rgb, alpha: int):
@@ -469,9 +600,10 @@ def main() -> int:
         lines = []
         if gamestate in ("level", "menu", "wipe") and has_level:
             # NOTE: readout block (coords, AI, fps, version) shows with
-            # --extra-hud (or --debug, as before), translucent, below
-            # the red message line when one is up.
-            show_hud = extra_hud or debug
+            # --extra-hud (or --debug, as before) or the Show FPS video
+            # setting, translucent, below the red message line when one
+            # is up.
+            show_hud = extra_hud or debug or msettings.show_fps
             hy = 56 if (show_hud and message is not None
                         and msettings.messages) else 8
             if show_hud:
@@ -951,6 +1083,8 @@ def main() -> int:
             demo_play
         if mev == "close":
             gamestate = "level" if has_level else "title"
+        elif isinstance(mev, tuple) and mev[0] == "video_changed":
+            apply_video_settings()
         elif mev == "quit":
             audio.play(random.choice(QUITSOUNDS))
             menu.settings_save(menu.CONFIG_PATH, msettings)
@@ -1007,11 +1141,19 @@ def main() -> int:
     pygame.init()
     # NOTE: milestone H phase 0: backend selection lives in
     # glrender.state; any failure falls back to software, never raises.
-    # gl_info is the GL version string on the live opengl path.
+    # gl_info is the GL version string on the live opengl path. Window
+    # geometry comes from the video settings (resolution for GL, scale
+    # for software, display mode for both).
     from pydoom.glrender import state as glstate
+    WIN_W, WIN_H, _win_flags = video_geom(
+        msettings, want_api == "opengl")
     screen, gl_info, video_api, video_why = glstate.try_init(
-        WIN_W, WIN_H, want_api, frames_opt, timedemo)
-    print(f"video: {video_api} ({video_why})")
+        WIN_W, WIN_H, want_api, frames_opt, timedemo,
+        flags=_win_flags, vsync=int(bool(msettings.vsync)))
+    WIN_W, WIN_H = screen.get_width(), screen.get_height()
+    print(f"video: {video_api} {WIN_W}x{WIN_H} ({video_why})"
+          f" fps={msettings.fps_limit or 'unlimited'}"
+          f" vsync={int(bool(msettings.vsync))}")
     gl_live = video_api == "opengl" and gl_info is not None
     if gl_live:
         refresh_gl_resources(game_map)  # NOTE: boot map loaded above
@@ -1189,7 +1331,10 @@ def main() -> int:
             clock.tick(60)
             dt = 1.0 / 60  # NOTE: demos run on fixed steps, tic-exact
         else:
-            dt = min(clock.tick(60) / 1000.0, 0.25)
+            fps_cap = msettings.fps_limit
+            if fps_cap not in menu.FPS_LIMITS:
+                fps_cap = 60
+            dt = min(clock.tick(fps_cap) / 1000.0, 0.25)
         fps_ema += (1.0 / max(dt, 1e-6) - fps_ema) * 0.05
         if gamestate == "title" and demo_play is None \
                 and play_demo_path is None and not timedemo \
@@ -2144,8 +2289,13 @@ def main() -> int:
                 palette_luts[palette_index(state["ps"])][fb].tobytes(),
                 (SCREENWIDTH, SCREENHEIGHT), "RGB"
             )
-            screen.blit(pygame.transform.scale(frame, (WIN_W, WIN_H)),
-                        (0, 0))
+            # NOTE: integer-scale letterbox (windowed sizes match exactly,
+            # fullscreen/borderless centers with black bars, never stretch).
+            bw, bh, bx, by = menu.letterbox(WIN_W, WIN_H)
+            if (bw, bh) != (SCREENWIDTH, SCREENHEIGHT):
+                frame = pygame.transform.scale(frame, (bw, bh))
+            screen.fill((0, 0, 0))
+            screen.blit(frame, (bx, by))
         if not use_gl and font is not None:
             # NOTE: readout block + help line (same strings/positions
             # as the GL text quads above, via hud_lines()).

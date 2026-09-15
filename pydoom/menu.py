@@ -32,6 +32,51 @@ SFX_MAX, MUS_MAX, SENS_MAX = 15, 15, 8
 # GL context cannot come up: missing PyOpenGL, dummy video, headless).
 VIDEO_APIS = ("software", "opengl")
 
+# NOTE: graphics settings (Options -> Video, live-applied, cfg-persisted).
+# GL renders natively at the window size (16:10 steps like 320x200);
+# software always renders 320x200 and only scales the window.
+GL_RESOLUTIONS = ("640x400", "960x600", "1280x800", "1600x1000",
+                  "1920x1200")
+# NOTE: 0 means uncapped (clock.tick(0)); the 35Hz sim accumulator is
+# frame-rate independent, so high fps never speeds up the game.
+FPS_LIMITS = (30, 60, 120, 144, 180, 240, 0)
+# NOTE: exclusive fullscreen needs a real mode switch (Windows only);
+# everywhere else it is hidden and borderless covers fullscreen duty.
+import sys as _sys
+DISPLAY_MODES = ("windowed", "fullscreen", "borderless") \
+    if _sys.platform == "win32" else ("windowed", "borderless")
+SW_SCALES = (1, 2, 3)  # window magnification over 320x200
+SW_BASE_W, SW_BASE_H = 320, 200
+
+
+def parse_resolution(raw: str) -> tuple | None:
+    """'960x600' -> (960, 600), else None (pure, test-covered)."""
+    try:
+        w, h = raw.lower().split("x")
+        w, h = int(w), int(h)
+    except (ValueError, AttributeError):
+        return None
+    if w <= 0 or h <= 0 or w > 7680 or h > 4320:
+        return None
+    return w, h
+
+
+def sw_window_size(scale: int) -> tuple:
+    """Software window for a magnification step (pure, test-covered)."""
+    s = scale if scale in SW_SCALES else 3
+    return SW_BASE_W * s, SW_BASE_H * s
+
+
+def letterbox(dst_w: int, dst_h: int) -> tuple:
+    """Integer-scale 320x200 fit centered in dst (pure, test-covered).
+
+    Returns (w, h, x, y): fullscreen/borderless keep chunky pixels
+    with black bars instead of stretching; windowed sizes match
+    exactly so the offset is (0, 0)."""
+    s = max(1, min(dst_w // SW_BASE_W, dst_h // SW_BASE_H))
+    w, h = SW_BASE_W * s, SW_BASE_H * s
+    return w, h, (dst_w - w) // 2, (dst_h - h) // 2
+
 
 @dataclass
 class Settings:
@@ -51,6 +96,16 @@ class Settings:
     last_map: str = "E1M1"
     # NOTE: renderer backend, see VIDEO_APIS (default software).
     video_api: str = "software"
+    # NOTE: graphics settings (Options -> Video, live-applied): GL
+    # renders natively at gl_resolution; software always renders
+    # 320x200 and sw_scale only magnifies the window. fps_limit 0 is
+    # uncapped; vsync is real on GL, best-effort on software.
+    gl_resolution: str = "960x600"
+    fps_limit: int = 60
+    vsync: bool = False
+    display_mode: str = "windowed"
+    sw_scale: int = 3
+    show_fps: bool = False
 
 
 CONFIG_PATH = "pydoom.cfg"
@@ -78,6 +133,14 @@ def settings_load(path: str, settings: Settings) -> None:
             if raw in VIDEO_APIS:
                 settings.video_api = raw
             continue
+        if key == "gl_resolution":
+            if parse_resolution(raw) is not None:
+                settings.gl_resolution = raw.lower()
+            continue
+        if key == "display_mode":
+            if raw in DISPLAY_MODES:
+                settings.display_mode = raw
+            continue
         try:
             val = int(raw)
         except ValueError:
@@ -92,6 +155,14 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.messages = bool(val)
         elif key == "demos":
             settings.demos = bool(val)
+        elif key == "fps_limit":
+            settings.fps_limit = val if val in FPS_LIMITS else 60
+        elif key == "vsync":
+            settings.vsync = bool(val)
+        elif key == "sw_scale":
+            settings.sw_scale = val if val in SW_SCALES else 3
+        elif key == "show_fps":
+            settings.show_fps = bool(val)
 
 
 def settings_save(path: str, settings: Settings) -> None:
@@ -110,18 +181,24 @@ def settings_save(path: str, settings: Settings) -> None:
                     f"last_wad {settings.last_wad}\n"
                     f"last_skill {settings.last_skill}\n"
                     f"last_map {settings.last_map}\n"
-                    f"video_api {settings.video_api}\n")
+                    f"video_api {settings.video_api}\n"
+                    f"gl_resolution {settings.gl_resolution}\n"
+                    f"fps_limit {settings.fps_limit}\n"
+                    f"vsync {int(settings.vsync)}\n"
+                    f"display_mode {settings.display_mode}\n"
+                    f"sw_scale {settings.sw_scale}\n"
+                    f"show_fps {int(settings.show_fps)}\n")
     except OSError:
         pass
 
 
 @dataclass
 class MenuItem:
-    """One row: action id, patch, slider/toggle wiring, shortcut key."""
+    """One row: action id, patch, slider/toggle/choice wiring, shortcut."""
 
     action: str
     patch: str | None = None
-    kind: str = "action"  # action | slider | toggle | gap
+    kind: str = "action"  # action | slider | toggle | choice | gap
     shortcut: str = ""
 
 
@@ -166,8 +243,22 @@ def build_menus() -> dict:
             MenuItem("endgame", "M_ENDGAM", shortcut="e"),
             MenuItem("messages", "M_MESSG", "toggle", "m"),
             MenuItem("sens", "M_MSENS", "slider", "m"),
+            MenuItem("video", None, "action", "v"),
             MenuItem("sound", "M_SVOL", shortcut="s"),
         ], 60, 37, "main", 0),
+        # NOTE: graphics settings (no M_* art exists for these rows:
+        # labels and values draw as STCFN text). "resolution" applies
+        # to OpenGL only, "scale" to software only; the rest applies
+        # to both. Every change applies live (video_changed event).
+        "video": MenuDef("video", None, [
+            MenuItem("video_api", None, "choice", "a"),
+            MenuItem("gl_resolution", None, "choice", "r"),
+            MenuItem("sw_scale", None, "choice", "s"),
+            MenuItem("fps_limit", None, "choice", "f"),
+            MenuItem("vsync", None, "choice", "v"),
+            MenuItem("display_mode", None, "choice", "d"),
+            MenuItem("show_fps", None, "choice", "p"),
+        ], 40, 37, "options", 0),
         "sound": MenuDef("sound", None, [
             MenuItem("sfx", "M_SFXVOL", "slider", "s"),
             MenuItem("mus", "M_MUSVOL", "slider", "m"),
@@ -344,7 +435,7 @@ class Menu:
         elif k == "down":
             self._move(1)
         elif k in ("left", "right"):
-            self._adjust(mdef, 1 if k == "right" else -1)
+            return self._adjust(mdef, 1 if k == "right" else -1)
         elif k == "enter":
             return self._activate(mdef)
         elif k == "esc":
@@ -371,10 +462,14 @@ class Menu:
         mdef.last_on = i
         audio.play("pstop")
 
-    def _adjust(self, mdef, delta: int) -> None:
+    def _adjust(self, mdef, delta: int) -> list:
         item = mdef.items[mdef.last_on]
         if item.kind == "slider":
             self.slider_adjust(item.action, delta)
+        elif item.kind == "choice":
+            if self.choice_adjust(item.action, delta):
+                return [("video_changed",)]
+        return []
 
     def _activate(self, mdef) -> list:
         from pydoom import audio
@@ -419,6 +514,11 @@ class Menu:
             self.settings.messages = not self.settings.messages
         elif act == "sound":
             self.current = "sound"
+        elif act == "video":
+            self.current = "video"
+        elif item.kind == "choice":
+            if self.choice_adjust(act, 1):
+                return [("video_changed",)]
         return []
 
     def _ask(self, text: str, on_yes) -> None:
@@ -477,6 +577,18 @@ class Menu:
                 continue
             if item.patch is not None:
                 self._blit(item.patch, fb, mdef.x, y)
+            elif item.kind == "choice":
+                # NOTE: video rows have no M_* art: STCFN label plus
+                # the current value to its right.
+                self.draw_text(fb, self._choice_label(item.action),
+                               mdef.x, y)
+                opts = self._choice_options(item.action)
+                if opts:
+                    self.draw_text(fb, opts[self._choice_index(
+                        item.action)], mdef.x + 140, y)
+            elif item.patch is None:
+                # NOTE: text-only action rows (e.g. VIDEO in options).
+                self.draw_text(fb, item.action.upper(), mdef.x, y)
             if item.kind == "toggle" and item.action == "messages":
                 self._blit("M_MSGON" if self.settings.messages
                            else "M_MSGOFF", fb, mdef.x + 175, y)
@@ -515,6 +627,83 @@ class Menu:
         else:
             return
         audio.play("stnmov")
+
+    # -- video choice rows (Options -> Video, live-applied) --
+
+    def _choice_options(self, action: str) -> tuple:
+        """Display strings cycled by a choice row (pure order)."""
+        if action == "video_api":
+            return tuple(v.upper() for v in VIDEO_APIS)
+        if action == "gl_resolution":
+            return tuple(r.upper() for r in GL_RESOLUTIONS)
+        if action == "sw_scale":
+            return tuple(f"{s * 100}%" for s in SW_SCALES)
+        if action == "fps_limit":
+            return tuple("UNLIMITED" if v == 0 else str(v)
+                         for v in FPS_LIMITS)
+        if action in ("vsync", "show_fps"):
+            return ("OFF", "ON")
+        if action == "display_mode":
+            return tuple(v.upper() for v in DISPLAY_MODES)
+        return ()
+
+    def _choice_index(self, action: str) -> int:
+        """Current option index (unknown cfg values show first)."""
+        s = self.settings
+        opts = self._choice_options(action)
+        if action == "video_api":
+            cur = s.video_api.upper()
+        elif action == "gl_resolution":
+            cur = s.gl_resolution.upper()
+        elif action == "sw_scale":
+            cur = f"{s.sw_scale * 100}%"
+        elif action == "fps_limit":
+            cur = "UNLIMITED" if s.fps_limit == 0 else str(s.fps_limit)
+        elif action == "vsync":
+            cur = "ON" if s.vsync else "OFF"
+        elif action == "show_fps":
+            cur = "ON" if s.show_fps else "OFF"
+        elif action == "display_mode":
+            cur = s.display_mode.upper()
+        else:
+            return 0
+        return opts.index(cur) if cur in opts else 0
+
+    def choice_adjust(self, action: str, delta: int) -> bool:
+        """Cycle a video choice (True: viewer must re-apply video)."""
+        from pydoom import audio
+        opts = self._choice_options(action)
+        if not opts:
+            return False
+        nxt = opts[(self._choice_index(action) + delta) % len(opts)]
+        s = self.settings
+        if action == "video_api":
+            s.video_api = nxt.lower()
+        elif action == "gl_resolution":
+            s.gl_resolution = nxt.lower()
+        elif action == "sw_scale":
+            s.sw_scale = SW_SCALES[opts.index(nxt)]
+        elif action == "fps_limit":
+            s.fps_limit = 0 if nxt == "UNLIMITED" else int(nxt)
+        elif action == "vsync":
+            s.vsync = nxt == "ON"
+        elif action == "show_fps":
+            s.show_fps = nxt == "ON"
+        elif action == "display_mode":
+            s.display_mode = nxt.lower()
+        else:
+            return False
+        audio.play("stnmov")
+        return True
+
+    def _choice_label(self, action: str) -> str:
+        return {"video_api": "VIDEO API",
+                "gl_resolution": "RESOLUTION",
+                "sw_scale": "WINDOW SCALE",
+                "fps_limit": "FPS LIMIT",
+                "vsync": "VSYNC",
+                "display_mode": "DISPLAY",
+                "show_fps": "SHOW FPS"}.get(action, action.upper())
 
     def _thermo(self, fb, x: int, y: int, val: int, top: int,
                 slots: int = 10) -> None:

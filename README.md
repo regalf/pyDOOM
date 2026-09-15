@@ -54,6 +54,17 @@ vanilla: `iddqd` `idkfa`/`idfa` `idclip` `idclev`/`idmus` (E1M1–E3M9)
 `--debug` unlocks developer keys: `N` noclip, `F` freeze AI, `X` AI
 readout, `PgUp`/`PgDn` map hop, `G` mouse grab.
 
+## Video settings
+
+Options → Video in the menu (applied live, saved to `pydoom.cfg`):
+backend (software/OpenGL), GL resolution (640×400 … 1920×1200),
+software window scale (100/200/300% of 320×200), fps limit
+(30–240/Unlimited), VSync, display (windowed/fullscreen-exclusive on
+Windows only/borderless), FPS readout. Software always renders
+320×200 and letterboxes fullscreen sizes with black bars; OpenGL
+renders natively (16:9 fullscreen widens the view like widescreen
+source ports).
+
 ## CLI
 
 ```

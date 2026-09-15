@@ -71,29 +71,46 @@ def _gl_version() -> str | None:
 
 def try_init(width: int, height: int, want: str,
              frames_opt: int | None = None,
-             timedemo: bool = False) -> tuple:
+             timedemo: bool = False, flags: int = 0,
+             vsync: int = 0) -> tuple:
     """Create the viewer window for the wanted backend.
 
     Returns (screen, gl_info, effective, reason): gl_info is the GL
     version string on the opengl path, else None. Every failure mode
     falls back to a plain software window and reports why; never
-    raises. pygame.init() must have run before this call.
+    raises. pygame.init() must have run before this call. flags carries
+    display-mode bits (FULLSCREEN/NOFRAME, OPENGL added internally for
+    the GL path); vsync passes through to set_mode (real on GL,
+    best-effort elsewhere) with automatic retry at vsync=0.
     """
     import pygame
+    sw_flags = flags & ~(pygame.OPENGL | pygame.DOUBLEBUF)
     if want != OPENGL:
         # NOTE: short-circuit before the _have_gl() probe: asking for
         # software must never import GL bindings (keeps headless runs
         # and the sim reference import-clean).
-        return pygame.display.set_mode((width, height)), None, \
-            SOFTWARE, f"requested {want!r}"
+        try:
+            screen = pygame.display.set_mode((width, height),
+                                             sw_flags, vsync=vsync)
+        except Exception:  # noqa: BLE001 - exotic flags fall back plain
+            screen = pygame.display.set_mode((width, height))
+        return screen, None, SOFTWARE, f"requested {want!r}"
     effective, reason = resolve_api(want, None, frames_opt, timedemo,
                                     _have_gl())
     if effective == SOFTWARE:
-        return pygame.display.set_mode((width, height)), None, \
-            SOFTWARE, reason
+        try:
+            screen = pygame.display.set_mode((width, height),
+                                             sw_flags, vsync=vsync)
+        except Exception:  # noqa: BLE001 - exotic flags fall back plain
+            screen = pygame.display.set_mode((width, height))
+        return screen, None, SOFTWARE, reason
+    gl_flags = flags | pygame.OPENGL | pygame.DOUBLEBUF
     try:
-        screen = pygame.display.set_mode(
-            (width, height), pygame.OPENGL | pygame.DOUBLEBUF)
+        try:
+            screen = pygame.display.set_mode((width, height), gl_flags,
+                                             vsync=vsync)
+        except Exception:
+            screen = pygame.display.set_mode((width, height), gl_flags)
     except Exception as exc:  # noqa: BLE001 - any window failure falls back
         screen = pygame.display.set_mode((width, height))
         return screen, None, SOFTWARE, f"opengl window failed ({exc})"

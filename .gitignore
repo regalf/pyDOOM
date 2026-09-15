@@ -11,6 +11,7 @@ __pycache__/
 # local reference material, not part of the game
 DOOM-master/
 DOOM_ENGINE_ANALYSIS.md
+video.md
 *.png
 !docs/*.png
 
