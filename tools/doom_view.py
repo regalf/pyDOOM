@@ -197,6 +197,28 @@ def step_wipe_clock(melt, acc: float, dt: float) -> tuple:
     return frame, acc, False
 
 
+def _dump_wipe_frame(tag: str, fb) -> None:
+    """Save one melt framebuffer as .npy for post-mortem (debug only).
+
+    Exact index arrays (not PNGs) so bar positions/duplication can be
+    dissected byte for byte after a bad wipe. Best-effort: never raises.
+    """
+    try:
+        import os
+        if fb is None or getattr(fb, "shape", None) != (200, 320):
+            return
+        path = f"/tmp/opencode/wipe-{os.getpid()}"
+        os.makedirs(path, exist_ok=True)
+        have = len([f for f in os.listdir(path)
+                    if f.endswith(".npy")])
+        if have > 40:  # NOTE: cap disk use (unlimited fps spams frames)
+            return
+        np.save(os.path.join(path, f"{tag}.npy"),
+                np.ascontiguousarray(fb, dtype=np.uint8))
+    except Exception:  # noqa: BLE001 - diagnostics never break play
+        pass
+
+
 def video_geom(settings, want_gl: bool) -> tuple:
     """(w, h, flags, display) for the current video settings.
 
@@ -949,6 +971,7 @@ def main() -> int:
     has_level = gamestate == "level"  # menu-close target before new game
     melt = MeltWipe()
     melt_acc = 0.0  # NOTE: wipe_ScreenWipe melts in real-time tics
+    wipe_dbg_mark = -1  # NOTE: last dumped melt.total milestone
     last_fb = None
     # NOTE: M_QuitDOOM death jingle (shareware picks the first table).
     QUITSOUNDS = ("pldeth", "dmpain", "popain", "slop", "telept",
@@ -1038,12 +1061,17 @@ def main() -> int:
         generations blending would stack status bars).
         """
         nonlocal gamestate, wipe_after
+        # NOTE: melt.total milestones dumped per wipe (post-mortem).
+        nonlocal wipe_dbg_mark
+        wipe_dbg_mark = -1
         if debug:
             print(f"melt: start after={after} "
                   f"old={None if old is None else getattr(old, 'shape', '?')} "
                   f"new={None if new is None else getattr(new, 'shape', '?')} "
                   f"frame={frames} "
                   f"{'RESTARTED-MID-WIPE' if not melt.done else 'clean'}")
+            _dump_wipe_frame(f"w{frames:06d}-start-old", old)
+            _dump_wipe_frame(f"w{frames:06d}-start-new", new)
         if old is None or new is None:
             gamestate = after if after is not None else "level"
             return
@@ -2366,6 +2394,10 @@ def main() -> int:
                           f"frame={frames}")
                 gamestate = wipe_after
             else:
+                if debug and melt.total // 10 != wipe_dbg_mark:
+                    wipe_dbg_mark = melt.total // 10
+                    _dump_wipe_frame(
+                        f"w{frames:06d}-t{melt.total:03d}", stepped)
                 fb = stepped
         last_fb = fb.copy()
         if recording or replaying:

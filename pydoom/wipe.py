@@ -23,6 +23,7 @@ class MeltWipe:
         self.frame: np.ndarray | None = None  # last composed (shown idle)
         self.y = np.zeros(W, dtype=np.int32)
         self.done = True
+        self.total = 0  # NOTE: melt tics consumed (debug frame dumps)
 
     def start(self, old: np.ndarray, new: np.ndarray) -> None:
         """Begin melting from old to new (both (200, 320) uint8).
@@ -53,9 +54,11 @@ class MeltWipe:
         self.y = ys
         self.frame = self.old.copy()
         self.done = False
+        self.total = 0
 
     def tick(self, steps: int = 1) -> np.ndarray | None:
         """Advance steps 35Hz tics; None once the new frame covers all."""
+        self.total += max(0, int(steps))
         if self.done:
             return None
         assert self.old is not None and self.new is not None
