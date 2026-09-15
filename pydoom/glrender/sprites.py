@@ -12,6 +12,11 @@ extralight/visor, indexed by xscale).
 MF_SHADOW carriers are EMITTED with fuzz=True (corners identical;
 the fuzz program shades them from the backdrop index target instead
 of their patch). Pure CPU, no GL imports.
+
+Unlike renderer.project_mobjs there is no 128-sprite cap: every
+passing billboard draws depth-tested (like dsda-doom-style GL
+ports), so crowded views never lose near monsters. In non-overflow
+scenes the emitted set matches the software vissprites exactly.
 """
 
 from __future__ import annotations
@@ -27,7 +32,6 @@ from pydoom.renderer import (
     LIGHTSCALESHIFT,
     LIGHTSEGSHIFT,
     MAXLIGHTSCALE,
-    MAXVISSPRITES,
     MINZ,
     SCREENWIDTH,
 )
@@ -93,8 +97,9 @@ class SpriteFeed:
                            scalelight)
             if bb is not None:
                 out.append(bb)
-            if len(out) >= MAXVISSPRITES:
-                break  # NOTE: overflowsprite drops extras, like vanilla
+        # NOTE: no MAXVISSPRITES cap (unlike the software vissprites):
+        # GL ports depth-test every passing billboard, so a crowded
+        # view keeps far sprites instead of dropping near monsters.
         return out
 
     def _one(self, mo, viewx: int, viewy: int, angle_bam: int,

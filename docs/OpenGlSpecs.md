@@ -118,7 +118,9 @@ pass.
    mirrored).
 4. **Planes** double-sided (`glDrawArrays`, no IBO).
 5. **Sprites**: per-frame rebuilt camera-facing billboards (dynamic
-   VBO, `MAXVISSPRITES` = 128 cap like vanilla, extras dropped);
+   VBO, no 128 cap: every passing billboard draws depth-tested, so
+   crowded views keep near monsters where vanilla/SW overflow drops
+   far sprites);
    `tz < MINZ` (4.0) and `|tx| > tz<<2` culling; each sprite graded
    by a single scalelight entry (sector lightnum + orient tweak +
    extralight); flip mirrors U; depth-tested like everything else.
@@ -214,5 +216,7 @@ way**:
    fence `(1169,−2274,247°)` and dark northern interiors; table and
    gate in `docs/DIVERGENCES.md` + `tests/test_gl.py`.
 
-Known limits: sprites past 128 drop (like vanilla), overlay stays
+Known limits: software keeps the vanilla 128-vissprite cap (overflow
+drops far sprites, projected near-to-far in BSP-visit order like
+R_AddSprites); GL draws every passing billboard instead, overlay stays
 320×200 nearest, text/extra-HUD ride GL quads with per-frame upload.

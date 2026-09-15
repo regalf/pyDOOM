@@ -166,8 +166,8 @@ class FrameRenderer:
             res.plane_vbo, 7,
             [(0, 3, 0), (1, 2, 3), (2, 1, 5), (3, 1, 6)], 0)
         # NOTE: sprite VBO/IBO are refilled per frame (dynamic
-        # billboards); sized for MAXVISSPRITES quads like the
-        # software vissprite cap.
+        # billboards, glBufferData resizes past the initial hint);
+        # no 128-quad cap: every passing billboard draws depth-tested.
         self._sprite_vbo = self._new_dynamic(MAXVISSPRITES * 4 * 6)
         self._sprite_ibo = self._new_dynamic(MAXVISSPRITES * 6, True)
         self._sprite_vao = self._make_vao(
@@ -500,7 +500,8 @@ class FrameRenderer:
         sample the same clean backdrop)."""
         import numpy as np
         from OpenGL import GL
-        assert len(billboards) <= MAXVISSPRITES
+        # NOTE: no MAXVISSPRITES cap: the dynamic VBO/IBO resize per
+        # frame via glBufferData, every billboard draws depth-tested.
         groups: dict = {}
         fuzz_groups: dict = {}
         for bb in billboards:

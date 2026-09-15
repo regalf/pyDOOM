@@ -432,6 +432,12 @@ class Renderer:
         self.floorclip = [self.viewheight] * self.viewwidth
         self._clear_planes()
         self.vissprites: list[dict] = []
+        # NOTE: sector visit order (R_Subsector traversal order, i.e.
+        # the R_AddSprites call order): sprites project near-to-far
+        # so a MAXVISSPRITES overflow drops far sprites like vanilla
+        # (thing-list order would drop late-list near monsters).
+        self._sprite_visit: list = []
+        self._sprite_seen: set = set()
 
         self._render_bsp_node(
             len(game_map.nodes) - 1 if game_map.nodes else -1
@@ -475,6 +481,12 @@ class Renderer:
         sub = self.map.subsectors[num]
         frontsector = sub.sector
         assert frontsector is not None
+        # NOTE: vanilla R_Subsector calls R_AddSprites(frontsector)
+        # here: record the visit (validcount dedup) so sprites project
+        # in traversal (near-to-far) order; see _project_things.
+        if id(frontsector) not in self._sprite_seen:
+            self._sprite_seen.add(id(frontsector))
+            self._sprite_visit.append(frontsector)
         # NOTE: sprites (R_AddSprites) belong to a later step.
         if frontsector.floorheight < self.viewz:
             self.floorplane = self._find_plane(
@@ -1225,14 +1237,24 @@ class Renderer:
     # -- masked mid textures and sprites (r_things.c: R_DrawMasked and
     #    friends; weapon psprites belong to the weapon step) --
 
+    def _sprite_visit_index(self) -> dict:
+        """id(sector) -> BSP visit order (R_AddSprites call order)."""
+        return {id(sec): i for i, sec in enumerate(self._sprite_visit)}
+
     def _project_things(self) -> None:
         # Static-view equivalent of R_AddSprites: project every map
-        # thing. (No sector thinglists or validcounts exist yet; order
-        # is irrelevant because drawing sorts back-to-front.)
+        # thing in BSP-visit (near-to-far) order, stable within a
+        # sector. Order matters only at MAXVISSPRITES overflow, where
+        # vanilla drops far sprites (extra vissprites spill into
+        # overflowsprite); thing-list order would instead drop
+        # late-list near monsters when looking across the map.
         # Unknown thing types are skipped (vanilla errors out in
         # P_SpawnMapThing); hanging/corpses-on-ceiling flags are
         # ignored, so everything stands on the floor.
         # NOTE: legacy path for tests; the viewer projects live mobjs.
+        order = self._sprite_visit_index()
+        last = len(self._sprite_visit)
+        pending = []
         for thing in self.map.things:
             if thing.type in SKIP_THING_TYPES:
                 continue
@@ -1242,6 +1264,10 @@ class Renderer:
             sub = self.point_in_subsector(thing.x << FRACBITS, thing.y << FRACBITS)
             sector = sub.sector
             assert sector is not None
+            pending.append((order.get(id(sector), last), thing,
+                            visual, sector))
+        pending.sort(key=lambda e: e[0])
+        for _, thing, visual, sector in pending:
             thing_bam = ((thing.angle % 360) * 0x100000000) // 360
             self._project_sprite(
                 thing.x << FRACBITS, thing.y << FRACBITS,
@@ -1250,8 +1276,17 @@ class Renderer:
             )
 
     def project_mobjs(self, mobjs) -> None:
-        """Project live mobjs (R_AddSprites over real things)."""
-        for mo in mobjs:
+        """Project live mobjs (R_AddSprites over real things).
+
+        Near-to-far BSP-visit order like _project_things (stable for
+        mobjs outside visited sectors, e.g. mid-movement)."""
+        order = self._sprite_visit_index()
+        last = len(self._sprite_visit)
+        ranked = sorted(
+            enumerate(mobjs),
+            key=lambda e: (order.get(id(e[1].sector), last), e[0]),
+        )
+        for _, mo in ranked:
             if mo.dead or mo.state == 0:  # NOTE: S_NULL never draws
                 continue  # (teleport destinations stay invisible)
             lightlevel = (mo.sector.lightlevel if mo.sector is not None
