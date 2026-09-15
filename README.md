@@ -56,7 +56,9 @@ readout, `PgUp`/`PgDn` map hop, `G` mouse grab.
 
 ## Video settings
 
-Options → Video in the menu (staged rows, APPLY commits, saved to `pydoom.cfg`):
+Backend + size are picked in the launcher VIDEO tab (fresh boot, no
+risk) and remain changeable in Options → Video in-game (staged rows,
+APPLY commits, saved to `pydoom.cfg`):
 backend (software/OpenGL), GL resolution (640×400 … 1920×1200),
 software window scale (100/200/300% of 320×200), fps limit
 (30–240/Unlimited), VSync, display (windowed/fullscreen-exclusive on

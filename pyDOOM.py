@@ -2,7 +2,9 @@
 
 PLAY tab holds real scrollable lists (IWADs always; maps only when
 DEBUG MODE is on, otherwise the game boots its first map). The
-SETTINGS tab holds the skill list and the inline viewer flags.
+SETTINGS tab holds the skill list and the inline viewer flags. The
+VIDEO tab holds the render backend plus its backend-specific picks
+(GL resolution vs software window scale, shown conditionally).
 LAUNCH/QUIT stay pinned in the bottom bar on every tab; LAUNCH
 saves the picks to pydoom.cfg and runs tools/doom_view.py with the
 matching argv. File-path commands (--playdemo/...) stay CLI-only.
@@ -126,6 +128,37 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
     return args
 
 
+def video_tab_rows(video_api: str) -> tuple:
+    """Visible VIDEO-tab rows for a backend (pure, unit tested).
+
+    The backend row always shows; the size row is conditional (GL
+    resolution vs software window scale), so each backend only offers
+    settings that apply to it.
+    """
+    if video_api == "opengl":
+        return ("api", "resolution")
+    return ("api", "scale")
+
+
+def res_label_to_value(label: str) -> str | None:
+    """'960X600' -> '960x600' cfg value (None when invalid)."""
+    from pydoom.menu import parse_resolution
+    parsed = parse_resolution(label or "")
+    if parsed is None:
+        return None
+    return f"{parsed[0]}x{parsed[1]}"
+
+
+def scale_label_to_value(label: str) -> int | None:
+    """'200%' -> 2 cfg value (None when invalid)."""
+    from pydoom.menu import SW_SCALES
+    try:
+        scale = int((label or "").strip().rstrip("%")) // 100
+    except ValueError:
+        return None
+    return scale if scale in SW_SCALES else None
+
+
 class PickList:
     """Scrollable single-column list (click or arrows to select)."""
 
@@ -184,8 +217,9 @@ class PickList:
 
 def main() -> int:
     import pygame
-    from pydoom.menu import (CONFIG_PATH, VIDEO_APIS, Settings,
-                             settings_load, settings_save)
+    from pydoom.menu import (CONFIG_PATH, VIDEO_APIS, GL_RESOLUTIONS,
+                             SW_SCALES, Settings, settings_load,
+                             settings_save)
     cfg = Settings()
     settings_load(os.path.join(ROOT, CONFIG_PATH), cfg)
     wads = find_wads()
@@ -205,7 +239,7 @@ def main() -> int:
     big = pygame.font.SysFont("monospace", 26, bold=True)
     small = pygame.font.SysFont("monospace", 14)
 
-    tabs = ("PLAY", "SETTINGS")
+    tabs = ("PLAY", "SETTINGS", "VIDEO")
     tab = 0
     wad_list = PickList(wads, visible=6)
     if wad in wads:
@@ -216,12 +250,23 @@ def main() -> int:
     skill_list = PickList([s.upper() for s in SKILLS], visible=5)
     skill_list.index = SKILLS.index(skill)
     video_list = PickList([v.upper() for v in VIDEO_APIS], visible=2)
-    # NOTE: milestone H backend picker (default software, cfg-persisted).
+    # NOTE: render backend lives on the VIDEO tab now (was SETTINGS);
+    # resolution/scale rows show conditionally per backend below.
     video_list.index = VIDEO_APIS.index(cfg.video_api) \
         if cfg.video_api in VIDEO_APIS else 0
+    res_labels = [r.upper() for r in GL_RESOLUTIONS]
+    res_list = PickList(res_labels, visible=5)
+    res_list.index = res_labels.index(cfg.gl_resolution.upper()) \
+        if cfg.gl_resolution.upper() in res_labels \
+        else res_labels.index("960X600")
+    scale_labels = [f"{s * 100}%" for s in SW_SCALES]
+    scale_list = PickList(scale_labels, visible=3)
+    scale_list.index = scale_labels.index(f"{cfg.sw_scale * 100}%") \
+        if f"{cfg.sw_scale * 100}%" in scale_labels else 2
     flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=7)
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
-    sfocus = 0  # NOTE: 0 skill, 1 video, 2 flags on the SETTINGS tab
+    sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
+    vfocus = 0  # NOTE: 0 api, 1 size on the VIDEO tab
     launch_rect = pygame.Rect(24, 420 - 44, 180, 30)
     quit_rect = pygame.Rect(560 - 204, 420 - 44, 180, 30)
     tab_rects = [pygame.Rect(24 + i * 130, 44, 120, 26) for i in
@@ -263,6 +308,14 @@ def main() -> int:
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
         cfg.video_api = VIDEO_APIS[video_list.index]
+        if cfg.video_api == "opengl":
+            picked_res = res_label_to_value(res_list.selected())
+            if picked_res is not None:
+                cfg.gl_resolution = picked_res
+        else:
+            picked_scale = scale_label_to_value(scale_list.selected())
+            if picked_scale is not None:
+                cfg.sw_scale = picked_scale
         settings_save(os.path.join(ROOT, CONFIG_PATH), cfg)
         args = build_viewer_args(
             wad, start_map, picked_skill,
@@ -318,7 +371,7 @@ def main() -> int:
                                          True, (90, 90, 90)), (296, 96))
                 screen.blit(small.render("DEBUG MODE on.",
                                          True, (90, 90, 90)), (296, 114))
-        else:
+        elif tab == 1:
             if flags["debug"]:
                 screen.blit(small.render("SKILL", True, (90, 90, 90)),
                             (24, 78))
@@ -330,15 +383,12 @@ def main() -> int:
                                          True, (90, 90, 90)), (24, 114))
                 screen.blit(small.render("menu picks it otherwise).",
                                          True, (90, 90, 90)), (24, 132))
-            screen.blit(small.render("VIDEO", True, (90, 90, 90)),
-                        (24, 228))
-            video_list.draw(screen, font, 24, 246, 200, sfocus == 1)
             screen.blit(small.render("FLAGS (enter toggles)", True,
                                      (90, 90, 90)), (296, 78))
             y0 = 96
             for slot, name in enumerate(FLAGS):
                 ry = y0 + slot * flag_list.row_h
-                picked = slot == flag_list.index and sfocus == 2
+                picked = slot == flag_list.index and sfocus == 1
                 color = ((255, 220, 120) if picked else (160, 160, 160))
                 if picked:
                     screen.fill((50, 30, 20),
@@ -350,6 +400,20 @@ def main() -> int:
                 screen.blit(img, (536 - 24 - img.get_width(), ry + 4))
             flag_list.rect = pygame.Rect(296, y0, 240,
                                          flag_list.row_h * len(FLAGS))
+        else:
+            # NOTE: VIDEO tab (render backend + conditional size row:
+            # resolution for OpenGL, window scale for software).
+            api = VIDEO_APIS[video_list.index]
+            screen.blit(small.render("RENDER API", True, (90, 90, 90)),
+                        (24, 78))
+            video_list.draw(screen, font, 24, 96, 200, vfocus == 0)
+            if api == "opengl":
+                label, size_list = "RESOLUTION (OPENGL)", res_list
+            else:
+                label, size_list = "WINDOW SCALE (SOFTWARE)", scale_list
+            screen.blit(small.render(label, True, (90, 90, 90)),
+                        (24, 168))
+            size_list.draw(screen, font, 24, 186, 200, vfocus == 1)
         for rect, label in ((launch_rect, "LAUNCH"), (quit_rect, "QUIT")):
             pygame.draw.rect(screen, (40, 90, 40) if label == "LAUNCH"
                              else (90, 40, 40), rect)
@@ -372,10 +436,10 @@ def main() -> int:
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
                     running = False
-                elif ev.key == pygame.K_TAB or (
-                        ev.key == pygame.K_1 or ev.key == pygame.K_2):
-                    tab = 1 - tab if ev.key == pygame.K_TAB else \
-                        (ev.key - pygame.K_1)
+                elif ev.key == pygame.K_TAB or ev.key in (
+                        pygame.K_1, pygame.K_2, pygame.K_3):
+                    tab = (tab + 1) % len(tabs) \
+                        if ev.key == pygame.K_TAB else (ev.key - pygame.K_1)
                 elif ev.key == pygame.K_l:
                     launch()
                 elif tab == 0:
@@ -392,11 +456,11 @@ def main() -> int:
                             focus = 1 - focus
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         launch()
-                else:
-                    order = (0, 1, 2) if flags["debug"] else (1, 2)
+                elif tab == 1:
+                    order = (0, 1) if flags["debug"] else (1,)
                     if sfocus not in order:
                         sfocus = order[0]  # NOTE: skill hides w/o debug
-                    focus_lists = (skill_list, video_list, flag_list)
+                    focus_lists = (skill_list, flag_list)
                     if ev.key == pygame.K_UP:
                         focus_lists[sfocus].move(-1)
                     elif ev.key == pygame.K_DOWN:
@@ -406,8 +470,22 @@ def main() -> int:
                         sfocus = order[(order.index(sfocus) + step)
                                        % len(order)]
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) \
-                            and sfocus == 2:
+                            and sfocus == 1:
                         toggle_flag()
+                else:
+                    # NOTE: VIDEO tab (backend + conditional size row).
+                    api = VIDEO_APIS[video_list.index]
+                    vis = [video_list] + (
+                        [res_list] if api == "opengl" else [scale_list])
+                    if vfocus >= len(vis):
+                        vfocus = 0
+                    if ev.key == pygame.K_UP:
+                        vis[vfocus].move(-1)
+                    elif ev.key == pygame.K_DOWN:
+                        vis[vfocus].move(1)
+                    elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                        step = 1 if ev.key == pygame.K_RIGHT else -1
+                        vfocus = (vfocus + step) % len(vis)
             elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 if launch_rect.collidepoint(ev.pos):
                     launch()
@@ -422,14 +500,19 @@ def main() -> int:
                         sync_wad()
                     elif flags["debug"] and map_list.click(ev.pos):
                         focus = 1
-                else:
+                elif tab == 1:
                     if flags["debug"] and skill_list.click(ev.pos):
                         sfocus = 0
-                    elif video_list.click(ev.pos):
-                        sfocus = 1
                     elif flag_list.click(ev.pos):
-                        sfocus = 2
+                        sfocus = 1
                         toggle_flag()
+                else:
+                    # NOTE: VIDEO tab clicks (size row follows backend).
+                    if video_list.click(ev.pos):
+                        vfocus = 0
+                    elif (res_list if VIDEO_APIS[video_list.index]
+                            == "opengl" else scale_list).click(ev.pos):
+                        vfocus = 1
     pygame.quit()
     return 0
 

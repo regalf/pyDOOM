@@ -74,3 +74,22 @@ def test_drop_existing_name_never_overwrites(tmp_path):
     picked, note = accept_wad_drop(str(other), str(tmp_path))
     assert picked == "extra.wad" and "already listed" in note
     assert (tmp_path / "extra.wad").read_bytes() == b"IWAD"
+
+
+def test_video_tab_rows_conditional():
+    from pyDOOM import video_tab_rows
+    assert video_tab_rows("opengl") == ("api", "resolution")
+    assert video_tab_rows("software") == ("api", "scale")
+    assert video_tab_rows("bogus") == ("api", "scale")
+
+
+def test_res_scale_label_mapping():
+    from pyDOOM import res_label_to_value, scale_label_to_value
+    assert res_label_to_value("960X600") == "960x600"
+    assert res_label_to_value("1920X1200") == "1920x1200"
+    assert res_label_to_value("bogus") is None
+    assert res_label_to_value("") is None
+    assert scale_label_to_value("100%") == 1
+    assert scale_label_to_value("300%") == 3
+    assert scale_label_to_value("500%") is None
+    assert scale_label_to_value("x") is None
