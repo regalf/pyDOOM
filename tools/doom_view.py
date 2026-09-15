@@ -160,6 +160,24 @@ def song_for_map(marker: str) -> str:
     return MAP_SONGS.get(marker.upper(), "D_E1M1")
 
 
+def step_ui_clock(acc: float, dt: float) -> tuple:
+    """UI-tic accumulator step (pure, unit tested).
+
+    Menu skull and intermission tally are 35Hz tickers (vanilla
+    M_Ticker/WI_Ticker rate): feeding them per display frame ran the
+    skull/tally ~8x fast at 240fps vs 30fps. Returns (new_acc, n):
+    fire n ticks this frame; identical wall-clock spans yield identical
+    tick counts whatever the frame subdivision.
+    """
+    acc += dt
+    n = 0
+    step = 1.0 / TICRATE
+    while acc >= step:
+        acc -= step
+        n += 1
+    return acc, n
+
+
 def video_geom(settings, want_gl: bool) -> tuple:
     """(w, h, flags, display) for the current video settings.
 
@@ -1204,6 +1222,7 @@ def main() -> int:
     pygame.event.set_grab(True)
 
     tic_acc = 0.0
+    ui_acc = 0.0  # NOTE: 35Hz menu/inter ticks (fps-independent, below)
     fps_ema = 60.0
     frames = 0
     running = True
@@ -1753,11 +1772,19 @@ def main() -> int:
         tic_acc += dt
         if gamestate != "level" or paused:
             tic_acc = 0  # NOTE: no catch-up burst when unpausing
-            if frames % 2 == 0:
+        if gamestate == "menu" or \
+                (gamestate == "inter" and inter is not None):
+            # NOTE: menu skull + inter tally tick on 35Hz UI tics, not
+            # display frames (frame-fed ticks ran them ~8x fast at
+            # 240fps vs 30fps).
+            ui_acc, n_ui = step_ui_clock(ui_acc, dt)
+            for _ in range(n_ui):
                 if gamestate == "menu":
-                    game_menu.tick()  # skull animates at ~half rate
+                    game_menu.tick()
                 elif gamestate == "inter" and inter is not None:
-                    inter.tick()  # tally count-up sweep
+                    inter.tick()
+        else:
+            ui_acc = 0.0  # NOTE: no stale burst on menu/inter entry
         while tic_acc >= 1.0 / TICRATE and not state["won"] \
                 and gamestate == "level" and not paused:
             tic_acc -= 1.0 / TICRATE
