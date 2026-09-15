@@ -53,7 +53,7 @@ def camera_frame(viewx: int, viewy: int, viewz: int, angle_bam: int,
     y_ndc the vanilla y mapping (square pixels: y-focal 160 at
     320x200, i.e. proj11 = w/h for any window of the same aspect).
     Camera looks along +dir with up +z, from the fine tables.
-    pitch (radians, +up) is freecam-only: vanilla has no vertical
+    pitch (radians, +up) is look-only: vanilla has no vertical
     look, the game always passes 0 (bit-identical matrix).
     """
     dx = tables.finecosine(angle_bam >> 19) / 65536.0
@@ -332,7 +332,7 @@ class FrameRenderer:
         (texture_id, tex_height) tuple or None; psprites a list of
         (tex_id, w, h, leftoff, topoff, bobx, boby) tuples in 320x200
         space. frame_no pins the fuzz shimmer counter (tests); None
-        advances it per frame. pitch (radians, +up) is freecam-only
+        advances it per frame. pitch (radians, +up) is look-only
         (vanilla/game never look vertically)."""
         from OpenGL import GL
         res = self._res

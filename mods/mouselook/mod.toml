@@ -1,0 +1,8 @@
+id = "mouselook"
+version = "0.1.0"
+api_version = 1
+description = "Look up/down with the mouse"
+depends = ["no_mouse_forward"]
+sim_affecting = false
+enabled_default = true
+backend = "opengl"

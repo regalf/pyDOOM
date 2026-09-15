@@ -155,6 +155,10 @@ class Automap:
 
         self.markpoints: list[tuple[int, int]] = [(-1, -1)] * AM_NUMMARKPOINTS
         self.markpointnum = 0
+        # NOTE: ext automap_draw marks (fixed world coords, refilled by
+        # the viewer every frame): drawn after player marks, crosshair
+        # color, on both the SW and GL paths via _draw_marks.
+        self.mod_marks: list[tuple[int, int]] = []
 
         # Player stand-in: fixed-point position + BAM angle.
         self.plr_x = 0
@@ -647,6 +651,20 @@ class Automap:
                 pygame.draw.rect(surface, rgb, (fx, fy, 5, 6), 1)
                 if self._segments is not None:
                     r, g, b = rgb
+                    self._segments.append((fx, fy, fx + 5, fy, r, g, b))
+                    self._segments.append((fx + 5, fy, fx + 5, fy + 6,
+                                           r, g, b))
+                    self._segments.append((fx + 5, fy + 6, fx, fy + 6,
+                                           r, g, b))
+                    self._segments.append((fx, fy + 6, fx, fy, r, g, b))
+        mrgb = self.palette[XHAIRCOLORS]
+        for mx, my in self.mod_marks:
+            fx = self._cxmtof(mx)
+            fy = self._cymtof(my)
+            if 0 <= fx < self.f_w - 5 and 0 <= fy < self.f_h - 6:
+                pygame.draw.rect(surface, mrgb, (fx, fy, 5, 6), 1)
+                if self._segments is not None:
+                    r, g, b = mrgb
                     self._segments.append((fx, fy, fx + 5, fy, r, g, b))
                     self._segments.append((fx + 5, fy, fx + 5, fy + 6,
                                            r, g, b))

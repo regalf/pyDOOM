@@ -296,6 +296,18 @@ def set_listener(x: int, y: int, angle_bam: int) -> None:
 
 def play(name: str, x: int | None = None,
          y: int | None = None, origin=None) -> bool:
+    # NOTE: ext sfx_play (replacements, hit-sounds, mutes): consume
+    # silences, renaming swaps the lump. UI ticks pass here too.
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            sev = _mgr.emit("sfx_play", name=name, x=x, y=y)
+            if sev.consumed:
+                return False
+            name = sev.name
+    except Exception:  # noqa: BLE001 - mods never break audio
+        pass
     return engine.play(name, x, y, origin)
 
 
@@ -349,6 +361,19 @@ def music_play(lump_name: str, trigger: str = "") -> bool:
     Every start lands in music_log (and stdout) so a glance proves
     which song the game picked and why.
     """
+    # NOTE: ext music_change (boss music, jukebox): consume keeps the
+    # current song, renaming swaps the lump.
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            mev = _mgr.emit("music_change", song=lump_name,
+                            trigger=trigger)
+            if mev.consumed:
+                return False
+            lump_name = mev.song
+    except Exception:  # noqa: BLE001 - mods never break audio
+        pass
     if _music_player is None or _music_wad is None:
         return False
     try:

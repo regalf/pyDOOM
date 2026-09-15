@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from pydoom.fixed import FRACUNIT
+from pydoom.palette import NUM_PALETTES
 from pydoom.ticcmd import Ticcmd
 
 # Ammo types (ammotype_t order).
@@ -112,7 +113,21 @@ class PlayerState:
 
 def palette_index(ps) -> int:
     """ST_doPaletteStuff: PLAYPAL slot (0 normal, 1-8 red, 9-12 gold,
-    13 radsuit) from the flash counters."""
+    13 radsuit) from the flash counters (ext palette_flash may remap)."""
+    base = _base_palette_index(ps)
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            pev = _mgr.emit("palette_flash", palette=base)
+            return max(0, min(NUM_PALETTES - 1, int(pev.palette)))
+    except Exception:  # noqa: BLE001 - mods never break video
+        pass
+    return base
+
+
+def _base_palette_index(ps) -> int:
+    """Vanilla slot math (kept separate for the ext wrapper above)."""
     cnt = ps.damagecount
     if ps.powers.get(PW_STRENGTH):
         # NOTE: berserk red slowly fades as strength counts up.

@@ -34,6 +34,7 @@ import pygame
 from pydoom import combat
 from pydoom import cheats
 from pydoom import demo
+from pydoom import ext
 from pydoom import flow
 from pydoom import interm
 from pydoom import menu
@@ -599,6 +600,7 @@ def main() -> int:
         menu.settings_save(menu.CONFIG_PATH, msettings)
         amap = None
         print(f"video: {message} ({WIN_W}x{WIN_H})")
+        modmgr.set_backend(win_backend)  # NOTE: re-gate backend mods
 
     def _gl_fallback_to_software(note: str) -> None:
         """After a dead GL rebuild: software window at SW geometry."""
@@ -614,6 +616,7 @@ def main() -> int:
             pass  # per-frame heal below retries the downgrade
         WIN_W, WIN_H = screen.get_width(), screen.get_height()
         gl_live = False
+        modmgr.set_backend(win_backend)  # NOTE: re-gate backend mods
         message = note
         message_tics = 3 * TICRATE
 
@@ -866,7 +869,7 @@ def main() -> int:
                 extra_light=flash_light(),
                 fullbright=bool(state["ps"].powers.get(PW_INFRARED)),
                 sprites=bbs, sky=sky, psprites=guns,
-                pal_index=pal_idx)
+                pal_index=pal_idx, pitch=cam_pitch)
             gl_frame.blit_world()
         gl_frame.present_overlay(fb, pal_idx)
         if gamestate == "finale":
@@ -874,6 +877,10 @@ def main() -> int:
         gl_draw_version()
 
     def load_map(marker: str, keep_ps=None, keep_hp: int | None = None):
+        if loaded_marker[0] is not None and loaded_marker[0] != marker:
+            # NOTE: ext map_unload (per-map mod state cleanup): every
+            # transition funnels through load_map, before the new setup.
+            modmgr.emit("map_unload", map=loaded_marker[0])
         game_map = Map.from_wad(wad, marker)
         # NOTE: g_game.c picks SKY1/2/3/4 per episode at P_SetupLevel.
         try:
@@ -938,8 +945,19 @@ def main() -> int:
                  "flash_until": 0, "atk_until": 0, "atk_span": 1,
                  "pending": [],  # NOTE: scheduled shots (weapon windup)
                  "bob": 0, "face": FaceState()}
+        # NOTE: ext map_load (all transitions funnel through load_map).
+        modmgr.emit("map_load", map=marker, skill=skill)
+        loaded_marker[0] = marker
         return game_map, cam, phys, player_mo, world, mobjs, ctx, state
 
+    # NOTE: ext manager before the first load_map (map_load hook fires
+    # inside it); menu attaches later for ExtApi.text, backend + refresh
+    # once win_backend exists below. No mods/ dir = empty manager, the
+    # game runs exactly as before.
+    modmgr = ext.ModManager(ext.default_mods_dir())
+    ext.set_current(modmgr)
+    modmgr.discover()
+    loaded_marker: list = [None]  # NOTE: ext map_unload tracks this
     # NOTE: G_InitNew sim part (M_ClearRandom + fast tables) runs on
     # fresh runs only: boot, menu new game, demo start. Transitions,
     # warps and snapshots keep the stream going, like vanilla.
@@ -962,6 +980,9 @@ def main() -> int:
         wad, msettings,
         menu.SKILLS.index(skill) if skill in menu.SKILLS else 2,
         _mission.episode_count(game_mission) - 1)
+    modmgr.menu = game_menu  # NOTE: ExtApi.text draws via the menu font
+    cam_pitch = 0.0  # NOTE: mouselook-only GL pitch (radians, +up)
+    ext_settings_last: dict | None = None  # NOTE: ext settings cache
     gamestate = "level"  # level|menu|wipe|title|inter|finale
     inter = None  # tally screen between maps (G_WorldDone lite)
     wipe_after = "level"  # melt landing state
@@ -1107,6 +1128,9 @@ def main() -> int:
         # NOTE: classic bottom strip (covers the gun base, like vanilla).
         draw_status_bar(renderer, fb, ps, player_mo.health,
                         state.get("facelump", "STFST00"))
+        # NOTE: ext statusbar (custom rows/overdraw): cosmetic, after the
+        # vanilla strip so mods draw on top of it, under HUD messages.
+        modmgr.emit("statusbar", fb=fb)
         # NOTE: HUD messages ride the red STCFN font flush top-left
         # (hu_stuff), above the readout block, like the original.
         if message is not None and msettings.messages:
@@ -1190,6 +1214,23 @@ def main() -> int:
         else:  # NOTE: vanilla melts into the loaded game
             begin_wipe(old, render_scene(), "level")
 
+    def refresh_ext_menu() -> None:
+        """Rebuild Options -> Extension rows from ModManager.status()."""
+        items = []
+        for mid, ver, state, reason in modmgr.status():
+            tag = "ON " if state == "on" else "OFF"
+            label = f"{mid} {ver} {tag}"
+            if reason:
+                label += f" {reason}"
+            items.append(menu.MenuItem(f"ext:{mid}", None, "action",
+                                       "", label=label))
+        if not items:
+            items.append(menu.MenuItem("ext:", None, "action",
+                                       "", label="(no mods found)"))
+        extdef = game_menu.menus["extensions"]
+        extdef.items = items
+        extdef.last_on = 0
+
     def apply_menu_event(mev):
         """Menu selections: quit, or a wiped fresh start on E1M1."""
         nonlocal gamestate, game_map, cam, phys, player_mo, world, \
@@ -1198,6 +1239,12 @@ def main() -> int:
             demo_play
         if mev == "close":
             gamestate = "level" if has_level else "title"
+        elif isinstance(mev, tuple) and mev[0] == "ext_open":
+            refresh_ext_menu()
+            game_menu.current = "extensions"
+        elif isinstance(mev, tuple) and mev[0] == "ext_toggle":
+            modmgr.toggle(mev[1])
+            refresh_ext_menu()
         elif isinstance(mev, tuple) and mev[0] == "video_changed":
             apply_video_settings()
         elif mev == "quit":
@@ -1274,6 +1321,9 @@ def main() -> int:
     # NOTE: which window type backs `screen` (software 2D blits onto a
     # GL window present black, so the loop self-heals that mismatch).
     win_backend = "opengl" if gl_live else "software"
+    # NOTE: ext backend gate lives here: mods requiring opengl/software
+    # resolve now (and again on every live backend switch below).
+    modmgr.set_backend(win_backend)
     win_heal_failed = False  # NOTE: stop retrying a dead downgrade
     if gl_live:
         refresh_gl_resources(game_map)  # NOTE: boot map loaded above
@@ -1319,6 +1369,9 @@ def main() -> int:
     demo_play = None  # DemoReader driving ticcmds (G_DoPlayDemo)
     if play_demo_path is not None and demo_header is not None:
         demo_play = demo.DemoReader(demo_blob)
+        # NOTE: ext demo_start (timedemo shares the playdemo arm).
+        modmgr.emit("demo_start",
+                    mode="timedemo" if timedemo else "playback")
     attract_idx = 0  # next IWAD demo (D_AdvanceDemo rotation DEMO1-3)
     attract_idle = 0.0  # title seconds before the demo loop kicks in
     attract_active = False  # a live demo started by the title loop
@@ -1338,6 +1391,8 @@ def main() -> int:
             respawn=int(respawn), fast=int(fast),
             nomonsters=int(nomonsters), consoleplayer=0,
             players=(1, 0, 0, 0)))
+        # NOTE: ext demo_start (stream guards/overlays): record branch.
+        modmgr.emit("demo_start", mode="record")
 
     def finish_demo_rec() -> None:
         """Append DEMOMARKER and flush the .lmp (G_CheckDemoStatus tail)."""
@@ -1348,6 +1403,8 @@ def main() -> int:
             print(f"demo: recorded {demo_rec.tics} tics"
                   f" -> {rec_demo_path}")
             demo_rec = None
+        # NOTE: ext demo_stop (record branch; None-safe when idle).
+        modmgr.emit("demo_stop", mode="record")
 
     def end_demo_playback(note: str) -> None:
         """Stream over (DEMOMARKER, finale): back to title like vanilla
@@ -1367,6 +1424,9 @@ def main() -> int:
         gamestate = "title"
         has_level = False
         audio.music_play(TITLE_SONG, "demo-title")
+        # NOTE: ext demo_stop (stream over, timedemo quits instead).
+        modmgr.emit("demo_stop",
+                    mode="timedemo" if timedemo else "playback")
 
     def stop_demo_playback() -> None:
         """Any key stops a running demo (vanilla demo loop exit)."""
@@ -1378,6 +1438,8 @@ def main() -> int:
         gamestate = "title"
         has_level = False
         audio.music_play(TITLE_SONG, "demo-stop")
+        # NOTE: ext demo_stop (any-key exit, attract included).
+        modmgr.emit("demo_stop", mode="playback")
 
     def start_attract_demo() -> bool:
         """D_AdvanceDemo: title timeout plays DEMO1/2/3 in rotation."""
@@ -1411,6 +1473,8 @@ def main() -> int:
                              "attract-demo")
             demo_play = demo.DemoReader(blob)
             attract_active = True
+            # NOTE: ext demo_start (title-loop attract branch).
+            modmgr.emit("demo_start", mode="attract")
             gamestate = "level"
             has_level = True
             print(f"demo: attract {name} ({header.marker(game_mission)})")
@@ -1498,6 +1562,9 @@ def main() -> int:
                 demo_frame = True
             else:
                 replaying = False
+        # NOTE: slider mapping shared by ticcmd and ext look mods (one
+        # formula, so the options slider drives both identically).
+        sens_rad_per_px = 0.0004 + msettings.mouse_sens * 0.0006
         for ev in pygame.event.get():
             if ev.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                 attract_idle = 0.0  # NOTE: activity resets the demo loop
@@ -1791,8 +1858,16 @@ def main() -> int:
                     # NOTE: motion accumulates; each tic quantizes its
                     # share to int16 angleturn (milestone A). Y is negated:
                     # pygame rel-y grows downward, vanilla mousey grows
-                    # forward (up), so push-away walks forward.
-                    tbuilder.add_mouse(ev.rel[0], -ev.rel[1])
+                    # forward (up), so push-away walks forward. Ext mods
+                    # may consume/scale axes first (no_mouse_forward eats
+                    # Y, mouselook reads it for vertical look).
+                    mev = modmgr.emit("mouse_motion", dx=ev.rel[0],
+                                      dy=-ev.rel[1], consume_x=False,
+                                      consume_y=False,
+                                      sens_rad_per_px=sens_rad_per_px)
+                    mx = 0 if mev.consume_x else mev.dx
+                    my = 0 if mev.consume_y else mev.dy
+                    tbuilder.add_mouse(mx, my)
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if gamestate == "level" and ev.button == 1:
                     state["firing"] = True
@@ -1822,11 +1897,16 @@ def main() -> int:
         # NOTE: slider rad/px into angleturn units/px (vanilla parity is
         # 8.0); the builder quantizes per tic, so demos store int16.
         tbuilder.mouse_units_per_px = (
-            (0.0004 + msettings.mouse_sens * 0.0006) * 65536.0
-            / (2 * math.pi))
+            sens_rad_per_px * 65536.0 / (2 * math.pi))
         audio.engine.master = msettings.sfx_vol / 15  # options slider
         audio.music_set_volume(msettings.mus_vol)  # change-detected
         audio.music_pump()  # one OPL chunk into the mixer, if ready
+        # NOTE: ext settings (volumes, sens): change-detected, so mods
+        # hear slider/menu/launcher edits without per-frame spam.
+        _snap = ext.settings_snapshot(msettings)
+        if _snap != ext_settings_last:
+            ext_settings_last = _snap
+            modmgr.emit("settings", **_snap)
         if gamestate == "inter" and inter is not None \
                 and inter.finished_tally():
             # NOTE: tally over: wipe into the carried next level.
@@ -1844,6 +1924,7 @@ def main() -> int:
             else:
                 begin_wipe(old, render_scene(), "level")
         tic_acc += dt
+        modmgr.demo_guard = demo_play is not None or bool(timedemo)
         if gamestate != "level" or paused:
             tic_acc = 0  # NOTE: no catch-up burst when unpausing
         if gamestate == "menu" or \
@@ -1862,6 +1943,7 @@ def main() -> int:
         while tic_acc >= 1.0 / TICRATE and not state["won"] \
                 and gamestate == "level" and not paused:
             tic_acc -= 1.0 / TICRATE
+            modmgr.emit("pre_tic", tic=state.get("tics", 0))
             index = phys.things  # NOTE: bound up front; the thinkers
             # loop below runs after the player block (vanilla order).
             if message_tics:
@@ -1917,6 +1999,22 @@ def main() -> int:
                     # NOTE: latched edge lands on this live packet
                     # (demo streams bypass the builder, untouched).
                     cmd.buttons |= ticcmd.BT_ATTACK
+                # NOTE: ext build_ticcmd (movement mods): live packets
+                # only (playback stays bit-exact); the filtered packet
+                # is what gets recorded, so demos/checksums cover it.
+                # Broken mod values never corrupt the packet.
+                tev = modmgr.emit("build_ticcmd",
+                                  forwardmove=cmd.forwardmove,
+                                  sidemove=cmd.sidemove,
+                                  angleturn=cmd.angleturn,
+                                  buttons=cmd.buttons)
+                try:
+                    cmd.forwardmove = int(tev.forwardmove)
+                    cmd.sidemove = int(tev.sidemove)
+                    cmd.angleturn = int(tev.angleturn)
+                    cmd.buttons = int(tev.buttons)
+                except (TypeError, ValueError):  # noqa: BLE001 - keep packet
+                    pass
                 if demo_rec is not None:
                     demo_rec.append(cmd)
             ps.cmd = cmd  # NOTE: friction reads the move axes (P_XYMovement)
@@ -2221,6 +2319,10 @@ def main() -> int:
                 cam.x = player_mo.x / 65536.0
                 cam.y = player_mo.y / 65536.0
                 world.teleport_angle = None
+            # NOTE: ext player_think (player timers/states): after the
+            # whole vanilla player block (move, use, fire, pickups),
+            # before mobjs think (P_RunThinkers order).
+            modmgr.emit("player_think", tic=state.get("tics", 0))
             # Think mobjs (P_RunThinkers on a live list: thinkers born
             # this tic think right away, like vanilla's head-to-tail
             # walk; removal holds the index so the next body slides in).
@@ -2249,6 +2351,10 @@ def main() -> int:
             if world.exit_kind:
                 cur = game_map.marker
                 nxt = flow.next_map(cur, world.exit_kind == "secret")
+                # NOTE: ext level_exit (progression mods, stats): notify
+                # only, the transition below already decided.
+                modmgr.emit("level_exit", exited=cur, entering=nxt,
+                            secret=world.exit_kind == "secret")
                 ps_exit, hp_exit = state["ps"], player_mo.health
                 if demo_play is not None:
                     # NOTE: desync-detector checkpoint (statdump-style).
@@ -2298,9 +2404,27 @@ def main() -> int:
                     floor = player_mo.z / 65536.0
                 target = floor + VIEWHEIGHT_ABOVE_FLOOR
                 cam.viewz += (target - cam.viewz) * 0.3
+            # NOTE: ext camera (mouselook) runs after every default height
+            # path, so handled=True wins over calc_height and the spring.
+            # R/C mirror here to avoid indexing replayed key states.
+            try:
+                _kup = bool(tkeys[pygame.K_r])
+                _kdn = bool(tkeys[pygame.K_c])
+            except Exception:  # noqa: BLE001 - demo key states vary
+                _kup, _kdn = False, False
+            cev = modmgr.emit("camera", viewz=cam.viewz, pitch=cam_pitch,
+                              keys_up=_kup, keys_down=_kdn, handled=False)
+            # NOTE: the death cam owns viewz while dead (PST_DEAD flow).
+            if cev.handled and \
+                    state["ps"].playerstate == p_user.PST_LIVE:
+                cam.viewz = float(cev.viewz)
+                cam_pitch = float(cev.pitch)
+            elif cam_pitch:
+                cam_pitch *= 0.8  # NOTE: ease back to 0 without mouselook
             # NOTE: leveltime closes the tic (vanilla P_Ticker): specials
             # think last, so doors/lights/crush see post-move bodies.
             state["tics"] = state.get("tics", 0) + 1
+            modmgr.emit("post_tic", tic=state["tics"])
             # Door thinkers, buttons, crush checks (blocker = player).
             # NOTE: vanilla P_ChangeSector sees every body overlapping
             # the moving sector, not just the center point: sample the
@@ -2329,6 +2453,10 @@ def main() -> int:
         use_gl = (gl_live and gl_frame is not None
                   and not (recording or replaying))
         if amap is not None:
+            # NOTE: ext automap_draw (custom markers): mods append (x, y)
+            # fixed world coords, drawn on both paths via _draw_marks.
+            amap.mod_marks = []
+            modmgr.emit("automap_draw", marks=amap.mod_marks, amap=amap)
             # NOTE: fullscreen automap (TAB): the game keeps running.
             amap.plr_x, amap.plr_y = player_mo.x, player_mo.y
             amap.plr_angle = cam.bam
@@ -2409,6 +2537,9 @@ def main() -> int:
                         f"w{frames:06d}-t{melt.total:03d}", stepped)
                 fb = stepped
         last_fb = fb.copy()
+        # NOTE: ext post_overlay (cosmetic HUD): after the last_fb copy so
+        # mod drawings never leak into wipes or snapshots.
+        modmgr.emit("post_overlay", fb=fb)
         if recording or replaying:
             demo_sum = (demo_sum + int(fb.sum())) % 1000000007
         if use_gl:
@@ -2436,6 +2567,7 @@ def main() -> int:
                         (hw, hh), hf, hd)
                     WIN_W, WIN_H = screen.get_width(), screen.get_height()
                     win_backend = "software"
+                    modmgr.set_backend(win_backend)  # NOTE: re-gate mods
                     amap = None
                     print(f"video: healed to software {WIN_W}x{WIN_H}")
                 except Exception as exc:  # noqa: BLE001 - stay black?

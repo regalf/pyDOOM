@@ -102,6 +102,20 @@ def damage_mobj(target, inflictor, source, damage: int, ctx=None) -> None:
         return
     if target.flags & _MF_SKULLFLY:
         target.momx = target.momy = target.momz = 0
+    # NOTE: ext damage (armor/difficulty mods): pre-armor amount; vanilla
+    # rules (baby skill, godmode, armor, thrust, pain) all run on the
+    # result after. Consume skips everything, not even pain or thrust.
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            dev = _mgr.emit("damage", target=target, inflictor=inflictor,
+                            source=source, amount=damage)
+            if dev.consumed:
+                return
+            damage = max(0, int(dev.amount))
+    except Exception:  # noqa: BLE001 - mods never break the sim
+        pass
     if getattr(target, "is_player", False) and ctx is not None \
             and getattr(ctx, "skill", "normal") == "baby":
         damage >>= 1  # NOTE: trainer mode halves what you take
@@ -175,6 +189,9 @@ def kill_mobj(source, target, ctx=None) -> None:
     if target.type != MT_INDEX["SKULL"]:
         target.flags &= ~MF_FLAGS["MF_NOGRAVITY"]
     target.flags |= _MF_CORPSE | _MF_DROPOFF
+    # NOTE: mid-victim height for ext drops (loot_bounce spawns the drop
+    # mid-air): captured before the corpse squish below quarters height.
+    fall_from = target.z + target.height // 2
     target.height >>= 2
     if target.is_player:
         target.flags &= ~_MF_SOLID  # player corpse is walkable
@@ -194,6 +211,7 @@ def kill_mobj(source, target, ctx=None) -> None:
                 MT_INDEX["SHOTGUY"]: MT_INDEX["SHOTGUN"],
                 MT_INDEX["WOLFSS"]: MT_INDEX["CLIP"],
                 MT_INDEX["CHAINGUY"]: MT_INDEX["CHAINGUN"]}
+        spawned = None
         if target.type in drop:
             from pydoom.mobjs import spawn_mobj
             phys = ctx.physics
@@ -201,6 +219,17 @@ def kill_mobj(source, target, ctx=None) -> None:
                             -1, drop[target.type])
             th.flags |= MF_FLAGS["MF_DROPPED"]
             ctx.mobjs.append(th)
+            spawned = th
+        # NOTE: ext on_kill (loot_bounce): the manager lives in the
+        # viewer; without one (pure combat tests) this is a silent no-op.
+        try:
+            from pydoom import ext as _ext
+            _mgr = _ext.current()
+            if _mgr is not None:
+                _mgr.emit("on_kill", target_type=target.type,
+                          drop=spawned, fall_from=fall_from)
+        except Exception:  # noqa: BLE001 - mods never break the sim
+            pass
 
 
 def spawn_missile(source, dest, mt: int, physics, index, mobjs) -> object:

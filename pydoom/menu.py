@@ -237,6 +237,9 @@ class MenuItem:
     patch: str | None = None
     kind: str = "action"  # action | slider | toggle | choice | gap
     shortcut: str = ""
+    # NOTE: ext rows (Options -> Extension) have no M_* patch: the viewer
+    # fills label at runtime ("id ver ON/OFF (reason)"), small font.
+    label: str | None = None
 
 
 @dataclass
@@ -281,8 +284,12 @@ def build_menus() -> dict:
             MenuItem("messages", "M_MESSG", "toggle", "m"),
             MenuItem("sens", "M_MSENS", "slider", "m"),
             MenuItem("video", None, "action", "v"),
+            MenuItem("extensions", None, "action", "x"),
             MenuItem("sound", "M_SVOL", shortcut="s"),
         ], 60, 37, "main", 0),
+        # NOTE: Options -> Extension (mod list, runtime-filled by the
+        # viewer from ModManager.status(); Enter toggles, Esc back).
+        "extensions": MenuDef("extensions", None, [], 24, 53, "options", 0),
         # NOTE: graphics settings (labels draw big like menu art, see
         # draw_text_big: no M_* patches exist for these rows). Backend
         # and sizes live in the launcher VIDEO tab (window recreation
@@ -587,6 +594,15 @@ class Menu:
         elif act == "video":
             self._video_snapshot = self._staged_video()
             self.current = "video"
+        elif act == "extensions":
+            # NOTE: items are rebuilt by the viewer (owns ModManager);
+            # it flips current itself after the rebuild.
+            return [("ext_open",)]
+        elif act.startswith("ext:"):
+            mid = act[4:]
+            if mid:
+                return [("ext_toggle", mid)]
+            return []
         elif act == "apply_video":
             self._video_snapshot = self._staged_video()
             return [("video_changed",)]
@@ -648,7 +664,11 @@ class Menu:
             if item.kind == "gap":
                 y += LINEHEIGHT
                 continue
-            if item.patch is not None:
+            if item.action.startswith("ext:") and item.label is not None:
+                # NOTE: ext rows are small text (id ver STATE + reason
+                # would overflow big glyphs); skull still marks selection.
+                self.draw_text(fb, item.label, mdef.x, y + 4)
+            elif item.patch is not None:
                 self._blit(item.patch, fb, mdef.x, y)
             elif item.kind == "choice":
                 # NOTE: menu-sized label plus the staged value small
