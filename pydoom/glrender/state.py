@@ -69,10 +69,44 @@ def _gl_version() -> str | None:
         return None
 
 
+def positioned_set_mode(size, flags: int, display: int,
+                        vsync: int = 0):
+    """set_mode with best-effort placement on screen display.
+
+    Wraps creation with SDL_VIDEO_WINDOW_POS aimed at the display
+    origin (X11/XWayland honor it; plain set_mode lets GNOME drop new
+    windows on the active screen instead). Wayland-native ignores
+    positioning entirely, but exclusive fullscreen still follows the
+    display index. Retries once without vsync, then propagates (the
+    caller owns the fallback chain). Previous hint restored after.
+    """
+    import pygame
+
+    from pydoom.menu import display_count, display_origins
+    disp = min(max(int(display), 0), display_count() - 1)
+    prev = None
+    if flags & (pygame.NOFRAME | pygame.FULLSCREEN):
+        origins = display_origins()
+        x, y = origins[min(disp, len(origins) - 1)]
+        prev = os.environ.get("SDL_VIDEO_WINDOW_POS")
+        os.environ["SDL_VIDEO_WINDOW_POS"] = f"{x},{y}"
+    try:
+        try:
+            return pygame.display.set_mode(size, flags, 0, disp,
+                                           vsync=int(vsync))
+        except Exception:
+            return pygame.display.set_mode(size, flags, 0, disp)
+    finally:
+        if prev is None:
+            os.environ.pop("SDL_VIDEO_WINDOW_POS", None)
+        else:
+            os.environ["SDL_VIDEO_WINDOW_POS"] = prev
+
+
 def try_init(width: int, height: int, want: str,
              frames_opt: int | None = None,
              timedemo: bool = False, flags: int = 0,
-             vsync: int = 0) -> tuple:
+             vsync: int = 0, display: int = 0) -> tuple:
     """Create the viewer window for the wanted backend.
 
     Returns (screen, gl_info, effective, reason): gl_info is the GL
@@ -81,7 +115,9 @@ def try_init(width: int, height: int, want: str,
     raises. pygame.init() must have run before this call. flags carries
     display-mode bits (FULLSCREEN/NOFRAME, OPENGL added internally for
     the GL path); vsync passes through to set_mode (real on GL,
-    best-effort elsewhere) with automatic retry at vsync=0.
+    best-effort elsewhere) with automatic retry at vsync=0; display is
+    the SDL display index so fullscreen lands on the chosen screen
+    instead of wherever the window manager likes.
     """
     import pygame
     sw_flags = flags & ~(pygame.OPENGL | pygame.DOUBLEBUF)
@@ -90,8 +126,8 @@ def try_init(width: int, height: int, want: str,
         # software must never import GL bindings (keeps headless runs
         # and the sim reference import-clean).
         try:
-            screen = pygame.display.set_mode((width, height),
-                                             sw_flags, vsync=vsync)
+            screen = positioned_set_mode((width, height), sw_flags,
+                                         display, vsync)
         except Exception:  # noqa: BLE001 - exotic flags fall back plain
             screen = pygame.display.set_mode((width, height))
         return screen, None, SOFTWARE, f"requested {want!r}"
@@ -99,18 +135,15 @@ def try_init(width: int, height: int, want: str,
                                     _have_gl())
     if effective == SOFTWARE:
         try:
-            screen = pygame.display.set_mode((width, height),
-                                             sw_flags, vsync=vsync)
+            screen = positioned_set_mode((width, height), sw_flags,
+                                         display, vsync)
         except Exception:  # noqa: BLE001 - exotic flags fall back plain
             screen = pygame.display.set_mode((width, height))
         return screen, None, SOFTWARE, reason
     gl_flags = flags | pygame.OPENGL | pygame.DOUBLEBUF
     try:
-        try:
-            screen = pygame.display.set_mode((width, height), gl_flags,
-                                             vsync=vsync)
-        except Exception:
-            screen = pygame.display.set_mode((width, height), gl_flags)
+        screen = positioned_set_mode((width, height), gl_flags,
+                                     display, vsync)
     except Exception as exc:  # noqa: BLE001 - any window failure falls back
         screen = pygame.display.set_mode((width, height))
         return screen, None, SOFTWARE, f"opengl window failed ({exc})"

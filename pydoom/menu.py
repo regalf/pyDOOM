@@ -78,6 +78,39 @@ def letterbox(dst_w: int, dst_h: int) -> tuple:
     return w, h, (dst_w - w) // 2, (dst_h - h) // 2
 
 
+def display_count() -> int:
+    """Detected screens, guarded (headless-safe 1; pygame-ce only)."""
+    try:
+        import pygame
+        sizes = pygame.display.get_desktop_sizes()
+        if sizes:
+            return max(1, len(sizes))
+    except Exception:  # noqa: BLE001 - dummy video/headless
+        pass
+    return 1
+
+
+def display_origins() -> list:
+    """Best-effort (x, y) origin per screen (pure layout guess).
+
+    pygame-ce exposes sizes but not bounds, so origins assume a
+    left-to-right strip (correct for the common layout; otherwise the
+    window still opens, possibly on the wrong screen — SDL ultimately
+    decides via the display index)."""
+    try:
+        import pygame
+        sizes = pygame.display.get_desktop_sizes()
+    except Exception:  # noqa: BLE001 - dummy video/headless
+        sizes = None
+    if not sizes:
+        return [(0, 0)]
+    out, x = [], 0
+    for w, _h in sizes:
+        out.append((x, 0))
+        x += int(w)
+    return out
+
+
 @dataclass
 class Settings:
     """Viewer-owned values the menu mutates (volumes, sens, messages)."""
@@ -104,6 +137,7 @@ class Settings:
     fps_limit: int = 60
     vsync: bool = False
     display_mode: str = "windowed"
+    display_index: int = 0  # NOTE: fullscreen/borderless target screen
     sw_scale: int = 3
     show_fps: bool = False
 
@@ -163,6 +197,8 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.sw_scale = val if val in SW_SCALES else 3
         elif key == "show_fps":
             settings.show_fps = bool(val)
+        elif key == "display_index":
+            settings.display_index = max(0, val)
 
 
 def settings_save(path: str, settings: Settings) -> None:
@@ -186,6 +222,7 @@ def settings_save(path: str, settings: Settings) -> None:
                     f"fps_limit {settings.fps_limit}\n"
                     f"vsync {int(settings.vsync)}\n"
                     f"display_mode {settings.display_mode}\n"
+                    f"display_index {settings.display_index}\n"
                     f"sw_scale {settings.sw_scale}\n"
                     f"show_fps {int(settings.show_fps)}\n")
     except OSError:
@@ -246,10 +283,11 @@ def build_menus() -> dict:
             MenuItem("video", None, "action", "v"),
             MenuItem("sound", "M_SVOL", shortcut="s"),
         ], 60, 37, "main", 0),
-        # NOTE: graphics settings (no M_* art exists for these rows:
-        # labels and values draw as STCFN text). "resolution" applies
-        # to OpenGL only, "scale" to software only; the rest applies
-        # to both. Every change applies live (video_changed event).
+        # NOTE: graphics settings (labels draw big like menu art, see
+        # draw_text_big: no M_* patches exist for these rows).
+        # "resolution" applies to OpenGL only, "scale" to software
+        # only; rows only stage values, APPLY recreates the window once
+        # (leaving via esc restores the staged snapshot).
         "video": MenuDef("video", None, [
             MenuItem("video_api", None, "choice", "a"),
             MenuItem("gl_resolution", None, "choice", "r"),
@@ -257,8 +295,10 @@ def build_menus() -> dict:
             MenuItem("fps_limit", None, "choice", "f"),
             MenuItem("vsync", None, "choice", "v"),
             MenuItem("display_mode", None, "choice", "d"),
+            MenuItem("display_index", None, "choice", "c"),
             MenuItem("show_fps", None, "choice", "p"),
-        ], 40, 37, "options", 0),
+            MenuItem("apply_video", None, "action", "y"),
+        ], 36, 21, "options", 0),
         "sound": MenuDef("sound", None, [
             MenuItem("sfx", "M_SFXVOL", "slider", "s"),
             MenuItem("mus", "M_MUSVOL", "slider", "m"),
@@ -291,6 +331,7 @@ class Menu:
         self.message_then = "back"  # or "readthis" (shareware episode)
         self.readpage = 0
         self.episode = 0
+        self._video_snapshot = None  # staged video values on menu entry
         self.skull_tic = 0
         self.which_skull = 0
         self._patches: dict = {}
@@ -334,6 +375,34 @@ class Menu:
                 continue
             self._blit(f"STCFN{ord(ch):03d}", fb, x, y)
             x += got[0].width
+        return x
+
+    def draw_text_big(self, fb, text: str, x: int, y: int) -> int:
+        """2x STCFN string: menu-sized rows where no M_* patch exists
+        (VIDEO row, video submenu labels). Glyphs top out at 8px, so
+        doubled rows are exactly LINEHEIGHT tall."""
+        for ch in text.upper():
+            if ch == " ":
+                x += 8
+                continue
+            got = self.glyph(ch)
+            if got is None:
+                continue
+            _patch, mat, msk = got
+            h, w = mat.shape
+            for sy in range(h):
+                row = msk[sy]
+                dy = y + sy * 2
+                if dy < 0 or dy + 1 >= 200:
+                    continue
+                for sx in range(w):
+                    if not row[sx]:
+                        continue
+                    dx = x + sx * 2
+                    if dx < 0 or dx + 1 >= 320:
+                        continue
+                    fb[dy:dy + 2, dx:dx + 2] = mat[sy, sx]
+            x += _patch.width * 2
         return x
 
     # -- per-tic --
@@ -442,6 +511,9 @@ class Menu:
             audio.play("swtchn")
             if mdef.prev is None:
                 return ["close"]
+            if self.current == "video":
+                # NOTE: leaving without APPLY restores staged values.
+                self._restore_video()
             self.current = mdef.prev
         elif len(k) == 1:
             for i, item in enumerate(mdef.items):
@@ -467,8 +539,8 @@ class Menu:
         if item.kind == "slider":
             self.slider_adjust(item.action, delta)
         elif item.kind == "choice":
-            if self.choice_adjust(item.action, delta):
-                return [("video_changed",)]
+            # NOTE: video rows only stage values (APPLY commits them).
+            self.choice_adjust(item.action, delta)
         return []
 
     def _activate(self, mdef) -> list:
@@ -515,10 +587,13 @@ class Menu:
         elif act == "sound":
             self.current = "sound"
         elif act == "video":
+            self._video_snapshot = self._staged_video()
             self.current = "video"
+        elif act == "apply_video":
+            self._video_snapshot = self._staged_video()
+            return [("video_changed",)]
         elif item.kind == "choice":
-            if self.choice_adjust(act, 1):
-                return [("video_changed",)]
+            self.choice_adjust(act, 1)
         return []
 
     def _ask(self, text: str, on_yes) -> None:
@@ -578,17 +653,22 @@ class Menu:
             if item.patch is not None:
                 self._blit(item.patch, fb, mdef.x, y)
             elif item.kind == "choice":
-                # NOTE: video rows have no M_* art: STCFN label plus
-                # the current value to its right.
-                self.draw_text(fb, self._choice_label(item.action),
-                               mdef.x, y)
+                # NOTE: menu-sized label plus the staged value small
+                # and right-aligned (a big value would overflow rows
+                # like RESOLUTION/FULLSCREEN).
+                self.draw_text_big(fb, self._choice_label(item.action),
+                                   mdef.x, y)
                 opts = self._choice_options(item.action)
                 if opts:
-                    self.draw_text(fb, opts[self._choice_index(
-                        item.action)], mdef.x + 140, y)
+                    val = opts[self._choice_index(item.action)]
+                    vw = sum(self._glyph_w(ch) for ch in val)
+                    self.draw_text(fb, val, 312 - vw, y + 4)
             elif item.patch is None:
-                # NOTE: text-only action rows (e.g. VIDEO in options).
-                self.draw_text(fb, item.action.upper(), mdef.x, y)
+                # NOTE: text-only action rows (VIDEO in options, APPLY
+                # in the video menu) draw menu-sized.
+                label = ("APPLY" if item.action == "apply_video"
+                         else item.action.upper())
+                self.draw_text_big(fb, label, mdef.x, y)
             if item.kind == "toggle" and item.action == "messages":
                 self._blit("M_MSGON" if self.settings.messages
                            else "M_MSGOFF", fb, mdef.x + 175, y)
@@ -628,7 +708,23 @@ class Menu:
             return
         audio.play("stnmov")
 
-    # -- video choice rows (Options -> Video, live-applied) --
+    # -- video choice rows (Options -> Video, staged till APPLY) --
+
+    _VIDEO_KEYS = ("video_api", "gl_resolution", "sw_scale",
+                   "fps_limit", "vsync", "display_mode",
+                   "display_index", "show_fps")
+
+    def _staged_video(self) -> dict:
+        """Snapshot the apply-relevant video settings (esc restores)."""
+        return {k: getattr(self.settings, k) for k in self._VIDEO_KEYS}
+
+    def _restore_video(self) -> None:
+        """Drop staged video changes (leaving the menu without APPLY)."""
+        if self._video_snapshot is None:
+            return
+        for k, v in self._video_snapshot.items():
+            setattr(self.settings, k, v)
+        self._video_snapshot = None
 
     def _choice_options(self, action: str) -> tuple:
         """Display strings cycled by a choice row (pure order)."""
@@ -645,6 +741,8 @@ class Menu:
             return ("OFF", "ON")
         if action == "display_mode":
             return tuple(v.upper() for v in DISPLAY_MODES)
+        if action == "display_index":
+            return tuple(str(i + 1) for i in range(display_count()))
         return ()
 
     def _choice_index(self, action: str) -> int:
@@ -665,16 +763,18 @@ class Menu:
             cur = "ON" if s.show_fps else "OFF"
         elif action == "display_mode":
             cur = s.display_mode.upper()
+        elif action == "display_index":
+            cur = str(min(s.display_index, display_count() - 1) + 1)
         else:
             return 0
         return opts.index(cur) if cur in opts else 0
 
-    def choice_adjust(self, action: str, delta: int) -> bool:
-        """Cycle a video choice (True: viewer must re-apply video)."""
+    def choice_adjust(self, action: str, delta: int) -> None:
+        """Cycle a staged video choice (APPLY commits; no event)."""
         from pydoom import audio
         opts = self._choice_options(action)
         if not opts:
-            return False
+            return
         nxt = opts[(self._choice_index(action) + delta) % len(opts)]
         s = self.settings
         if action == "video_api":
@@ -691,10 +791,11 @@ class Menu:
             s.show_fps = nxt == "ON"
         elif action == "display_mode":
             s.display_mode = nxt.lower()
+        elif action == "display_index":
+            s.display_index = int(nxt) - 1
         else:
-            return False
+            return
         audio.play("stnmov")
-        return True
 
     def _choice_label(self, action: str) -> str:
         return {"video_api": "VIDEO API",
@@ -703,6 +804,7 @@ class Menu:
                 "fps_limit": "FPS LIMIT",
                 "vsync": "VSYNC",
                 "display_mode": "DISPLAY",
+                "display_index": "SCREEN",
                 "show_fps": "SHOW FPS"}.get(action, action.upper())
 
     def _thermo(self, fb, x: int, y: int, val: int, top: int,

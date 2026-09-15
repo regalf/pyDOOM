@@ -1,6 +1,12 @@
 """Tests for video settings: pure helpers, cfg round-trip, menu choices."""
 
+import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import pygame
+from tools.doom_view import desktop_size_on, video_geom
 
 from pydoom import menu
 from pydoom.menu import (
@@ -10,6 +16,7 @@ from pydoom.menu import (
     SW_SCALES,
     Menu,
     Settings,
+    display_count,
     letterbox,
     parse_resolution,
     settings_load,
@@ -57,7 +64,8 @@ def test_letterbox_desktop_bars():
 
 def test_cfg_round_trip(tmp_path):
     s = Settings(gl_resolution="1280x800", fps_limit=144, vsync=True,
-                 display_mode="borderless", sw_scale=2, show_fps=True)
+                 display_mode="borderless", display_index=2, sw_scale=2,
+                 show_fps=True)
     path = str(tmp_path / "v.cfg")
     settings_save(path, s)
     back = Settings()
@@ -66,6 +74,7 @@ def test_cfg_round_trip(tmp_path):
     assert back.fps_limit == 144
     assert back.vsync is True
     assert back.display_mode in ("borderless", "windowed")
+    assert back.display_index == 2
     assert back.sw_scale == 2
     assert back.show_fps is True
 
@@ -76,6 +85,7 @@ def test_cfg_validation_never_crashes(tmp_path):
                     "fps_limit 1000\n"
                     "vsync 2\n"
                     "display_mode cinema\n"
+                    "display_index -5\n"
                     "sw_scale 9\n"
                     "show_fps maybe\n"
                     "video_api vulkan\n")
@@ -86,6 +96,7 @@ def test_cfg_validation_never_crashes(tmp_path):
     assert back.sw_scale == 3
     assert back.video_api == "software"
     assert back.display_mode == "windowed"
+    assert back.display_index == 0
 
 
 def test_display_modes_platform():
@@ -105,42 +116,118 @@ def _video_menu():
     return m
 
 
-def test_choice_cycle_emits_event_and_wraps():
+def test_choice_stages_without_event_and_wraps():
+    # NOTE: rows only stage values now; APPLY commits (video_changed).
     m = _video_menu()
-    assert m.key("right") == [("video_changed",)]
+    assert m.key("right") == []
     assert m.settings.video_api == "opengl"
-    assert m.key("right") == [("video_changed",)]
+    assert m.key("right") == []
     assert m.settings.video_api == "software"  # NOTE: wrapped
-    assert m.key("left") == [("video_changed",)]
+    assert m.key("left") == []
     assert m.settings.video_api == "opengl"
 
 
-def test_choice_enter_advances():
+def test_choice_enter_stages_without_event():
     m = _video_menu()
+    assert m.key("enter") == []
+    assert m.settings.video_api == "opengl"
+
+
+def test_apply_emits_event_and_esc_restores():
+    m = _video_menu()
+    assert m._video_snapshot is None
+    m.menus["options"].last_on = 3  # NOTE: enter via options snapshots
+    m.current = "options"
+    assert m.key("enter") == []
+    assert m.current == "video"
+    assert m._video_snapshot is not None
+    assert m.key("right") == []  # stage opengl
+    assert m.settings.video_api == "opengl"
+    assert m.key("esc") == []  # NOTE: leave without APPLY restores
+    assert m.current == "options"
+    assert m.settings.video_api == "software"
+    # NOTE: stage again, then APPLY commits and emits.
+    m.current = "video"
+    m._video_snapshot = m._staged_video()
+    m.key("right")
+    items = m.menus["video"].items
+    m.menus["video"].last_on = [it.action for it in items].index(
+        "apply_video")
     assert m.key("enter") == [("video_changed",)]
     assert m.settings.video_api == "opengl"
 
 
-def test_all_choice_rows_cycle():
+def test_all_choice_rows_stage():
     m = _video_menu()
     items = m.menus["video"].items
     for i, item in enumerate(items):
+        if item.kind != "choice":
+            continue
         m.menus["video"].last_on = i
+        opts = m._choice_options(item.action)
         before = (m.settings.video_api, m.settings.gl_resolution,
                   m.settings.sw_scale, m.settings.fps_limit,
                   m.settings.vsync, m.settings.display_mode,
-                  m.settings.show_fps)
-        assert m.key("right") == [("video_changed",)], item.action
+                  m.settings.display_index, m.settings.show_fps)
+        assert m.key("right") == [], item.action
         after = (m.settings.video_api, m.settings.gl_resolution,
                  m.settings.sw_scale, m.settings.fps_limit,
                  m.settings.vsync, m.settings.display_mode,
-                 m.settings.show_fps)
-        assert before != after, item.action
+                 m.settings.display_index, m.settings.show_fps)
+        if len(opts) > 1:
+            assert before != after, item.action
+        else:  # NOTE: single-screen headless: SCREEN wraps to itself
+            assert before == after, item.action
     s = m.settings
     assert s.gl_resolution in [r.lower() for r in GL_RESOLUTIONS]
     assert s.fps_limit in FPS_LIMITS
     assert s.sw_scale in SW_SCALES
     assert s.display_mode in DISPLAY_MODES
+    assert 0 <= s.display_index < display_count()
+
+
+def test_screen_row_options_match_desktops():
+    m = _video_menu()
+    opts = m._choice_options("display_index")
+    assert opts == tuple(str(i + 1)
+                         for i in range(display_count()))
+    assert len(opts) >= 1
+
+
+def test_video_geom_software_scale():
+    s = Settings(display_mode="windowed", sw_scale=1)
+    assert video_geom(s, False) == (320, 200, 0, 0)
+    s = Settings(display_mode="windowed", sw_scale=3)
+    assert video_geom(s, False) == (960, 600, 0, 0)
+
+
+def test_video_geom_gl_resolution():
+    s = Settings(display_mode="windowed", gl_resolution="1280x800")
+    assert video_geom(s, True) == (1280, 800, 0, 0)
+    s = Settings(display_mode="windowed", gl_resolution="bogus")
+    assert video_geom(s, True) == (960, 600, 0, 0)
+
+
+def test_video_geom_display_index_clamped_headless():
+    # NOTE: headless count is 1, so any index lands on screen 0.
+    s = Settings(display_mode="windowed", display_index=99)
+    assert video_geom(s, False)[3] == 0
+
+
+def test_video_geom_borderless_uses_desktop():
+    s = Settings(display_mode="borderless", display_index=0)
+    w, h, flags, disp = video_geom(s, False)
+    dw, dh = desktop_size_on(0)
+    assert (w, h, flags, disp) == (dw, dh, pygame.NOFRAME, 0)
+
+
+def test_video_geom_fullscreen_linux_is_windowed():
+    # NOTE: exclusive fullscreen is Windows-only; elsewhere the
+    # geometry stays a plain window even if forced in.
+    if sys.platform == "win32":
+        return
+    s = Settings(display_mode="fullscreen", gl_resolution="960x600")
+    assert video_geom(s, True) == (960, 600, 0, 0)
 
 
 def test_options_has_video_row():

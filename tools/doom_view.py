@@ -160,25 +160,21 @@ def song_for_map(marker: str) -> str:
     return MAP_SONGS.get(marker.upper(), "D_E1M1")
 
 
-def desktop_size() -> tuple:
-    """Primary desktop size, guarded (headless-safe 960x600 fallback)."""
-    try:
-        sizes = pygame.display.get_desktop_sizes()
-        if sizes:
-            return int(sizes[0][0]), int(sizes[0][1])
-    except Exception:  # noqa: BLE001 - dummy video has no desktop
-        pass
-    return 960, 600
-
-
 def video_geom(settings, want_gl: bool) -> tuple:
-    """(w, h, flags) for the current video settings (touches nothing).
+    """(w, h, flags, display) for the current video settings.
 
-    GL renders natively at the chosen resolution; software renders
+    Touches nothing (pure apart from guarded desktop queries). GL
+    renders natively at the chosen resolution; software renders
     320x200 and only scales the window. Fullscreen-exclusive exists on
     Windows only (callers on other platforms never offer it, and cfg
-    validation already maps strays away); borderless fills the desktop
-    on every platform."""
+    validation already maps strays away); borderless fills the chosen
+    screen on every platform. display is the SDL display index: it is
+    what keeps fullscreen/borderless off the wrong monitor (plain
+    set_mode lets GNOME put the window wherever it likes).
+    """
+    from pydoom.menu import display_count
+    screens = max(1, display_count())
+    idx = min(max(int(settings.display_index), 0), screens - 1)
     if want_gl:
         parsed = menu.parse_resolution(settings.gl_resolution)
         w, h = parsed if parsed is not None else (960, 600)
@@ -186,11 +182,23 @@ def video_geom(settings, want_gl: bool) -> tuple:
         w, h = menu.sw_window_size(settings.sw_scale)
     mode = settings.display_mode
     if mode == "fullscreen" and sys.platform == "win32":
-        return w, h, pygame.FULLSCREEN
+        return w, h, pygame.FULLSCREEN, idx
     if mode == "borderless":
-        dw, dh = desktop_size()
-        return dw, dh, pygame.NOFRAME
-    return w, h, 0
+        dw, dh = desktop_size_on(idx)
+        return dw, dh, pygame.NOFRAME, idx
+    return w, h, 0, idx
+
+
+def desktop_size_on(idx: int) -> tuple:
+    """Desktop size of screen idx, guarded (headless-safe fallback)."""
+    try:
+        sizes = pygame.display.get_desktop_sizes()
+        if sizes:
+            w, h = sizes[min(max(idx, 0), len(sizes) - 1)]
+            return int(w), int(h)
+    except Exception:  # noqa: BLE001 - dummy video has no desktop
+        pass
+    return 960, 600
 
 
 def set_noclip(on: bool, player_mo, cam, phys) -> None:
@@ -371,7 +379,10 @@ def main() -> int:
             gl_frame = None
         gl_text_cache.clear()  # NOTE: ids died with the old frame
         if gl_res is not None:
-            gl_res.delete()
+            try:
+                gl_res.delete()
+            except Exception:  # noqa: BLE001 - dead context teardown
+                pass
             gl_res = None
         gl_feed = None
         gl_dyn = None
@@ -452,36 +463,30 @@ def main() -> int:
         """
         global WIN_W, WIN_H
         nonlocal screen, gl_live, gl_info, amap, message, message_tics
+        nonlocal win_backend
+        from pydoom.glrender import state as _glstate
         want_gl = msettings.video_api == "opengl"
-        w, h, flags = video_geom(msettings, want_gl)
+        w, h, flags, disp = video_geom(msettings, want_gl)
         vsync = int(bool(msettings.vsync))
         new_screen = None
         new_gl_info = None
         if want_gl:
             try:
-                new_screen = pygame.display.set_mode(
+                new_screen = _glstate.positioned_set_mode(
                     (w, h), flags | pygame.OPENGL | pygame.DOUBLEBUF,
-                    vsync=vsync)
-            except Exception:  # noqa: BLE001 - retry without vsync
-                try:
-                    new_screen = pygame.display.set_mode(
-                        (w, h), flags | pygame.OPENGL | pygame.DOUBLEBUF)
-                except Exception:  # noqa: BLE001 - GL unavailable
-                    new_screen = None
+                    disp, vsync)
+            except Exception:  # noqa: BLE001 - GL unavailable
+                new_screen = None
             if new_screen is not None:
-                from pydoom.glrender import state as _glstate
                 new_gl_info = _glstate._gl_version()
                 if new_gl_info is None:
                     new_screen = None
         if new_screen is None and not want_gl:
             try:
-                new_screen = pygame.display.set_mode((w, h), flags,
-                                                     vsync=vsync)
-            except Exception:  # noqa: BLE001 - retry plain
-                try:
-                    new_screen = pygame.display.set_mode((w, h), flags)
-                except Exception:  # noqa: BLE001 - keep old window
-                    new_screen = None
+                new_screen = _glstate.positioned_set_mode(
+                    (w, h), flags, disp, vsync)
+            except Exception:  # noqa: BLE001 - keep old window
+                new_screen = None
         if new_screen is None:
             if want_gl:
                 # NOTE: GL switch failed: stay on the old window in
@@ -505,19 +510,22 @@ def main() -> int:
         if want_gl and new_gl_info is not None:
             gl_live = True
             gl_info = new_gl_info
+            win_backend = "opengl"
         else:
             gl_live = False
+            win_backend = "software"
         # NOTE: teardown always, rebuild iff gl_live (refresh covers
         # both; a dead GL context makes the old ids invalid anyway).
         refresh_gl_resources(game_map)
         if want_gl and gl_frame is None:
             # NOTE: GPU rebuild failed after a live context: fall back
             # to a software window at the software geometry.
-            w2, h2, f2 = video_geom(msettings, False)
+            w2, h2, f2, d2 = video_geom(msettings, False)
             try:
-                screen = pygame.display.set_mode((w2, h2), f2)
-            except Exception:  # noqa: BLE001 - keep the GL window
-                pass
+                screen = _glstate.positioned_set_mode((w2, h2), f2, d2)
+                win_backend = "software"
+            except Exception:  # noqa: BLE001 - GL window kept; the
+                pass  # per-frame heal below retries the downgrade
             WIN_W, WIN_H = screen.get_width(), screen.get_height()
             gl_live = False
             msettings.video_api = "software"
@@ -529,6 +537,7 @@ def main() -> int:
             else:
                 summary = (f"SOFTWARE {msettings.sw_scale * 100}%")
             summary += (f" {msettings.display_mode.upper()}"
+                        f" SCR{disp + 1}"
                         f" {msettings.fps_limit or 'UNLIMITED'}FPS"
                         f" VSYNC {'ON' if msettings.vsync else 'OFF'}")
             message = summary
@@ -1145,16 +1154,21 @@ def main() -> int:
     # geometry comes from the video settings (resolution for GL, scale
     # for software, display mode for both).
     from pydoom.glrender import state as glstate
-    WIN_W, WIN_H, _win_flags = video_geom(
+    WIN_W, WIN_H, _win_flags, _win_disp = video_geom(
         msettings, want_api == "opengl")
     screen, gl_info, video_api, video_why = glstate.try_init(
         WIN_W, WIN_H, want_api, frames_opt, timedemo,
-        flags=_win_flags, vsync=int(bool(msettings.vsync)))
+        flags=_win_flags, vsync=int(bool(msettings.vsync)),
+        display=_win_disp)
     WIN_W, WIN_H = screen.get_width(), screen.get_height()
     print(f"video: {video_api} {WIN_W}x{WIN_H} ({video_why})"
           f" fps={msettings.fps_limit or 'unlimited'}"
           f" vsync={int(bool(msettings.vsync))}")
     gl_live = video_api == "opengl" and gl_info is not None
+    # NOTE: which window type backs `screen` (software 2D blits onto a
+    # GL window present black, so the loop self-heals that mismatch).
+    win_backend = "opengl" if gl_live else "software"
+    win_heal_failed = False  # NOTE: stop retrying a dead downgrade
     if gl_live:
         refresh_gl_resources(game_map)  # NOTE: boot map loaded above
     pygame.display.set_caption(f"pydoom - {game_map.marker}")
@@ -2285,6 +2299,24 @@ def main() -> int:
                 print(f"gl present: {exc} (software fallback)")
                 use_gl = False
         if not use_gl:
+            # NOTE: a GL-backed window can never show software blits
+            # (black forever): if the GL renderer is structurally gone
+            # (not a one-frame present failure), downgrade the window
+            # once instead of presenting black.
+            if gl_frame is None and win_backend == "opengl" \
+                    and not win_heal_failed:
+                try:
+                    from pydoom.glrender import state as _heal_state
+                    hw, hh, hf, hd = video_geom(msettings, False)
+                    screen = _heal_state.positioned_set_mode(
+                        (hw, hh), hf, hd)
+                    WIN_W, WIN_H = screen.get_width(), screen.get_height()
+                    win_backend = "software"
+                    amap = None
+                    print(f"video: healed to software {WIN_W}x{WIN_H}")
+                except Exception as exc:  # noqa: BLE001 - stay black?
+                    print(f"video: heal failed ({exc})")
+                    win_heal_failed = True
             frame = pygame.image.frombuffer(
                 palette_luts[palette_index(state["ps"])][fb].tobytes(),
                 (SCREENWIDTH, SCREENHEIGHT), "RGB"
