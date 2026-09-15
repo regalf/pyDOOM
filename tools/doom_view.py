@@ -2393,6 +2393,15 @@ def main() -> int:
                     print(f"melt: landed after={wipe_after} "
                           f"frame={frames}")
                 gamestate = wipe_after
+                # NOTE: the landing frame must show the destination
+                # screen, not the stale render_scene fb (in GL mode that
+                # fb carries the status bar, which flashed one frame
+                # over intermission/finale screens).
+                if wipe_after == "inter" and inter is not None:
+                    fb = np.zeros((200, 320), dtype=np.uint8)
+                    inter.draw(fb, game_menu)
+                elif wipe_after == "finale":
+                    fb = np.zeros((200, 320), dtype=np.uint8)
             else:
                 if debug and melt.total // 10 != wipe_dbg_mark:
                     wipe_dbg_mark = melt.total // 10
