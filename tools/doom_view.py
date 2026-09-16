@@ -296,6 +296,9 @@ def main() -> int:
     respawn = False  # --respawn: monsters return (any skill, like vanilla)
     kinematic = False  # --kinematic: legacy camera mover (milestone B)
     video_cli = None  # --video-api=software|opengl (overrides pydoom.cfg)
+    no_mods = False  # --no-mods: master mod-loader switch (launcher)
+    mods_on: list = []  # --mod-on=ID repeatable (launcher overrides)
+    mods_off: list = []  # --mod-off=ID repeatable (launcher overrides)
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
@@ -332,6 +335,12 @@ def main() -> int:
             nomonsters = True  # NOTE: vanilla -nomonsters spawn filter
         elif a.startswith("--video-api="):
             video_cli = a.split("=", 1)[1].lower()
+        elif a == "--no-mods":
+            no_mods = True  # NOTE: mod loader master off (launcher)
+        elif a.startswith("--mod-on="):
+            mods_on.append(a.split("=", 1)[1])
+        elif a.startswith("--mod-off="):
+            mods_off.append(a.split("=", 1)[1])
     audio.verbose = debug  # NOTE: terminal chatter needs --debug
     oplmusic.verbose = debug
     map_name = args[0].upper() if len(args) > 0 else "E1M1"
@@ -956,7 +965,11 @@ def main() -> int:
     # game runs exactly as before.
     modmgr = ext.ModManager(ext.default_mods_dir())
     ext.set_current(modmgr)
-    modmgr.discover()
+    if not no_mods:
+        modmgr.discover()
+        # NOTE: launcher/CLI per-mod picks (off wins on conflict); the
+        # backend re-gate below refreshes onto the final states.
+        modmgr.apply_overrides(set(mods_on), set(mods_off))
     modmgr.palette = palette_lut  # NOTE: ext api.image converts UI art here
     loaded_marker: list = [None]  # NOTE: ext map_unload tracks this
     # NOTE: G_InitNew sim part (M_ClearRandom + fast tables) runs on
@@ -982,6 +995,8 @@ def main() -> int:
         menu.SKILLS.index(skill) if skill in menu.SKILLS else 2,
         _mission.episode_count(game_mission) - 1)
     modmgr.menu = game_menu  # NOTE: ExtApi.text draws via the menu font
+    if no_mods:
+        menu.remove_extensions_entry(game_menu.menus)
     cam_pitch = 0.0  # NOTE: mouselook-only GL pitch (radians, +up)
     ext_settings_last: dict | None = None  # NOTE: ext settings cache
     ext_gamestate_last: str | None = None  # NOTE: ext gamestate cache
@@ -1220,10 +1235,7 @@ def main() -> int:
         """Rebuild Options -> Extension rows from ModManager.status()."""
         items = []
         for mid, ver, state, reason in modmgr.status():
-            tag = "ON " if state == "on" else "OFF"
-            label = f"{mid} {ver} {tag}"
-            if reason:
-                label += f" {reason}"
+            label = ext.row_label(mid, ver, state, reason)
             items.append(menu.MenuItem(f"ext:{mid}", None, "action",
                                        "", label=label))
         if not items:

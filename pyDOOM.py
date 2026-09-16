@@ -98,7 +98,10 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       respawn: bool = False, nomonsters: bool = False,
                       kinematic: bool = False,
                       extra_hud: bool = False,
-                      video_api: str = "software") -> list:
+                      video_api: str = "software",
+                      mods_enabled: bool = True,
+                      mods_on: tuple = (),
+                      mods_off: tuple = ()) -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -125,6 +128,13 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         # NOTE: milestone H: software stays the default, so only the
         # non-default backend rides argv (keeps old argv byte-stable).
         args.append("--video-api=opengl")
+    if not mods_enabled:
+        args.append("--no-mods")
+    else:
+        # NOTE: per-mod deviations only (manifest defaults need no argv,
+        # keeps old argv byte-stable with no mods installed).
+        args += [f"--mod-on={mid}" for mid in mods_on]
+        args += [f"--mod-off={mid}" for mid in mods_off]
     return args
 
 
@@ -138,6 +148,40 @@ def video_tab_rows(video_api: str) -> tuple:
     if video_api == "opengl":
         return ("api", "resolution")
     return ("api", "scale")
+
+
+def mod_tab_rows(status, mods_enabled: bool = True) -> tuple:
+    """(ids, labels) for the launcher MODS list (pure, unit tested).
+
+    Row 0 (id None) is the master loader switch; the rest mirror the
+    in-game Extension menu via ext.row_label. status is
+    ModManager.status().
+    """
+    from pydoom.ext import row_label
+    ids = [None]
+    labels = [f"MOD LOADER: {'ON' if mods_enabled else 'OFF'}"]
+    for mid, ver, state, reason in status:
+        ids.append(mid)
+        labels.append(row_label(mid, ver, state, reason))
+    if len(ids) == 1:
+        ids.append("")
+        labels.append("(no mods found)")
+    return ids, labels
+
+
+def mod_overrides(states) -> tuple:
+    """Per-mod deviations from manifest defaults (pure, unit tested).
+
+    states: iterable of (mid, user_on, enabled_default). Returns
+    (on_ids, off_ids) sets for cfg/argv; mods at default stay out.
+    """
+    on, off = set(), set()
+    for mid, user_on, default in states:
+        if user_on and not default:
+            on.add(mid)
+        elif not user_on and default:
+            off.add(mid)
+    return on, off
 
 
 def res_label_to_value(label: str) -> str | None:
@@ -222,6 +266,14 @@ def main() -> int:
                              settings_save)
     cfg = Settings()
     settings_load(os.path.join(ROOT, CONFIG_PATH), cfg)
+    from pydoom import ext
+    modmgr = ext.ModManager(ext.default_mods_dir())
+    modmgr.discover()
+    mods_enabled = cfg.mods_enabled
+    # NOTE: cfg per-mod picks (launcher owns persistence; the in-game
+    # menu only flips the live session). Backend resolves on the MODS
+    # tab against the VIDEO pick, and at boot in the viewer.
+    modmgr.apply_overrides(set(cfg.mods_on), set(cfg.mods_off))
     wads = find_wads()
     if not wads:
         print("pyDOOM: no .WAD next to pyDOOM.py (want DOOM1.WAD)")
@@ -239,7 +291,7 @@ def main() -> int:
     big = pygame.font.SysFont("monospace", 26, bold=True)
     small = pygame.font.SysFont("monospace", 14)
 
-    tabs = ("PLAY", "SETTINGS", "VIDEO")
+    tabs = ("PLAY", "SETTINGS", "VIDEO", "MODS")
     tab = 0
     wad_list = PickList(wads, visible=6)
     if wad in wads:
@@ -264,6 +316,7 @@ def main() -> int:
     scale_list.index = scale_labels.index(f"{cfg.sw_scale * 100}%") \
         if f"{cfg.sw_scale * 100}%" in scale_labels else 2
     flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=7)
+    mod_list = PickList([], visible=8)  # NOTE: MODS rows rebuilt per draw
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
     sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
     vfocus = 0  # NOTE: 0 api, 1 size on the VIDEO tab
@@ -316,12 +369,18 @@ def main() -> int:
             picked_scale = scale_label_to_value(scale_list.selected())
             if picked_scale is not None:
                 cfg.sw_scale = picked_scale
+        dev_on, dev_off = mod_overrides(
+            (mid, rec.user_on, rec.meta.get("enabled_default", True))
+            for mid, rec in modmgr.records.items())
+        cfg.mods_enabled = mods_enabled
+        cfg.mods_on, cfg.mods_off = set(dev_on), set(dev_off)
         settings_save(os.path.join(ROOT, CONFIG_PATH), cfg)
         args = build_viewer_args(
             wad, start_map, picked_skill,
             flags["debug"], flags["fast"], flags["respawn"],
             flags["nomonsters"], flags["kinematic"],
-            flags["extra_hud"], VIDEO_APIS[video_list.index])
+            flags["extra_hud"], VIDEO_APIS[video_list.index],
+            mods_enabled, sorted(dev_on), sorted(dev_off))
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.
@@ -339,6 +398,18 @@ def main() -> int:
     def toggle_flag() -> None:
         name = FLAGS[flag_list.index]
         flags[name] = not flags[name]
+
+    def toggle_mod() -> None:
+        """MODS tab flip: row 0 is the master switch, the rest are mods
+        (refused ones stay refused: toggle() only flips user_on)."""
+        nonlocal mods_enabled
+        ids, _labels = mod_tab_rows(modmgr.status(), mods_enabled)
+        if mod_list.index >= len(ids):
+            return
+        if mod_list.index == 0:
+            mods_enabled = not mods_enabled
+        elif ids[mod_list.index]:
+            modmgr.toggle(ids[mod_list.index])
 
     running = True
     while running:
@@ -400,7 +471,7 @@ def main() -> int:
                 screen.blit(img, (536 - 24 - img.get_width(), ry + 4))
             flag_list.rect = pygame.Rect(296, y0, 240,
                                          flag_list.row_h * len(FLAGS))
-        else:
+        elif tab == 2:
             # NOTE: VIDEO tab (render backend + conditional size row:
             # resolution for OpenGL, window scale for software).
             api = VIDEO_APIS[video_list.index]
@@ -414,6 +485,31 @@ def main() -> int:
             screen.blit(small.render(label, True, (90, 90, 90)),
                         (24, 168))
             size_list.draw(screen, font, 24, 186, 200, vfocus == 1)
+        else:
+            # NOTE: MODS tab (loader switch + per-mod rows, same labels
+            # as the in-game Extension menu; backend warnings resolve
+            # against the VIDEO tab pick).
+            want_be = VIDEO_APIS[video_list.index]
+            if modmgr.backend != want_be:
+                modmgr.set_backend(want_be)
+            _ids, mod_labels = mod_tab_rows(modmgr.status(),
+                                            mods_enabled)
+            mod_list.items = mod_labels
+            if mod_list.index >= len(mod_labels):
+                mod_list.index = max(len(mod_labels) - 1, 0)
+            screen.blit(small.render("MODS (enter toggles)", True,
+                                     (90, 90, 90)), (24, 78))
+            mod_list.draw(screen, font, 24, 96, 512, True)
+            foot = (mod_list.rect.bottom + 6
+                    if mod_list.rect is not None else 300)
+            if not mods_enabled:
+                screen.blit(small.render(
+                    "(loader off: the game starts without mods)",
+                    True, (150, 150, 150)), (24, foot))
+                foot += 18
+            screen.blit(small.render(
+                "refused mods (NEEDS/BAD) stay off until fixed",
+                True, (90, 90, 90)), (24, foot))
         for rect, label in ((launch_rect, "LAUNCH"), (quit_rect, "QUIT")):
             pygame.draw.rect(screen, (40, 90, 40) if label == "LAUNCH"
                              else (90, 40, 40), rect)
@@ -437,7 +533,7 @@ def main() -> int:
                 if ev.key == pygame.K_ESCAPE:
                     running = False
                 elif ev.key == pygame.K_TAB or ev.key in (
-                        pygame.K_1, pygame.K_2, pygame.K_3):
+                        pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
                     tab = (tab + 1) % len(tabs) \
                         if ev.key == pygame.K_TAB else (ev.key - pygame.K_1)
                 elif ev.key == pygame.K_l:
@@ -472,7 +568,7 @@ def main() -> int:
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) \
                             and sfocus == 1:
                         toggle_flag()
-                else:
+                elif tab == 2:
                     # NOTE: VIDEO tab (backend + conditional size row).
                     api = VIDEO_APIS[video_list.index]
                     vis = [video_list] + (
@@ -486,6 +582,14 @@ def main() -> int:
                     elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
                         step = 1 if ev.key == pygame.K_RIGHT else -1
                         vfocus = (vfocus + step) % len(vis)
+                else:
+                    # NOTE: MODS tab (master switch + mod rows).
+                    if ev.key == pygame.K_UP:
+                        mod_list.move(-1)
+                    elif ev.key == pygame.K_DOWN:
+                        mod_list.move(1)
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        toggle_mod()
             elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 if launch_rect.collidepoint(ev.pos):
                     launch()
@@ -506,13 +610,17 @@ def main() -> int:
                     elif flag_list.click(ev.pos):
                         sfocus = 1
                         toggle_flag()
-                else:
+                elif tab == 2:
                     # NOTE: VIDEO tab clicks (size row follows backend).
                     if video_list.click(ev.pos):
                         vfocus = 0
                     elif (res_list if VIDEO_APIS[video_list.index]
                             == "opengl" else scale_list).click(ev.pos):
                         vfocus = 1
+                else:
+                    # NOTE: MODS tab clicks (master row + mod rows).
+                    if mod_list.click(ev.pos):
+                        toggle_mod()
     pygame.quit()
     return 0
 

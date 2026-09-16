@@ -194,6 +194,16 @@ def owner_priority_key(priority: int) -> int:
     return -int(priority)
 
 
+def row_label(mid: str, ver: str, state: str, reason: str) -> str:
+    """One mod row, byte-identical in the launcher MODS tab and the
+    in-game Extension menu: 'id ver ON/OFF (reason)'."""
+    tag = "ON " if state == "on" else "OFF"
+    label = f"{mid} {ver} {tag}"
+    if reason:
+        label += f" {reason}"
+    return label
+
+
 class Mod:
     """Mod base: metadata as attributes, hooks in on_enable."""
 
@@ -444,6 +454,20 @@ class ModManager:
         rec.user_on = not rec.user_on
         self.refresh()
         return rec.state
+
+    def apply_overrides(self, on: set | None = None,
+                        off: set | None = None) -> None:
+        """Launcher/CLI picks: force user_on per mod id (off wins on
+        conflict), then re-resolve. Unknown ids are ignored."""
+        for mid in (on or ()):
+            rec = self.records.get(mid)
+            if rec is not None and rec.mod is not None:
+                rec.user_on = True
+        for mid in (off or ()):
+            rec = self.records.get(mid)
+            if rec is not None and rec.mod is not None:
+                rec.user_on = False
+        self.refresh()
 
     def status(self) -> list[tuple]:
         """Rows for the Extension menu: (id, version, state, reason)."""

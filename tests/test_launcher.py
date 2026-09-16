@@ -93,3 +93,74 @@ def test_res_scale_label_mapping():
     assert scale_label_to_value("300%") == 3
     assert scale_label_to_value("500%") is None
     assert scale_label_to_value("x") is None
+
+
+def test_build_viewer_args_mods_byte_stable():
+    base = build_viewer_args("DOOM1.WAD", "E1M1", "normal")
+    assert not [a for a in base if "mod" in a]  # NOTE: no mods, no flags
+    off = build_viewer_args("DOOM1.WAD", "E1M1", "normal",
+                            mods_enabled=False)
+    assert off[-1] == "--no-mods"
+    picks = build_viewer_args("DOOM1.WAD", "E1M1", "normal",
+                              mods_on=("b",), mods_off=("a",))
+    assert "--mod-on=b" in picks and "--mod-off=a" in picks
+
+
+def test_mod_tab_rows_master_and_reasons():
+    from pyDOOM import mod_tab_rows
+    status = [("hi", "0.1.0", "on", ""),
+              ("gl", "0.2.0", "refused", "NEEDS opengl"),
+              ("bad", "?", "error", "BAD MANIFEST: x")]
+    ids, labels = mod_tab_rows(status, True)
+    assert ids == [None, "hi", "gl", "bad"]
+    assert labels[0] == "MOD LOADER: ON"
+    assert labels[1] == "hi 0.1.0 ON "
+    assert labels[2] == "gl 0.2.0 OFF NEEDS opengl"
+    assert labels[3] == "bad ? OFF BAD MANIFEST: x"
+    ids, labels = mod_tab_rows([], False)
+    assert labels == ["MOD LOADER: OFF", "(no mods found)"]
+    assert ids[1] == ""  # NOTE: placeholder never toggles
+
+
+def test_mod_overrides_only_deviations():
+    from pyDOOM import mod_overrides
+    states = [("a", True, True), ("b", False, True), ("c", True, False),
+              ("d", False, False)]
+    on, off = mod_overrides(states)
+    assert (on, off) == ({"c"}, {"b"})
+
+
+def test_mod_overrides_apply_off_wins(tmp_path):
+    from pydoom.ext import ModManager
+    for mid in ("a", "b"):
+        d = tmp_path / mid
+        d.mkdir()
+        (d / "mod.toml").write_text(
+            f'id = "{mid}"\nversion = "0.1.0"\napi_version = 1\n')
+        (d / "mod.py").write_text(
+            "from pydoom.ext import Mod\n\n\n"
+            f"class M(Mod):\n    id = \"{mid}\"\n    version = \"0.1.0\"\n\n\n"
+            "MOD = M()\n")
+    mgr = ModManager(str(tmp_path))
+    mgr.discover()
+    mgr.apply_overrides({"a", "zzz"}, {"a", "b"})  # NOTE: off wins, zzz ignored
+    states = {mid: s for mid, _v, s, _r in mgr.status()}
+    assert states == {"a": "off", "b": "off"}
+
+
+def test_cfg_roundtrips_mod_picks(tmp_path):
+    from pydoom.menu import Settings, settings_load, settings_save
+    cfg = Settings()
+    cfg.mods_enabled = False
+    cfg.mods_on = {"c"}
+    cfg.mods_off = {"b"}
+    path = str(tmp_path / "pydoom.cfg")
+    settings_save(path, cfg)
+    back = Settings()
+    settings_load(path, back)
+    assert back.mods_enabled is False
+    assert (back.mods_on, back.mods_off) == ({"c"}, {"b"})
+    plain = Settings()  # NOTE: old cfgs without mod lines keep defaults
+    settings_save(path, plain)
+    text = open(path).read()
+    assert "mods_enabled 1" in text and "mod_on" not in text

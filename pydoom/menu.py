@@ -6,7 +6,7 @@ a placeholder until the savegame milestone lands; detail/screensize
 are omitted (fixed renderer); End Game waits for a title state.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydoom.textures import decode_patch
 
@@ -140,6 +140,12 @@ class Settings:
     display_index: int = 0  # NOTE: fullscreen/borderless target screen
     sw_scale: int = 3
     show_fps: bool = False
+    # NOTE: extension mods (launcher MODS tab owns these; the in-game
+    # Extension menu only flips the live session). mods_on/mods_off are
+    # user deviations from each manifest's enabled_default.
+    mods_enabled: bool = True
+    mods_on: set = field(default_factory=set)
+    mods_off: set = field(default_factory=set)
 
 
 CONFIG_PATH = "pydoom.cfg"
@@ -175,6 +181,14 @@ def settings_load(path: str, settings: Settings) -> None:
             if raw in DISPLAY_MODES:
                 settings.display_mode = raw
             continue
+        if key == "mod_on":
+            settings.mods_on.add(raw[:64])
+            settings.mods_off.discard(raw[:64])
+            continue
+        if key == "mod_off":
+            settings.mods_off.add(raw[:64])
+            settings.mods_on.discard(raw[:64])
+            continue
         try:
             val = int(raw)
         except ValueError:
@@ -199,6 +213,8 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.show_fps = bool(val)
         elif key == "display_index":
             settings.display_index = max(0, val)
+        elif key == "mods_enabled":
+            settings.mods_enabled = bool(val)
 
 
 def settings_save(path: str, settings: Settings) -> None:
@@ -224,7 +240,12 @@ def settings_save(path: str, settings: Settings) -> None:
                     f"display_mode {settings.display_mode}\n"
                     f"display_index {settings.display_index}\n"
                     f"sw_scale {settings.sw_scale}\n"
-                    f"show_fps {int(settings.show_fps)}\n")
+                    f"show_fps {int(settings.show_fps)}\n"
+                    f"mods_enabled {int(settings.mods_enabled)}\n")
+            for mid in sorted(settings.mods_on):
+                f.write(f"mod_on {mid}\n")
+            for mid in sorted(settings.mods_off):
+                f.write(f"mod_off {mid}\n")
     except OSError:
         pass
 
@@ -309,6 +330,17 @@ def build_menus() -> dict:
             MenuItem("mus", "M_MUSVOL", "slider", "m"),
         ], 80, 64, "options", 0),
     }
+
+
+def remove_extensions_entry(menus: dict) -> None:
+    """Loader off (--no-mods): drop Options -> Extension, nothing to
+    manage. Shortcuts only match current-menu rows, so 'x' dies too."""
+    optdef = menus.get("options")
+    if optdef is None:
+        return
+    optdef.items = [it for it in optdef.items
+                    if it.action != "extensions"]
+    optdef.last_on = min(optdef.last_on, max(len(optdef.items) - 1, 0))
 
 
 class Menu:

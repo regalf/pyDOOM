@@ -117,4 +117,14 @@ camera) always run.
 Options → Extension lists every discovered mod as
 `id version ON/OFF (reason)`. Enter toggles (only when dependencies
 and backend allow), Esc goes back. Reasons: `NEEDS <dep>`,
-`NEEDS <backend>`, `BAD ...`, `ERROR ...`.
+`NEEDS <backend>`, `BAD ...`, `ERROR ...`. In-game toggles last for
+the session only.
+
+## Launcher MODS tab
+
+The launcher has its own MODS tab with the same rows: a master
+`MOD LOADER: ON/OFF` switch plus one row per mod (identical labels,
+backend warnings resolved against the VIDEO tab pick). Picks persist
+in `pydoom.cfg` (`mods_enabled`, `mod_on`/`mod_off` deviations from
+each manifest default) and reach the game as argv (`--no-mods`,
+repeatable `--mod-on=ID` / `--mod-off=ID`).
