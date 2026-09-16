@@ -1230,7 +1230,7 @@ def test_crosshair_mod_draws_both_arts():
     assert ("crosshair", "hud/greendotted_target.png") in mgr._img_cache
     for key in (("crosshair", "hud/greendotted.png"),
                 ("crosshair", "hud/greendotted_target.png")):
-        assert mgr._img_cache[key][0].shape == (8, 8)  # NOTE: 8px art
+        assert mgr._img_cache[key][0].shape == (4, 4)  # NOTE: 4px art
     cold = np.zeros((200, 320), dtype=np.uint8)
     mgr.emit("aim", target=False)
     mgr.emit("post_overlay", fb=cold)

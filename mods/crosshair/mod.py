@@ -4,10 +4,10 @@ not count: the dot shows what you point at)."""
 
 from pydoom.ext import Mod
 
-# NOTE: 8x8 art on a 320x200 frame: top-left keeps it centered.
+# NOTE: 4x4 art on a 320x200 frame: top-left keeps it centered.
 DOT = "hud/greendotted.png"
 DOT_HOT = "hud/greendotted_target.png"
-DOT_X, DOT_Y = 160 - 4, 100 - 4
+DOT_X, DOT_Y = 160 - 2, 100 - 2
 
 
 class Crosshair(Mod):

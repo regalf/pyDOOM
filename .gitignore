@@ -15,6 +15,7 @@ video.md
 extensions-roadmap.md
 *.png
 !docs/*.png
+!mods/**/*.png
 
 # local savegames (menu slots)
 savegames/
