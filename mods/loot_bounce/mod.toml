@@ -1,0 +1,7 @@
+id = "loot_bounce"
+version = "0.2.0"
+api_version = 1
+description = "Dropped loot launches up and bounces down"
+depends = []
+sim_affecting = false
+enabled_default = true

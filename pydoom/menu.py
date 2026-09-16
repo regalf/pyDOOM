@@ -6,7 +6,7 @@ a placeholder until the savegame milestone lands; detail/screensize
 are omitted (fixed renderer); End Game waits for a title state.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydoom.textures import decode_patch
 
@@ -140,6 +140,12 @@ class Settings:
     display_index: int = 0  # NOTE: fullscreen/borderless target screen
     sw_scale: int = 3
     show_fps: bool = False
+    # NOTE: extension mods (launcher MODS tab owns these; the in-game
+    # Extension menu only flips the live session). mods_on/mods_off are
+    # user deviations from each manifest's enabled_default.
+    mods_enabled: bool = True
+    mods_on: set = field(default_factory=set)
+    mods_off: set = field(default_factory=set)
 
 
 CONFIG_PATH = "pydoom.cfg"
@@ -175,6 +181,14 @@ def settings_load(path: str, settings: Settings) -> None:
             if raw in DISPLAY_MODES:
                 settings.display_mode = raw
             continue
+        if key == "mod_on":
+            settings.mods_on.add(raw[:64])
+            settings.mods_off.discard(raw[:64])
+            continue
+        if key == "mod_off":
+            settings.mods_off.add(raw[:64])
+            settings.mods_on.discard(raw[:64])
+            continue
         try:
             val = int(raw)
         except ValueError:
@@ -199,6 +213,8 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.show_fps = bool(val)
         elif key == "display_index":
             settings.display_index = max(0, val)
+        elif key == "mods_enabled":
+            settings.mods_enabled = bool(val)
 
 
 def settings_save(path: str, settings: Settings) -> None:
@@ -224,7 +240,12 @@ def settings_save(path: str, settings: Settings) -> None:
                     f"display_mode {settings.display_mode}\n"
                     f"display_index {settings.display_index}\n"
                     f"sw_scale {settings.sw_scale}\n"
-                    f"show_fps {int(settings.show_fps)}\n")
+                    f"show_fps {int(settings.show_fps)}\n"
+                    f"mods_enabled {int(settings.mods_enabled)}\n")
+            for mid in sorted(settings.mods_on):
+                f.write(f"mod_on {mid}\n")
+            for mid in sorted(settings.mods_off):
+                f.write(f"mod_off {mid}\n")
     except OSError:
         pass
 
@@ -237,6 +258,9 @@ class MenuItem:
     patch: str | None = None
     kind: str = "action"  # action | slider | toggle | choice | gap
     shortcut: str = ""
+    # NOTE: ext rows (Options -> Extension) have no M_* patch: the viewer
+    # fills label at runtime ("id ver ON/OFF (reason)"), small font.
+    label: str | None = None
 
 
 @dataclass
@@ -281,8 +305,12 @@ def build_menus() -> dict:
             MenuItem("messages", "M_MESSG", "toggle", "m"),
             MenuItem("sens", "M_MSENS", "slider", "m"),
             MenuItem("video", None, "action", "v"),
+            MenuItem("extensions", None, "action", "x"),
             MenuItem("sound", "M_SVOL", shortcut="s"),
         ], 60, 37, "main", 0),
+        # NOTE: Options -> Extension (mod list, runtime-filled by the
+        # viewer from ModManager.status(); Enter toggles, Esc back).
+        "extensions": MenuDef("extensions", None, [], 24, 53, "options", 0),
         # NOTE: graphics settings (labels draw big like menu art, see
         # draw_text_big: no M_* patches exist for these rows). Backend
         # and sizes live in the launcher VIDEO tab (window recreation
@@ -302,6 +330,17 @@ def build_menus() -> dict:
             MenuItem("mus", "M_MUSVOL", "slider", "m"),
         ], 80, 64, "options", 0),
     }
+
+
+def remove_extensions_entry(menus: dict) -> None:
+    """Loader off (--no-mods): drop Options -> Extension, nothing to
+    manage. Shortcuts only match current-menu rows, so 'x' dies too."""
+    optdef = menus.get("options")
+    if optdef is None:
+        return
+    optdef.items = [it for it in optdef.items
+                    if it.action != "extensions"]
+    optdef.last_on = min(optdef.last_on, max(len(optdef.items) - 1, 0))
 
 
 class Menu:
@@ -587,6 +626,15 @@ class Menu:
         elif act == "video":
             self._video_snapshot = self._staged_video()
             self.current = "video"
+        elif act == "extensions":
+            # NOTE: items are rebuilt by the viewer (owns ModManager);
+            # it flips current itself after the rebuild.
+            return [("ext_open",)]
+        elif act.startswith("ext:"):
+            mid = act[4:]
+            if mid:
+                return [("ext_toggle", mid)]
+            return []
         elif act == "apply_video":
             self._video_snapshot = self._staged_video()
             return [("video_changed",)]
@@ -648,7 +696,11 @@ class Menu:
             if item.kind == "gap":
                 y += LINEHEIGHT
                 continue
-            if item.patch is not None:
+            if item.action.startswith("ext:") and item.label is not None:
+                # NOTE: ext rows are small text (id ver STATE + reason
+                # would overflow big glyphs); skull still marks selection.
+                self.draw_text(fb, item.label, mdef.x, y + 4)
+            elif item.patch is not None:
                 self._blit(item.patch, fb, mdef.x, y)
             elif item.kind == "choice":
                 # NOTE: menu-sized label plus the staged value small

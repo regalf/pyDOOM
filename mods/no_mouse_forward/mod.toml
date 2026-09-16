@@ -1,0 +1,7 @@
+id = "no_mouse_forward"
+version = "0.1.0"
+api_version = 1
+description = "Mouse no longer walks forward/back (turn only)"
+depends = []
+sim_affecting = false
+enabled_default = true

@@ -1,0 +1,10 @@
+id = "crosshair"
+version = "0.1.0"
+api_version = 1
+description = "UI crosshair that highlights on target"
+depends = []
+sim_affecting = false
+enabled_default = true
+
+[assets]
+images = ["hud/greendotted.png", "hud/greendotted_target.png"]

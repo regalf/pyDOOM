@@ -229,6 +229,18 @@ def touch_special_thing(item, picker_mo, ps, ctx=None):
         return False, None
     kind = spec[0]
     sound = None
+    # NOTE: ext pickup (class/ammo mods): consume blocks the take
+    # entirely (no apply, no tally, no sound).
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            pev = _mgr.emit("pickup", item=item, player_mo=picker_mo,
+                            ps=ps, kind=kind)
+            if pev.consumed:
+                return False, None
+    except Exception:  # noqa: BLE001 - mods never break the sim
+        pass
     if kind == "weapon":
         # NOTE: vanilla chimes wpnup here (p_inter.c), not itemup.
         sound = "wpnup"

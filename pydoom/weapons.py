@@ -327,6 +327,17 @@ def fire(ps, shooter, physics, index, mobjs, skyflat, accurate: bool,
         check_ammo(ps)
         return -1, False
     weapon = ps.readyweapon
+    # NOTE: ext pre_fire (trigger gate): consume pulls nothing (no alert,
+    # no queue, no ammo: _shoot below never runs).
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            fev = _mgr.emit("pre_fire", weapon=weapon, held=held)
+            if fev.consumed:
+                return -1, False
+    except Exception:  # noqa: BLE001 - mods never break the sim
+        pass
     # NOTE: P_FireWeapon always alerts on a successful trigger pull
     # (every weapon, fists/saw included): the shot wakes the flood
     # region before any projectile/hitscan lands.
@@ -435,4 +446,12 @@ def _shoot(ps, weapon, shooter, physics, index, mobjs, skyflat,
         slope = bullet_slope(shooter, physics, index, mobjs, skyflat)
         gunshot(shooter, accurate, slope, physics, index, mobjs,
                 skyflat, ctx)
+    # NOTE: ext post_fire (one notify per fired shot, ammo already out).
+    try:
+        from pydoom import ext as _ext
+        _mgr = _ext.current()
+        if _mgr is not None:
+            _mgr.emit("post_fire", weapon=weapon)
+    except Exception:  # noqa: BLE001 - mods never break the sim
+        pass
     return COOLDOWN[weapon]

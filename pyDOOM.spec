@@ -25,7 +25,11 @@ a = Analysis(
     ['pyDOOM.py'],
     pathex=[],
     binaries=[],
-    datas=[('DOOM1.WAD', '.'), ('VERSION', '.')],
+    datas=[('DOOM1.WAD', '.'), ('VERSION', '.'),
+           # NOTE: bundled mods ship beside the exe (ext.default_mods_dir
+           # resolves there when frozen); user mods added later land in
+           # the same folder, no rebuild needed.
+           ('mods', 'mods')],
     hiddenimports=(['tools.doom_view']
                    + collect_submodules('OpenGL')
                    + collect_submodules('OpenGL_accelerate')),

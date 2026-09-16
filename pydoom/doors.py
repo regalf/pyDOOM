@@ -162,7 +162,7 @@ _SWITCH_FLOORS = {
     131: ("raiseFloorTurbo", False), 55: ("raiseFloorCrush", False),
     45: ("lowerFloor", True), 60: ("lowerFloorToLowest", True),
     64: ("raiseFloor", True), 65: ("raiseFloorCrush", True),
-    69: ("raiseFloorToNearest", True), 70: ("turboLower", True),
+    69: ("raiseFloorToNearest", True),
     132: ("raiseFloorTurbo", True),
 }
 # S1 plat switches and SR plat buttons: (plat type, amount, use_again).
@@ -220,6 +220,7 @@ _WALK_RETRIGGER = {
     87: ("plat", ("perpetualRaise", 0)),
     82: ("floor", "lowerFloorToLowest"), 83: ("floor", "lowerFloor"),
     91: ("floor", "raiseFloor"), 92: ("floor", "raiseFloor24"),
+    70: ("floor", "turboLower"),
     98: ("floor", "turboLower"), 128: ("floor", "raiseFloorToNearest"),
     129: ("floor", "raiseFloorTurbo"),
     79: ("light", 35), 80: ("light", 0), 81: ("light", 255),
@@ -246,9 +247,12 @@ def grind_sector(world, sector, crush, mobjs, phys, ctx) -> bool:
     from pydoom.mobjs import set_mobj_state, spawn_mobj
     nofit = False
     for thing in list(sector.thinglist):
-        res = phys.check_position(thing, thing.x, thing.y)
-        if res.ok and (res.ceilingz - max(res.floorz, thing.z)
-                       >= thing.height):
+        # NOTE: lines-only fit (vanilla P_ThingHeightClip ignores the
+        # thing-blocking verdict): overlapping riders never wedge a
+        # moving floor (E1M5 pillars carry a trooper + a zombieman).
+        res = phys.check_position(thing, thing.x, thing.y,
+                                  ignore_things=True)
+        if res.ceilingz - max(res.floorz, thing.z) >= thing.height:
             continue  # fits: keep checking
         if thing.health <= 0:
             # NOTE: crunch bodies to giblets (stays as decor).
@@ -277,6 +281,18 @@ def grind_sector(world, sector, crush, mobjs, phys, ctx) -> bool:
             continue  # bloody gibs or something
         nofit = True
         if crush and not world.time & 3:
+            # NOTE: ext sector_crush (spare the victim): consume skips
+            # this tic's 10 damage and its blood spray.
+            try:
+                from pydoom import ext as _ext
+                _mgr = _ext.current()
+                spared = (_mgr is not None and _mgr.emit(
+                    "sector_crush", victim=thing,
+                    sector=sector).consumed)
+            except Exception:  # noqa: BLE001 - mods never break the sim
+                spared = False
+            if spared:
+                continue
             damage_mobj(thing, None, None, 10, ctx)
             blood = spawn_mobj(None, phys, phys.things, thing.x, thing.y,
                                thing.z + (thing.height >> 1),
@@ -1261,6 +1277,18 @@ class World:
             or line.special not in (1, 32, 33, 34)
         ):
             return None
+        # NOTE: ext line_activate (map scripting): consume blocks the
+        # vanilla action entirely (vanilla gating above still applies).
+        try:
+            from pydoom import ext as _ext
+            _mgr = _ext.current()
+            if _mgr is not None and _mgr.emit(
+                    "line_activate", line=line, special=line.special,
+                    kind="use", side=side, is_player=is_player,
+                    mover=mover).consumed:
+                return None
+        except Exception:  # noqa: BLE001 - mods never break the sim
+            pass
         special = line.special
         if special in _MANUAL_DOORS:
             return self.vertical_door(line, is_player, keys)
@@ -1371,6 +1399,17 @@ class World:
         """P_ShootSpecialLine: guns pop 24/46/47 (monsters only 46)."""
         if not is_player and line.special != 46:
             return
+        # NOTE: ext line_activate (map scripting): consume blocks it.
+        try:
+            from pydoom import ext as _ext
+            _mgr = _ext.current()
+            if _mgr is not None and _mgr.emit(
+                    "line_activate", line=line, special=line.special,
+                    kind="shoot", side=0, is_player=is_player,
+                    mover=None).consumed:
+                return
+        except Exception:  # noqa: BLE001 - mods never break the sim
+            pass
         if line.special == 24:
             if self.do_floor(line, "raiseFloor"):
                 self.change_switch_texture(line, False)
@@ -1389,6 +1428,17 @@ class World:
                 39, 97, 125, 126, 4, 10, 88):
             return None  # NOTE: vanilla monster gate (teleports, W1
             # door/plat only); everything else ignores monsters.
+        # NOTE: ext line_activate (map scripting): consume blocks it.
+        try:
+            from pydoom import ext as _ext
+            _mgr = _ext.current()
+            if _mgr is not None and _mgr.emit(
+                    "line_activate", line=line, special=line.special,
+                    kind="cross", side=side, is_player=is_player,
+                    mover=mover).consumed:
+                return None
+        except Exception:  # noqa: BLE001 - mods never break the sim
+            pass
         special = line.special
         if special in (39, 97, 125, 126):
             if special in (125, 126) and is_player:
@@ -1484,6 +1534,15 @@ class World:
             return False
         if side == 1:
             return False
+        # NOTE: ext teleport (block the hop): consume refuses it outright.
+        try:
+            from pydoom import ext as _ext
+            _mgr = _ext.current()
+            if _mgr is not None and _mgr.emit(
+                    "teleport", mover=mover, line=line).consumed:
+                return False
+        except Exception:  # noqa: BLE001 - mods never break the sim
+            pass
         # NOTE: vanilla EV_Teleport scans sectors by index, then each
         # sector's thinglist: with same-tag pads in several sectors the
         # lowest sector wins, not the earliest-spawned pad.

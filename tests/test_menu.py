@@ -262,3 +262,22 @@ def test_draw_text_paints_red_message():
     end = m.draw_text(fb, "YOU GOT THE SHOTGUN!", 8, 8)
     assert end > 100  # NOTE: advanced across the whole line
     assert (fb != 0).sum() > 200  # NOTE: red glyph pixels landed
+
+
+def test_remove_extensions_entry_hides_row():
+    from pydoom.menu import build_menus, remove_extensions_entry
+    menus = build_menus()
+    before = [it.action for it in menus["options"].items]
+    assert "extensions" in before
+    remove_extensions_entry(menus)
+    after = [it.action for it in menus["options"].items]
+    assert "extensions" not in after
+    assert len(after) == len(before) - 1
+    assert 0 <= menus["options"].last_on < len(after)
+    # NOTE: the 'x' shortcut dies with the row (shortcuts only match
+    # current-menu rows).
+    m = fresh()
+    remove_extensions_entry(m.menus)
+    m.current = "options"
+    assert m.key("x") == []
+    remove_extensions_entry(m.menus)  # NOTE: idempotent, no crash

@@ -496,3 +496,136 @@ def test_ceiling_crush_stop_and_reactivation(setup):
     finally:
         sec.ceilingheight = top0
         sec.specialdata = None
+
+
+def _e1m5_world():
+    """Fresh E1M5 World + physics + ctx (movers must not leak)."""
+    import pydoom.doors  # noqa: F401  (keeps World import local, like above)
+    from pydoom.ai import AIContext
+    from pydoom.combat import register_combat_actions
+    from pydoom.mobjs import ThingIndex
+    register_combat_actions()  # idempotent
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M5")
+    texman = TextureManager(wad)
+    texman.resolve_map(game_map)
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    world = World(game_map, texman)
+    ctx = AIContext(physics=phys)
+    ctx.mobjs = []
+    ctx.skyflatnum = None
+    return game_map, phys, index, world, ctx
+
+
+@requires_wad
+def test_blocked_push_reports_touch_tuples():
+    """Pushing a closed E1M1 door reports the touch (vanilla PIT_CheckLine
+    fires specials struck during the check, whatever the verdict)."""
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import ThingIndex, refresh_sector, spawn_mobj
+    wad = WadFile(WAD_PATH)
+    game_map = Map.from_wad(wad, "E1M1")
+    phys = Physics(game_map)
+    index = ThingIndex(game_map)
+    phys.things = index
+    line = next(li for li in game_map.lines
+                if li.special == 1 and li.backsector is not None)
+    mx = (line.v1.x + line.v2.x) // 2
+    my = (line.v1.y + line.v2.y) // 2
+    px, py = front_spot(line)
+    player = spawn_mobj(game_map, phys, index, px, py, 0,
+                        MT_INDEX["PLAYER"])
+    player.is_player = True
+    refresh_sector(player, phys)
+    player.z = player.floorz
+    ok, got = phys.try_move(player, mx, my)  # straight into the leaf
+    assert ok is False
+    assert got and all(isinstance(c, tuple) for c in got)
+    assert line in [li for li, _side in got]
+
+
+@requires_wad
+def test_e1m5_pillar_push_lowers_columns():
+    """E1M5 touch pillars: pushing the 70 face (blocked: 280 too tall)
+    fires the walk trigger and both tag-1 columns sink."""
+    from pydoom.doors import FloorMover
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import refresh_sector, spawn_mobj
+    game_map, phys, index, world, ctx = _e1m5_world()
+    player = spawn_mobj(game_map, phys, index,
+                        -1300 << 16, 688 << 16, 0, MT_INDEX["PLAYER"])
+    player.is_player = True
+    refresh_sector(player, phys)
+    player.z = player.floorz
+    ok, got = phys.try_move(player, player.x - (30 << 16), player.y)
+    assert ok is False
+    assert [(li.special, li.tag) for li, _s in got] == [(70, 1)]
+    for li, side in got:
+        world.cross_special_line(li, True, player, phys, ctx.mobjs, side)
+    floors = [t for t in world.thinkers if isinstance(t, FloorMover)]
+    assert len(floors) == 2
+    for _ in range(30):
+        world.time += 1
+        for t in list(world.thinkers):
+            if isinstance(t, FloorMover):
+                t.think(world)
+    sunk = sorted(s.floorheight >> 16
+                  for s in game_map.sectors if s.tag == 1)
+    assert sunk[0] < 72 and sunk[0] == sunk[1]  # NOTE: both sink together
+
+
+@requires_wad
+def test_momentum_crossings_stay_tuples():
+    """xy_movement into a special wall never leaks raw lines (the viewer
+    unpacks every entry as a tuple: a raw line used to crash it)."""
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import refresh_sector, spawn_mobj, xy_movement
+    from pydoom.player import PlayerState
+    game_map, phys, index, world, ctx = _e1m5_world()
+    ctx.player_state = PlayerState()
+    player = spawn_mobj(game_map, phys, index,
+                        -1300 << 16, 688 << 16, 0, MT_INDEX["PLAYER"])
+    player.is_player = True
+    refresh_sector(player, phys)
+    player.z = player.floorz
+    for _ in range(6):
+        player.momx, player.momy = -(30 << 16), 0
+        crossed = xy_movement(player, phys, ctx)
+        assert all(isinstance(c, tuple) for c in crossed)
+
+
+@requires_wad
+def test_e1m5_pillars_sink_with_riders():
+    """Full-map E1M5: riders overlap pairwise on the pillars, but the
+    grind fits them geometrically (vanilla P_ThingHeightClip), so the
+    push-fired movers sink instead of reverting every tic (stnmov with
+    no motion)."""
+    from pydoom.doors import FloorMover, grind_sector
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import refresh_sector, spawn_map, spawn_mobj
+    game_map, phys, index, world, ctx = _e1m5_world()
+    mobjs = spawn_map(game_map, phys, index, "normal", False)
+    player = spawn_mobj(game_map, phys, index,
+                        -1300 << 16, 688 << 16, 0, MT_INDEX["PLAYER"])
+    player.is_player = True
+    mobjs.append(player)
+    ctx.mobjs = mobjs
+    world.grind = (lambda sec, crush: grind_sector(
+        world, sec, crush, mobjs, phys, ctx))
+    refresh_sector(player, phys)
+    player.z = player.floorz
+    ok, got = phys.try_move(player, player.x - (30 << 16), player.y)
+    assert ok is False
+    for li, side in got:
+        world.cross_special_line(li, True, player, phys, mobjs, side)
+    assert any(isinstance(t, FloorMover) for t in world.thinkers)
+    for _ in range(30):
+        world.time += 1
+        for t in list(world.thinkers):
+            if isinstance(t, FloorMover):
+                t.think(world)
+    sunk = sorted(s.floorheight >> 16
+                  for s in game_map.sectors if s.tag == 1)
+    assert sunk[0] < 72  # NOTE: was frozen at 72 by rider overlap
