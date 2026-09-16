@@ -289,7 +289,8 @@ class Physics:
 
     # -- position check (P_CheckPosition + PIT_CheckLine) --
 
-    def check_position(self, mover: Mover, x: int, y: int) -> CheckResult:
+    def check_position(self, mover: Mover, x: int, y: int,
+                       ignore_things: bool = False) -> CheckResult:
         res = CheckResult()
         r = mover.radius
         tmbbox = [y + r, y - r, x - r, x + r]  # BOX order
@@ -308,9 +309,12 @@ class Physics:
 
         # Check things first (grouped by origin block, extended by
         # MAXRADIUS since origins can overlap into adjacent blocks).
+        # NOTE: grind_sector skips this (ignore_things): vanilla
+        # P_ThingHeightClip fits riders geometrically, so overlapping
+        # bodies never wedge a moving floor.
         touched: list = []
         bm = self.map.blockmap
-        if self.things is not None:
+        if self.things is not None and not ignore_things:
             xl = (tmbbox[BOX.BOXLEFT] - bm.orgx - MAXRADIUS) >> MAPBLOCKSHIFT
             xh = (tmbbox[BOX.BOXRIGHT] - bm.orgx + MAXRADIUS) >> MAPBLOCKSHIFT
             yl = (tmbbox[BOX.BOXBOTTOM] - bm.orgy - MAXRADIUS) >> MAPBLOCKSHIFT
@@ -430,27 +434,28 @@ class Physics:
         """Attempt the move; returns (moved, crossed special lines).
 
         crossed holds (line, side) tuples, side being the side the
-        mover started on (P_CrossSpecialLine refuses backside hops);
-        it is reported on success AND failure (P_Move uses the
-        failed-move list to open doors); callers execute only the
-        successful crossings, except monster movement.
+        mover started on (P_CrossSpecialLine refuses backside hops).
+        Touched specials report on success (side actually changed) AND
+        on failure (vanilla PIT_CheckLine fires the touch even when the
+        move is blocked: pushing a pillar face, sliding along a walk
+        trigger); callers fire cross_special_line for all of them.
         """
         oldx, oldy = mover.x, mover.y
         res = self.check_position(mover, x, y)
         if not res.ok:
-            return False, res.spechit
+            return False, self._touch(mover, oldx, oldy, res)
         if not (mover.flags & MF_NOCLIP):
             if res.ceilingz - res.floorz < mover.height:
-                return False, []
+                return False, self._touch(mover, oldx, oldy, res)
             if (not (mover.flags & MF_TELEPORT)
                     and res.ceilingz - mover.z < mover.height):
-                return False, []
+                return False, self._touch(mover, oldx, oldy, res)
             if (not (mover.flags & MF_TELEPORT)
                     and res.floorz - mover.z > STEPHEIGHT):
-                return False, []
+                return False, self._touch(mover, oldx, oldy, res)
             if (not (mover.flags & (MF_DROPOFF | MF_FLOAT))
                     and res.floorz - res.dropoffz > STEPHEIGHT):
-                return False, []
+                return False, self._touch(mover, oldx, oldy, res)
         mover.floorz, mover.ceilingz = res.floorz, res.ceilingz
         mover.x, mover.y = x, y
         if self.things is not None:
@@ -483,6 +488,18 @@ class Physics:
                     if ld.special:
                         crossed.append((ld, old_side))
         return True, crossed
+
+    @staticmethod
+    def _touch(mover: Mover, oldx: int, oldy: int, res) -> list:
+        """Blocked-move touches as (line, side) tuples (vanilla
+        PIT_CheckLine fires specials struck during the check, whatever
+        the final verdict: step too tall, headroom, dropoff). Same
+        TELEPORT/NOCLIP guard as the success path, so teleports and
+        noclip flights stay trigger-free."""
+        if mover.flags & (MF_TELEPORT | MF_NOCLIP):
+            return []
+        return [(ld, point_on_line_side(oldx, oldy, ld))
+                for ld in res.spechit if ld.special]
 
     # -- slide (P_SlideMove + P_HitSlideLine + PTR_SlideTraverse) --
 

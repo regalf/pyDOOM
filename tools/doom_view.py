@@ -957,6 +957,7 @@ def main() -> int:
     modmgr = ext.ModManager(ext.default_mods_dir())
     ext.set_current(modmgr)
     modmgr.discover()
+    modmgr.palette = palette_lut  # NOTE: ext api.image converts UI art here
     loaded_marker: list = [None]  # NOTE: ext map_unload tracks this
     # NOTE: G_InitNew sim part (M_ClearRandom + fast tables) runs on
     # fresh runs only: boot, menu new game, demo start. Transitions,
@@ -983,6 +984,7 @@ def main() -> int:
     modmgr.menu = game_menu  # NOTE: ExtApi.text draws via the menu font
     cam_pitch = 0.0  # NOTE: mouselook-only GL pitch (radians, +up)
     ext_settings_last: dict | None = None  # NOTE: ext settings cache
+    ext_gamestate_last: str | None = None  # NOTE: ext gamestate cache
     gamestate = "level"  # level|menu|wipe|title|inter|finale
     inter = None  # tally screen between maps (G_WorldDone lite)
     wipe_after = "level"  # melt landing state
@@ -1907,6 +1909,13 @@ def main() -> int:
         if _snap != ext_settings_last:
             ext_settings_last = _snap
             modmgr.emit("settings", **_snap)
+        # NOTE: ext gamestate (level/menu/wipe/title/inter/finale):
+        # change-detected like settings, so one site covers every
+        # transition (mods gate HUD art to "level" with this).
+        if gamestate != ext_gamestate_last:
+            _old_gs = ext_gamestate_last
+            ext_gamestate_last = gamestate
+            modmgr.emit("gamestate", old=_old_gs, new=gamestate)
         if gamestate == "inter" and inter is not None \
                 and inter.finished_tally():
             # NOTE: tally over: wipe into the carried next level.
@@ -2251,6 +2260,10 @@ def main() -> int:
                         cam.x = player_mo.x / 65536.0
                         cam.y = player_mo.y / 65536.0
                     else:
+                        # NOTE: blocked touches fire too (vanilla
+                        # PIT_CheckLine): pushing a pillar face or
+                        # sliding along a walk trigger counts.
+                        crossed.extend(got)
                         player_mo.momx, player_mo.momy = (
                             int(dx * 65536), int(dy * 65536))
                         phys.slide_move(player_mo, crossed)
@@ -2323,6 +2336,19 @@ def main() -> int:
             # whole vanilla player block (move, use, fire, pickups),
             # before mobjs think (P_RunThinkers order).
             modmgr.emit("player_think", tic=state.get("tics", 0))
+            if modmgr.subscribed("aim"):
+                # NOTE: ext aim (crosshair mods): exact center-line hitscan
+                # (no auto-aim spread: the dot shows what you point at).
+                # One ray per tic, skipped entirely with no listeners.
+                _aim_hit = False
+                _pst = state["ps"]
+                if _pst.playerstate == p_user.PST_LIVE \
+                        and player_mo.health > 0:
+                    _slope, _tgt = combat.aim_line_attack(
+                        player_mo, player_mo.angle, combat.MISSILERANGE,
+                        phys, index, mobjs, renderer.skyflatnum)
+                    _aim_hit = _tgt is not None
+                modmgr.emit("aim", target=_aim_hit)
             # Think mobjs (P_RunThinkers on a live list: thinkers born
             # this tic think right away, like vanilla's head-to-tail
             # walk; removal holds the index so the next body slides in).

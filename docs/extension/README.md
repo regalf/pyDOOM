@@ -54,6 +54,9 @@ depends = []
 sim_affecting = false
 enabled_default = true
 backend = "any"  # any | opengl | software
+
+[assets]  # optional: preloaded at boot (Forge-style), see below
+images = ["hud/icon.png"]  # paths relative to the mod folder
 ```
 
 ```python

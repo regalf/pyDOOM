@@ -15,6 +15,7 @@ order (higher `priority=` first).
 | `level_exit` | `{exited, entering, secret}` read-only | exit switch, after `flow.next_map` | n/a |
 | `demo_start` | `{mode}`: `record`/`playback`/`timedemo`/`attract` | recorder armed, reader armed, attract armed | n/a |
 | `demo_stop` | `{mode}` | recorder flushed, playback over/stopped | n/a |
+| `gamestate` | `{old, new}` (`level`/`menu`/`wipe`/`title`/`inter`/`finale`; `old` None at boot) | change-detected, every frame | n/a |
 | `backend_changed` | `{old, new}` (`any` = unknown at boot) | `ModManager.set_backend`, after the re-gate | n/a |
 | `settings` | `{mouse_sens, mouse_rad_per_px, sfx_vol, mus_vol}` read-only | change-detected, every frame | n/a |
 
@@ -26,6 +27,7 @@ order (higher `priority=` first).
 | `post_tic` | `{tic}` | after leveltime closes the tic | stops chain |
 | `build_ticcmd` | `{forwardmove, sidemove, angleturn, buttons}` mutable ints | live packets only (playback bypasses); the filtered packet is recorded | stops chain (packet keeps current values) |
 | `player_think` | `{tic}` | after the whole vanilla player block, before mobjs think | stops chain |
+| `aim` | `{target}` bool: center-line hitscan hot | after `player_think`, only when a mod listens (one ray/tic, skipped otherwise) | n/a (notify; exact line, no auto-aim spread) |
 
 `build_ticcmd` ranges: moves ±`MAXPLMOVE` (50), `angleturn` int16
 (CCW+), `buttons` bitmask — see `ids.md`. Broken (non-int) values are
@@ -68,6 +70,20 @@ godmode/invuln, armor and thrust all run on the mutated value after.
 | `statusbar` | `{fb}` | `render_scene`, after the vanilla strip | n/a (draws over the bar, under messages) |
 | `palette_flash` | `{palette}` mutable, clamped 0–13 | `player.palette_index` (both backends) | n/a |
 | `automap_draw` | `{marks, amap}`; append `(x, y)` fixed world coords | automap open, every frame, before draw/collect | n/a |
+
+HUD helpers (`ExtApi`, usable in `post_overlay` / `statusbar`):
+
+- `api.text(fb, text, x, y)` — red STCFN string via the menu font.
+- `api.image(fb, "hud/icon.png", x, y) -> bool` — blits a PNG from the
+  mod's own folder onto the index framebuffer: 1:1, clipped, only zero
+  alpha skipped, converted once to PLAYPAL indices and cached.
+  Declared `[assets] images` in `mod.toml` are preloaded at boot:
+  a missing/corrupt entry refuses the mod (`BAD ASSET <path>`) and
+  the game starts without it. Undeclared paths lazy-load on first
+  use; any failure logs (`ext: <id> bad image ...`) and skips
+  (`False`), never raises. Being indices, the art follows
+  palette flashes like vanilla HUD. World sprites/walls are out of
+  scope (API v2).
 
 ## Audio (fx)
 

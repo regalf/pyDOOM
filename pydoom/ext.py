@@ -50,7 +50,7 @@ HOOKS = ("map_load", "pre_tic", "post_tic", "on_kill",
          "player_think", "line_activate", "level_exit", "palette_flash",
          "automap_draw", "sfx_play", "music_change", "backend_changed",
          "map_unload", "sector_crush", "teleport", "statusbar",
-         "demo_start", "demo_stop")
+         "demo_start", "demo_stop", "aim", "gamestate")
 SIM_HOOKS = frozenset({"on_kill", "build_ticcmd", "damage", "pickup",
                        "pre_fire", "post_fire", "player_think",
                        "line_activate", "sector_crush", "teleport"})
@@ -115,6 +115,80 @@ class ExtApi:
         if menu is not None:
             menu.draw_text(fb, text, x, y)
 
+    def image(self, fb, relpath: str, x: int, y: int) -> bool:
+        """Blit a small UI image onto the index framebuffer (post_overlay /
+        statusbar handlers). Path is relative to this mod's own folder; only
+        fully transparent pixels (alpha 0) are skipped; drawn 1:1 with
+        clipping, converted
+        once to PLAYPAL indices and cached. Missing/corrupt files log and
+        skip (False), never raise."""
+        mgr = self._manager
+        try:
+            key = (self._owner, str(relpath))
+            hit = mgr._img_cache.get(key)
+            if hit is None:
+                hit = _load_indexed(mgr, self._owner, str(relpath))
+                if hit is None:
+                    return False
+                mgr._img_cache[key] = hit
+            idx, opaque = hit
+            h, w = fb.shape[:2]
+            ih, iw = idx.shape
+            x0, y0 = int(x), int(y)
+            sx, sy = max(0, -x0), max(0, -y0)
+            dx, dy = max(0, x0), max(0, y0)
+            bw = min(iw - sx, w - dx)
+            bh = min(ih - sy, h - dy)
+            if bw <= 0 or bh <= 0:
+                return True  # fully off-frame: nothing to draw
+            region = fb[dy:dy + bh, dx:dx + bw]
+            src = idx[sy:sy + bh, sx:sx + bw]
+            m = opaque[sy:sy + bh, sx:sx + bw]
+            region[m] = src[m]
+            return True
+        except Exception as exc:  # noqa: BLE001 - cosmetic, never crash
+            print(f"ext: {self._owner} bad image {relpath}: {exc}")
+            return False
+
+
+def _load_indexed(mgr, owner: str, relpath: str):
+    """Load + convert one mod image to (indices, opaque mask); None when
+    unusable (already logged). Conversion maps each unique RGB to the
+    nearest PLAYPAL entry, so small UI art converts in microseconds."""
+    try:
+        import pygame
+    except Exception as exc:  # noqa: BLE001 - no blitting without pygame
+        print(f"ext: {owner} bad image {relpath}: no pygame ({exc})")
+        return None
+    try:
+        import numpy as np
+        base = os.path.realpath(os.path.join(mgr.mods_dir, owner))
+        path = os.path.realpath(os.path.join(base, relpath))
+        if os.path.commonpath([base, path]) != base:
+            raise ValueError("outside the mod folder")
+        surf = pygame.image.load(path)
+        try:
+            surf = surf.convert_alpha()
+        except Exception:  # noqa: BLE001 - headless: loaded alpha is fine
+            pass
+        if mgr.palette is None:
+            raise ValueError("no palette (viewer not booted)")
+        arr = pygame.surfarray.array3d(surf).transpose(1, 0, 2)
+        try:
+            alpha = pygame.surfarray.array_alpha(surf).transpose(1, 0)
+        except Exception:  # noqa: BLE001 - opaque fallback
+            alpha = np.full(arr.shape[:2], 255, dtype=np.uint8)
+        pal = np.asarray(mgr.palette, dtype=np.uint8).reshape(256, 3)
+        uniq, inv = np.unique(arr.reshape(-1, 3), axis=0,
+                              return_inverse=True)
+        dist = ((uniq[:, None, :].astype(np.int32)
+                 - pal[None, :, :].astype(np.int32)) ** 2).sum(-1)
+        idx = dist.argmin(1)[inv].reshape(arr.shape[:2]).astype(np.uint8)
+        return idx, alpha > 0
+    except Exception as exc:  # noqa: BLE001 - broken asset, skip
+        print(f"ext: {owner} bad image {relpath}: {exc}")
+        return None
+
 
 def owner_priority_key(priority: int) -> int:
     return -int(priority)
@@ -156,6 +230,8 @@ class ModManager:
         self._table: dict[str, list] = {}
         self._order: list[str] = []
         self.menu = None  # injected by the viewer (for ExtApi.text)
+        self.palette = None  # base PLAYPAL (256,3), injected by viewer
+        self._img_cache: dict = {}  # (owner, relpath) -> (indices, mask)
         self.demo_guard = False  # True during playback/timedemo: skip sim
         self.backend = "any"  # unknown until viewer set_backend()
 
@@ -246,7 +322,35 @@ class ModManager:
             if not rec.user_on:
                 self._set_state(rec, "off", "")
                 continue
+            bad_asset = self._preload_assets(mid, rec)
+            if bad_asset is not None:
+                self._set_state(rec, "refused", f"BAD ASSET {bad_asset}")
+                continue
             self._set_state(rec, "on", "")
+
+    def _preload_assets(self, mid: str, rec: ModRecord) -> str | None:
+        """Boot-time Forge check: declared `[assets] images` must load and
+        convert now (cached for api.image), before on_enable runs. Returns
+        the offending path, or None when clean. Deferred while the viewer
+        hasn't injected a palette yet (lazy cache covers api.image then)."""
+        assets = rec.meta.get("assets", {}) or {}
+        if not isinstance(assets, dict):
+            return "manifest"
+        imgs = assets.get("images", []) or []
+        if not isinstance(imgs, list):
+            return "manifest"
+        if not imgs or self.palette is None:
+            return None
+        for rel in imgs:
+            if not isinstance(rel, str):
+                return "manifest"
+            key = (mid, rel)
+            if key not in self._img_cache:
+                hit = _load_indexed(self, mid, rel)
+                if hit is None:
+                    return rel
+                self._img_cache[key] = hit
+        return None
 
     def _missing_dep(self, rec: ModRecord) -> str | None:
         mod = rec.mod
@@ -322,6 +426,15 @@ class ModManager:
             if ev.consumed:
                 break
         return ev
+
+    def subscribed(self, hook: str) -> bool:
+        """True when at least one active mod listens (lets the viewer skip
+        expensive per-tic work, like the aim ray, when nobody cares)."""
+        for _negprio, owner, _fn in self._table.get(hook, []):
+            rec = self.records.get(owner)
+            if rec is not None and rec.state == "on":
+                return True
+        return False
 
     def toggle(self, mid: str) -> str:
         """User flip (from the menu): returns the resulting state."""

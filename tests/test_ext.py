@@ -1126,3 +1126,157 @@ def test_renamed_sfx_obeys_master_volume(monkeypatch, tmp_path):
         assert audio.play("pistol") is False
     finally:
         ext.set_current(None)
+
+
+def test_api_image_blits_with_alpha_and_clip(tmp_path):
+    pygame = pytest.importorskip("pygame")
+    import numpy as np
+    from pydoom.ext import ExtApi, ModManager
+    moddir = tmp_path / "imgmod"
+    moddir.mkdir()
+    surf = pygame.Surface((3, 2), pygame.SRCALPHA, 32)
+    surf.set_at((0, 0), (255, 0, 0, 255))
+    surf.set_at((1, 0), (0, 255, 0, 255))
+    surf.set_at((2, 0), (0, 0, 255, 0))  # NOTE: transparent, keeps bg
+    surf.set_at((0, 1), (0, 0, 0, 255))
+    surf.set_at((1, 1), (255, 255, 255, 255))
+    surf.set_at((2, 1), (255, 0, 0, 255))
+    pygame.image.save(surf, str(moddir / "icon.png"))
+    mgr = ModManager(str(tmp_path))
+    pal = [(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255),
+           (255, 255, 255)] + [(0, 0, 0)] * 251
+    mgr.palette = np.array(pal, dtype=np.uint8)
+    api = ExtApi(mgr, "imgmod")
+    fb = np.full((4, 5), 7, dtype=np.uint8)
+    assert api.image(fb, "icon.png", 1, 1) is True
+    assert fb[1, 1] == 1 and fb[1, 2] == 2 and fb[1, 3] == 7
+    assert fb[2, 1] == 0 and fb[2, 2] == 4 and fb[2, 3] == 1
+    assert ("imgmod", "icon.png") in mgr._img_cache  # NOTE: converted once
+    fb2 = np.full((4, 5), 7, dtype=np.uint8)
+    assert api.image(fb2, "icon.png", -2, -1) is True
+    assert fb2[0, 0] == 1  # NOTE: only src (2,1) stays visible
+    assert fb2.sum() == 7 * 19 + 1
+    assert api.image(fb2, "nope.png", 0, 0) is False  # NOTE: log + skip
+    assert api.image(fb2, "../evil.png", 0, 0) is False  # NOTE: contained
+
+
+def _write_mod(root, mid, assets_toml=""):
+    pygame = pytest.importorskip("pygame")
+    import numpy as np
+    d = root / mid
+    (d / "hud").mkdir(parents=True)
+    surf = pygame.Surface((2, 2), pygame.SRCALPHA, 32)
+    surf.fill((255, 0, 0, 255))
+    pygame.image.save(surf, str(d / "hud" / "icon.png"))
+    (d / "mod.toml").write_text(
+        f'id = "{mid}"\nversion = "0.1.0"\napi_version = 1\n'
+        + assets_toml)
+    (d / "mod.py").write_text(
+        "from pydoom.ext import Mod\n\n\n"
+        f"class M(Mod):\n    id = \"{mid}\"\n    version = \"0.1.0\"\n"
+        "    seen = []\n"
+        "    def on_enable(self, api):\n"
+        "        type(self).seen.append(True)\n\n\nMOD = M()\n")
+    return np
+
+
+def test_manifest_preload_ok_and_cached(tmp_path):
+    import numpy as np
+    from pydoom.ext import ModManager
+    _write_mod(tmp_path, "good",
+               assets_toml='[assets]\nimages = ["hud/icon.png"]\n')
+    mgr = ModManager(str(tmp_path))
+    mgr.discover()
+    mgr.palette = np.zeros((256, 3), dtype=np.uint8)
+    mgr.palette[1] = (255, 0, 0)
+    mgr.refresh()
+    states = {mid: s for mid, _v, s, _r in mgr.status()}
+    assert states["good"] == "on"
+    assert ("good", "hud/icon.png") in mgr._img_cache  # NOTE: ready at boot
+
+
+def test_manifest_preload_missing_refuses(tmp_path):
+    import numpy as np
+    from pydoom.ext import ModManager
+    _write_mod(tmp_path, "bad",
+               assets_toml='[assets]\nimages = ["hud/ghost.png"]\n')
+    _write_mod(tmp_path, "ugly",
+               assets_toml='[assets]\nimages = "hud/icon.png"\n')
+    mgr = ModManager(str(tmp_path))
+    mgr.discover()
+    mgr.palette = np.zeros((256, 3), dtype=np.uint8)
+    mgr.refresh()
+    rows = {mid: (s, r) for mid, _v, s, r in mgr.status()}
+    assert rows["bad"][0] == "refused"  # NOTE: game boots without it
+    assert rows["bad"][1] == "BAD ASSET hud/ghost.png"
+    assert rows["ugly"] == ("refused", "BAD ASSET manifest")
+    # NOTE: refused mods never enable: no hooks, no cache entries.
+    assert not any(k[0] in ("bad", "ugly") for k in mgr._img_cache)
+
+
+def test_crosshair_mod_draws_both_arts():
+    import numpy as np
+    from pydoom import ext
+    from pydoom.ext import ModManager
+    mgr = ModManager(ext.default_mods_dir())
+    mgr.discover()
+    assert "crosshair" in mgr.records  # NOTE: bundled concept mod
+    mgr.palette = np.array([tuple((i * 37) % 256 for _ in range(3))
+                            for i in range(256)], dtype=np.uint8)
+    mgr.refresh()
+    states = {mid: s for mid, _v, s, _r in mgr.status()}
+    assert states["crosshair"] == "on"
+    assert ("crosshair", "hud/greendotted.png") in mgr._img_cache
+    assert ("crosshair", "hud/greendotted_target.png") in mgr._img_cache
+    for key in (("crosshair", "hud/greendotted.png"),
+                ("crosshair", "hud/greendotted_target.png")):
+        assert mgr._img_cache[key][0].shape == (8, 8)  # NOTE: 8px art
+    cold = np.zeros((200, 320), dtype=np.uint8)
+    mgr.emit("aim", target=False)
+    mgr.emit("post_overlay", fb=cold)
+    hot = np.zeros((200, 320), dtype=np.uint8)
+    mgr.emit("aim", target=True)
+    mgr.emit("post_overlay", fb=hot)
+    assert cold.sum() > 0 and hot.sum() > 0  # NOTE: 32x32 dot lands
+    assert not (cold == hot).all()  # NOTE: art actually swaps
+
+
+@requires_wad
+def test_aim_ray_hits_target_ahead():
+    from pydoom.combat import MISSILERANGE, aim_line_attack
+    from pydoom.info import MT_INDEX
+    from pydoom.mobjs import spawn_mobj
+    game_map, phys, index, ctx = _wad_setup()
+    troop = spawn_mobj(game_map, phys, index, 900 << 16, -3500 << 16,
+                       0, MT_INDEX["TROOP"])
+    player = spawn_mobj(game_map, phys, index, 1000 << 16, -3500 << 16,
+                        0, MT_INDEX["PLAYER"])
+    mobjs = [troop, player]
+    player.angle = 0x80000000  # NOTE: face west, straight at the troop
+    _slope, tgt = aim_line_attack(player, player.angle, MISSILERANGE,
+                                  phys, index, mobjs, None)
+    assert tgt is troop
+    player.angle = 0x00000000  # NOTE: face east, empty hangar
+    _slope, tgt = aim_line_attack(player, player.angle, MISSILERANGE,
+                                  phys, index, mobjs, None)
+    assert tgt is None
+
+
+def test_crosshair_hidden_outside_level():
+    import numpy as np
+    from pydoom import ext
+    from pydoom.ext import ModManager
+    mgr = ModManager(ext.default_mods_dir())
+    mgr.discover()
+    mgr.palette = np.array([tuple((i * 37) % 256 for _ in range(3))
+                            for i in range(256)], dtype=np.uint8)
+    mgr.refresh()
+    menu_fb = np.zeros((200, 320), dtype=np.uint8)
+    mgr.emit("gamestate", old="level", new="menu")
+    mgr.emit("aim", target=True)
+    mgr.emit("post_overlay", fb=menu_fb)
+    assert menu_fb.sum() == 0  # NOTE: no dot over menus/title
+    level_fb = np.zeros((200, 320), dtype=np.uint8)
+    mgr.emit("gamestate", old="menu", new="level")
+    mgr.emit("post_overlay", fb=level_fb)
+    assert level_fb.sum() > 0

@@ -162,7 +162,7 @@ _SWITCH_FLOORS = {
     131: ("raiseFloorTurbo", False), 55: ("raiseFloorCrush", False),
     45: ("lowerFloor", True), 60: ("lowerFloorToLowest", True),
     64: ("raiseFloor", True), 65: ("raiseFloorCrush", True),
-    69: ("raiseFloorToNearest", True), 70: ("turboLower", True),
+    69: ("raiseFloorToNearest", True),
     132: ("raiseFloorTurbo", True),
 }
 # S1 plat switches and SR plat buttons: (plat type, amount, use_again).
@@ -220,6 +220,7 @@ _WALK_RETRIGGER = {
     87: ("plat", ("perpetualRaise", 0)),
     82: ("floor", "lowerFloorToLowest"), 83: ("floor", "lowerFloor"),
     91: ("floor", "raiseFloor"), 92: ("floor", "raiseFloor24"),
+    70: ("floor", "turboLower"),
     98: ("floor", "turboLower"), 128: ("floor", "raiseFloorToNearest"),
     129: ("floor", "raiseFloorTurbo"),
     79: ("light", 35), 80: ("light", 0), 81: ("light", 255),
@@ -246,9 +247,12 @@ def grind_sector(world, sector, crush, mobjs, phys, ctx) -> bool:
     from pydoom.mobjs import set_mobj_state, spawn_mobj
     nofit = False
     for thing in list(sector.thinglist):
-        res = phys.check_position(thing, thing.x, thing.y)
-        if res.ok and (res.ceilingz - max(res.floorz, thing.z)
-                       >= thing.height):
+        # NOTE: lines-only fit (vanilla P_ThingHeightClip ignores the
+        # thing-blocking verdict): overlapping riders never wedge a
+        # moving floor (E1M5 pillars carry a trooper + a zombieman).
+        res = phys.check_position(thing, thing.x, thing.y,
+                                  ignore_things=True)
+        if res.ceilingz - max(res.floorz, thing.z) >= thing.height:
             continue  # fits: keep checking
         if thing.health <= 0:
             # NOTE: crunch bodies to giblets (stays as decor).
