@@ -212,3 +212,10 @@ def test_viewer_args_carry_texture_filter():
     assert not [a for a in build_viewer_args(
         "DOOM1.WAD", "E1M1", "normal")
         if a.startswith("--texture-filter")]
+
+
+def test_flip_video_extra_rows():
+    from pyDOOM import flip_video_extra
+    assert flip_video_extra(0, False, False) == (True, False)
+    assert flip_video_extra(1, True, False) == (True, True)
+    assert flip_video_extra(1, True, True) == (True, False)

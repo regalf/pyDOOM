@@ -340,6 +340,8 @@ def build_menus() -> dict:
             MenuItem("display_mode", None, "choice", "d"),
             MenuItem("display_index", None, "choice", "c"),
             MenuItem("show_fps", None, "choice", "p"),
+            MenuItem("dynlights", None, "choice", "g"),
+            MenuItem("texture_filter", None, "choice", "t"),
             MenuItem("apply_video", None, "action", "y"),
         ], 36, 53, "options", 0),
         "sound": MenuDef("sound", None, [
@@ -779,7 +781,8 @@ class Menu:
 
     _VIDEO_KEYS = ("video_api", "gl_resolution", "sw_scale",
                    "fps_limit", "vsync", "display_mode",
-                   "display_index", "show_fps")
+                   "display_index", "show_fps", "dynlights",
+                   "texture_filter")
 
     def _staged_video(self) -> dict:
         """Snapshot the apply-relevant video settings (esc restores)."""
@@ -804,12 +807,14 @@ class Menu:
         if action == "fps_limit":
             return tuple("UNLIMITED" if v == 0 else str(v)
                          for v in FPS_LIMITS)
-        if action in ("vsync", "show_fps"):
+        if action in ("vsync", "show_fps", "dynlights"):
             return ("OFF", "ON")
         if action == "display_mode":
             return tuple(v.upper() for v in DISPLAY_MODES)
         if action == "display_index":
             return tuple(str(i + 1) for i in range(display_count()))
+        if action == "texture_filter":
+            return ("NEAREST", "LINEAR")
         return ()
 
     def _choice_index(self, action: str) -> int:
@@ -828,6 +833,10 @@ class Menu:
             cur = "ON" if s.vsync else "OFF"
         elif action == "show_fps":
             cur = "ON" if s.show_fps else "OFF"
+        elif action == "dynlights":
+            cur = "ON" if s.dynlights else "OFF"
+        elif action == "texture_filter":
+            cur = s.texture_filter.upper()
         elif action == "display_mode":
             cur = s.display_mode.upper()
         elif action == "display_index":
@@ -856,6 +865,10 @@ class Menu:
             s.vsync = nxt == "ON"
         elif action == "show_fps":
             s.show_fps = nxt == "ON"
+        elif action == "dynlights":
+            s.dynlights = nxt == "ON"
+        elif action == "texture_filter":
+            s.texture_filter = nxt.lower()
         elif action == "display_mode":
             s.display_mode = nxt.lower()
         elif action == "display_index":

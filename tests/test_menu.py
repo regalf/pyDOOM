@@ -281,3 +281,24 @@ def test_remove_extensions_entry_hides_row():
     m.current = "options"
     assert m.key("x") == []
     remove_extensions_entry(m.menus)  # NOTE: idempotent, no crash
+
+
+def test_video_choice_rows_cycle_and_stage():
+    m = fresh()
+    assert m.settings.dynlights is False
+    m.choice_adjust("dynlights", 1)
+    assert m.settings.dynlights is True
+    m.choice_adjust("dynlights", -1)
+    assert m.settings.dynlights is False
+    assert m.settings.texture_filter == "nearest"
+    m.choice_adjust("texture_filter", 1)
+    assert m.settings.texture_filter == "linear"
+    m.choice_adjust("texture_filter", -1)
+    m._video_snapshot = m._staged_video()  # NOTE: entering the menu
+    assert m._video_snapshot["dynlights"] is False
+    assert m._video_snapshot["texture_filter"] == "nearest"
+    m.choice_adjust("dynlights", 1)
+    m.choice_adjust("texture_filter", 1)
+    m._restore_video()  # NOTE: leaving without APPLY drops the change
+    assert m.settings.dynlights is False
+    assert m.settings.texture_filter == "nearest"

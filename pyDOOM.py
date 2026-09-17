@@ -39,12 +39,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "--viewer":
 SKILLS = ("baby", "easy", "normal", "hard", "nightmare")
 FALLBACK_WAD = "DOOM1.WAD"
 FLAGS = ("debug", "fast", "respawn", "nomonsters", "kinematic", "demos",
-         "extra_hud", "dynlights", "linear_filter")
+         "extra_hud")
 FLAG_LABELS = {"debug": "DEBUG MODE", "fast": "FAST",
                "respawn": "RESPAWN", "nomonsters": "NO MONSTERS",
                "kinematic": "KINEMATIC", "demos": "DEMO COMPAT",
-               "extra_hud": "EXTRA HUD", "dynlights": "DYNAMIC LIGHTS",
-               "linear_filter": "LINEAR FILTER"}
+               "extra_hud": "EXTRA HUD"}
 
 
 def find_wads(root: str = ROOT) -> list:
@@ -155,6 +154,18 @@ def video_tab_rows(video_api: str) -> tuple:
     if video_api in ("opengl", "openglv1", "openglv2"):
         return ("api", "resolution")
     return ("api", "scale")
+
+
+def flip_video_extra(tag: int, dynlights: bool,
+                     linear: bool) -> tuple:
+    """Toggle one v2-dedicated VIDEO row (pure, unit tested).
+
+    tag 0 is DYNAMIC LIGHTS, 1 is LINEAR FILTER; returns the new
+    (dynlights, linear) pair.
+    """
+    if tag == 0:
+        return (not dynlights, linear)
+    return (dynlights, not linear)
 
 
 def mod_tab_rows(status, mods_enabled: bool = True) -> tuple:
@@ -288,11 +299,12 @@ def main() -> int:
     wad = cfg.last_wad if cfg.last_wad in wads else wads[0]
     maps = maps_in(wad)
     skill = cfg.last_skill if cfg.last_skill in SKILLS else "normal"
-    flags = {name: ((name == "demos" and cfg.demos)
-                     or (name == "dynlights" and cfg.dynlights)
-                     or (name == "linear_filter"
-                         and cfg.texture_filter == "linear"))
+    flags = {name: (name == "demos" and cfg.demos)
              for name in FLAGS}
+    # NOTE: v2-dedicated VIDEO-tab toggles (meaningful only on
+    # Openglv2, hence not in the generic FLAGS list).
+    video_dynlights = cfg.dynlights
+    video_linear = cfg.texture_filter == "linear"
 
     pygame.init()
     screen = pygame.display.set_mode((560, 420))
@@ -326,7 +338,7 @@ def main() -> int:
     scale_list = PickList(scale_labels, visible=3)
     scale_list.index = scale_labels.index(f"{cfg.sw_scale * 100}%") \
         if f"{cfg.sw_scale * 100}%" in scale_labels else 2
-    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=9)
+    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=7)
     mod_list = PickList([], visible=8)  # NOTE: MODS rows rebuilt per draw
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
     sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
@@ -371,9 +383,8 @@ def main() -> int:
         cfg.last_wad, cfg.last_skill = wad, SKILLS[skill_list.index]
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
-        cfg.dynlights = flags["dynlights"]
-        cfg.texture_filter = ("linear" if flags["linear_filter"]
-                              else "nearest")
+        cfg.dynlights = video_dynlights
+        cfg.texture_filter = "linear" if video_linear else "nearest"
         cfg.video_api = VIDEO_APIS[video_list.index]
         if cfg.video_api != "software":
             picked_res = res_label_to_value(res_list.selected())
@@ -395,8 +406,8 @@ def main() -> int:
             flags["nomonsters"], flags["kinematic"],
             flags["extra_hud"], VIDEO_APIS[video_list.index],
             mods_enabled, sorted(dev_on), sorted(dev_off),
-            flags["dynlights"],
-            "linear" if flags["linear_filter"] else "nearest")
+            video_dynlights,
+            "linear" if video_linear else "nearest")
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.
@@ -414,6 +425,23 @@ def main() -> int:
     def toggle_flag() -> None:
         name = FLAGS[flag_list.index]
         flags[name] = not flags[name]
+
+    def video_extra_rows() -> tuple:
+        """v2-dedicated VIDEO rows: (label, tag) with tag 0 dynlights,
+        1 linear filter. Empty unless Openglv2 is picked (they affect
+        nothing elsewhere, like the size row)."""
+        if VIDEO_APIS[video_list.index] == "openglv2":
+            return (("DYNAMIC LIGHTS", 0), ("LINEAR FILTER", 1))
+        return ()
+
+    def toggle_video_row(i: int) -> None:
+        nonlocal video_dynlights, video_linear, vfocus
+        rows = video_extra_rows()
+        if i >= len(rows):
+            return
+        video_dynlights, video_linear = flip_video_extra(
+            rows[i][1], video_dynlights, video_linear)
+        vfocus = 2 + i
 
     def toggle_mod() -> None:
         """MODS tab flip: row 0 is the master switch, the rest are mods
@@ -501,6 +529,22 @@ def main() -> int:
             screen.blit(small.render(label, True, (90, 90, 90)),
                         (24, 168))
             size_list.draw(screen, font, 24, 186, 200, vfocus == 1)
+            if api == "openglv2":
+                # NOTE: v2-dedicated rows (dynlights + linear filter only
+                # affect Openglv2; hidden elsewhere like the size row).
+                for slot, (label, tag) in enumerate(video_extra_rows()):
+                    ry = 312 + slot * 24
+                    on = (video_dynlights if tag == 0 else video_linear)
+                    picked = vfocus == 2 + slot
+                    color = ((255, 220, 120) if picked
+                             else (160, 160, 160))
+                    if picked:
+                        screen.fill((50, 30, 20), (24, ry, 512, 24))
+                    screen.blit(font.render(label, True, color),
+                                (32, ry + 3))
+                    img = small.render("ON" if on else "OFF", True,
+                                       color)
+                    screen.blit(img, (536 - 24 - img.get_width(), ry + 4))
         else:
             # NOTE: MODS tab (loader switch + per-mod rows, same labels
             # as the in-game Extension menu; backend warnings resolve
@@ -585,19 +629,34 @@ def main() -> int:
                             and sfocus == 1:
                         toggle_flag()
                 elif tab == 2:
-                    # NOTE: VIDEO tab (backend + conditional size row).
+                    # NOTE: VIDEO tab (backend + conditional size row +
+                    # v2-dedicated toggle rows).
                     api = VIDEO_APIS[video_list.index]
                     vis = [video_list] + (
                         [res_list] if api != "software" else [scale_list])
-                    if vfocus >= len(vis):
+                    rows = video_extra_rows()
+                    total = len(vis) + len(rows)
+                    if vfocus >= total:
                         vfocus = 0
                     if ev.key == pygame.K_UP:
-                        vis[vfocus].move(-1)
+                        if vfocus < len(vis):
+                            vis[vfocus].move(-1)
+                        else:
+                            vfocus = (vfocus - 1) % total
                     elif ev.key == pygame.K_DOWN:
-                        vis[vfocus].move(1)
+                        if vfocus < len(vis):
+                            vis[vfocus].move(1)
+                        else:
+                            vfocus = (vfocus + 1) % total
                     elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                        step = 1 if ev.key == pygame.K_RIGHT else -1
-                        vfocus = (vfocus + step) % len(vis)
+                        if vfocus < len(vis):
+                            step = 1 if ev.key == pygame.K_RIGHT else -1
+                            vfocus = (vfocus + step) % total
+                        else:
+                            toggle_video_row(vfocus - len(vis))
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) \
+                            and vfocus >= len(vis):
+                        toggle_video_row(vfocus - len(vis))
                 else:
                     # NOTE: MODS tab (master switch + mod rows).
                     if ev.key == pygame.K_UP:
@@ -627,12 +686,19 @@ def main() -> int:
                         sfocus = 1
                         toggle_flag()
                 elif tab == 2:
-                    # NOTE: VIDEO tab clicks (size row follows backend).
+                    # NOTE: VIDEO tab clicks (size row follows backend;
+                    # v2 rows toggle).
                     if video_list.click(ev.pos):
                         vfocus = 0
                     elif (res_list if VIDEO_APIS[video_list.index]
                             != "software" else scale_list).click(ev.pos):
                         vfocus = 1
+                    else:
+                        for slot in range(len(video_extra_rows())):
+                            if pygame.Rect(24, 312 + slot * 24, 512,
+                                           24).collidepoint(ev.pos):
+                                toggle_video_row(slot)
+                                break
                 else:
                     # NOTE: MODS tab clicks (master row + mod rows).
                     if mod_list.click(ev.pos):
