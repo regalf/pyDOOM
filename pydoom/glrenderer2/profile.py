@@ -13,17 +13,30 @@ from contextlib import contextmanager
 
 
 class Profiler:
-    """Collect ms per named scope; report() renders the table."""
+    """Collect ms per named scope; report() renders the table.
 
-    def __init__(self) -> None:
+    Optional enter/exit callbacks (the renderer passes the KHR debug
+    group push/pop: renderdoc then shows passes by name). Callbacks
+    never break the scoped body (failures are swallowed) and exit
+    always runs, even when the body raises.
+    """
+
+    def __init__(self, enter=None, exit=None) -> None:
         self.total: dict = {}  # name -> [ms, calls]
         self.counters: dict = {}  # name -> count (stalls, fences, ...)
         self.frames = 0
+        self._enter = enter
+        self._exit = exit
 
     @contextmanager
     def scope(self, name: str):
         """Time one pass (scopes may nest; inner time counts twice,
         like gprof: keep scopes sibling-level per pass)."""
+        if self._enter is not None:
+            try:
+                self._enter(name)
+            except Exception:  # noqa: BLE001 - profiling never breaks
+                pass
         t0 = time.perf_counter()
         try:
             yield
@@ -35,6 +48,11 @@ class Profiler:
             else:
                 cell[0] += dt
                 cell[1] += 1
+            if self._exit is not None:
+                try:
+                    self._exit(name)
+                except Exception:  # noqa: BLE001 - see above
+                    pass
 
     def frame(self) -> None:
         """Close one presented frame (drives per-frame averages)."""

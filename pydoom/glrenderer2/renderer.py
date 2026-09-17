@@ -42,7 +42,7 @@ class FrameRenderer2:
         self._res = res
         self._w, self._h = w, h
         self._uni: dict = {}
-        self.prof = Profiler()
+        self.prof = Profiler(enter=GL.push_group, exit=GL.pop_group)
         self._fence = None  # NOTE: previous frame's dynamic-draw fence
         self.wall_prog = shaders.compile_program(shaders.WALL_VERT,
                                                  shaders.WALL_FRAG)

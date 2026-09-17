@@ -289,3 +289,52 @@ def test_profiler_counters_report_and_reset():
     prof.reset()
     assert prof.counters == {}
     assert prof.report() == "profile: no samples"
+
+
+def test_profiler_scope_callbacks():
+    seen = []
+    prof = Profiler(enter=lambda n: seen.append(("in", n)),
+                    exit=lambda n: seen.append(("out", n)))
+    with prof.scope("walls"):
+        pass
+    assert seen == [("in", "walls"), ("out", "walls")]
+    with pytest.raises(RuntimeError):
+        with prof.scope("boom"):
+            raise RuntimeError("x")
+    assert seen[-2:] == [("in", "boom"), ("out", "boom")]
+    assert "boom" in prof.total  # NOTE: timing recorded anyway
+
+
+def test_profiler_bad_callbacks_never_break():
+    def _boom(_name):
+        raise RuntimeError("x")
+    prof = Profiler(enter=_boom, exit=_boom)
+    with prof.scope("walls"):
+        pass
+    assert "walls" in prof.total
+
+
+def test_debug_group_helpers(fake):
+    from pydoom.glrenderer2 import gl as gmod
+    gmod.push_group("walls")
+    gmod.pop_group()
+    push = [a for c, a in fake.calls if c == "glPushDebugGroup"]
+    assert push and push[0][1:] == (0, -1, "walls")
+    assert any(c == "glPopDebugGroup" for c, _a in fake.calls)
+
+
+def test_debug_group_failure_is_silent():
+    from pydoom.glrenderer2 import gl as gmod
+    gmod.cache_reset()
+
+    class NoDebug:
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    gmod._real = NoDebug()
+    try:
+        gmod.push_group("walls")  # NOTE: no KHR_debug: no raise
+        gmod.pop_group()
+    finally:
+        gmod._real = None
+        gmod.cache_reset()

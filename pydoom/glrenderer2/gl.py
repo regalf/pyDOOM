@@ -21,6 +21,8 @@ __all__ = [
     "cache_reset",
     "delete_fence",
     "place_fence",
+    "pop_group",
+    "push_group",
     "stats",
     "wait_fence",
 ]
@@ -245,4 +247,26 @@ def delete_fence(sync) -> None:
     try:
         _api().glDeleteSync(sync)
     except Exception:  # noqa: BLE001 - teardown never raises
+        pass
+
+
+def push_group(name: str) -> None:
+    """KHR debug group push (renderdoc shows passes by name).
+
+    Silent no-op without KHR_debug: observability must never break
+    rendering (older drivers, odd PyOpenGL builds).
+    """
+    try:
+        api = _api()
+        api.glPushDebugGroup(api.GL_DEBUG_SOURCE_APPLICATION,
+                             0, -1, name)
+    except Exception:  # noqa: BLE001 - see above
+        pass
+
+
+def pop_group() -> None:
+    """KHR debug group pop (pairs with push_group; never raises)."""
+    try:
+        _api().glPopDebugGroup()
+    except Exception:  # noqa: BLE001 - see above
         pass
