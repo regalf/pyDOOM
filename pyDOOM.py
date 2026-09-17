@@ -530,18 +530,19 @@ def main() -> int:
                         (24, 168))
             size_list.draw(screen, font, 24, 186, 200, vfocus == 1)
             if api == "openglv2":
-                # NOTE: v2-dedicated rows (dynlights + linear filter only
-                # affect Openglv2; hidden elsewhere like the size row).
+                # NOTE: v2-dedicated rows, right of the size list
+                # (dynlights + linear filter only affect Openglv2;
+                # hidden elsewhere like the size row).
                 for slot, (label, tag) in enumerate(video_extra_rows()):
-                    ry = 312 + slot * 24
+                    ry = 186 + slot * 24
                     on = (video_dynlights if tag == 0 else video_linear)
                     picked = vfocus == 2 + slot
                     color = ((255, 220, 120) if picked
                              else (160, 160, 160))
                     if picked:
-                        screen.fill((50, 30, 20), (24, ry, 512, 24))
+                        screen.fill((50, 30, 20), (296, ry, 240, 24))
                     screen.blit(font.render(label, True, color),
-                                (32, ry + 3))
+                                (304, ry + 3))
                     img = small.render("ON" if on else "OFF", True,
                                        color)
                     screen.blit(img, (536 - 24 - img.get_width(), ry + 4))
@@ -695,7 +696,7 @@ def main() -> int:
                         vfocus = 1
                     else:
                         for slot in range(len(video_extra_rows())):
-                            if pygame.Rect(24, 312 + slot * 24, 512,
+                            if pygame.Rect(296, 186 + slot * 24, 240,
                                            24).collidepoint(ev.pos):
                                 toggle_video_row(slot)
                                 break
