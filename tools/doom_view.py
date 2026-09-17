@@ -287,6 +287,7 @@ def main() -> int:
     fast = False
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     extra_hud = False  # --extra-hud: translucent readout block
+    dynlights_cli = False  # --dynlights: v2 muzzle/projectile lights
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
     rec_demo_path = None  # --record-demo=FILE: vanilla-format .lmp
@@ -322,6 +323,8 @@ def main() -> int:
             debug = True
         elif a == "--extra-hud":
             extra_hud = True
+        elif a == "--dynlights":
+            dynlights_cli = True
         elif a == "--kinematic":
             kinematic = True  # NOTE: legacy camera mover for A/B compare
         elif a.startswith("--skill="):
@@ -354,6 +357,8 @@ def main() -> int:
     wad_path = args[1] if len(args) > 1 else default_wad
     msettings = menu.Settings()
     menu.settings_load(menu.CONFIG_PATH, msettings)
+    if dynlights_cli:
+        msettings.dynlights = True  # NOTE: CLI forces the cfg option on
     # NOTE: wanted renderer backend (CLI overrides pydoom.cfg); the
     # effective one lands after the window dance (try_init below).
     # Legacy --video-api=opengl means v1 (pre-v2 scripts keep working).
@@ -887,6 +892,27 @@ def main() -> int:
                 guns.append((tex_id, patch.width, patch.height,
                              patch.leftoffset, patch.topoffset,
                              bobx, boby))
+            if win_backend == "openglv2" and msettings.dynlights \
+                    and hasattr(gl_frame, "set_lights"):
+                # NOTE: step 6 dynlights (opt-in): muzzle flash first,
+                # then live projectiles, capped at 8 in lights.py.
+                from pydoom.glrenderer2 import lights as _dynl
+                entries = []
+                if flash_light() > 0:
+                    entries.append(_dynl.muzzle_light(
+                        player_mo.x / 65536.0, player_mo.y / 65536.0,
+                        player_mo.z / 65536.0 + 41.0))
+                _styles = {MT_INDEX["ROCKET"]: "rocket",
+                           MT_INDEX["PLASMA"]: "plasma",
+                           MT_INDEX["BFG"]: "bfg"}
+                for mo in mobjs:
+                    if mo.dead or not (mo.flags & _MF_FLAGS["MF_MISSILE"]):
+                        continue
+                    entries.append(_dynl.missile_light(
+                        mo.x / 65536.0, mo.y / 65536.0,
+                        (mo.z + mo.height // 2) / 65536.0,
+                        _styles.get(mo.type, "rocket")))
+                gl_frame.set_lights(_dynl.pack_lights(entries))
             gl_frame.render(
                 int(cam.x * 65536), int(cam.y * 65536),
                 int(cam.viewz * 65536), cam.bam,

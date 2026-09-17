@@ -166,3 +166,23 @@ def test_cfg_roundtrips_mod_picks(tmp_path):
     settings_save(path, plain)
     text = open(path).read()
     assert "mods_enabled 1" in text and "mod_on" not in text
+
+
+def test_cfg_roundtrips_dynlights(tmp_path):
+    from pydoom.menu import Settings, settings_load, settings_save
+    cfg = Settings()
+    assert cfg.dynlights is False  # NOTE: vanilla pixels by default
+    cfg.dynlights = True
+    path = str(tmp_path / "pydoom.cfg")
+    settings_save(path, cfg)
+    back = Settings()
+    settings_load(path, back)
+    assert back.dynlights is True
+
+
+def test_viewer_args_carry_dynlights():
+    from pyDOOM import build_viewer_args
+    assert "--dynlights" in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal", dynlights=True)
+    assert "--dynlights" not in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal")

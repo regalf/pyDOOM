@@ -60,6 +60,7 @@ out float vSector;
 out float vTweak;
 out vec2 vNormal;
 out vec2 vWorld;
+out float vWorldZ;
 void main() {
     gl_Position = uViewProj * vec4(aPos, 1.0);
     vUv = vec2(aU, aTexBase - aPos.z);
@@ -67,6 +68,7 @@ void main() {
     vTweak = aTweak;
     vNormal = aNormal;
     vWorld = aPos.xy;
+    vWorldZ = aPos.z;
 }
 """
 
@@ -77,6 +79,7 @@ in float vSector;
 in float vTweak;
 in vec2 vNormal;
 in vec2 vWorld;
+in float vWorldZ;
 uniform sampler2D uWallTex;
 uniform sampler2D uScaleLight;
 uniform sampler2D uColormap;
@@ -89,6 +92,9 @@ uniform int uExtraLight;
 uniform int uFullbright;
 uniform float uWrap;
 uniform float uTexH;
+uniform int uDynNum;
+uniform vec4 uDynPos[8];
+uniform vec4 uDynCol[8];
 out vec4 oColor;
 layout(location = 1) out float oIndex;
 void main() {
@@ -129,7 +135,18 @@ void main() {
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
     }
-    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
+    // NOTE: v2 dynlights (step 6, opt-in): GZDoom-style linear falloff
+    // added over the palettized base. uDynNum defaults to 0, so v1 and
+    // lights-off v2 evaluate the identical pixels as before.
+    vec3 dyn = vec3(0.0);
+    vec3 fragPos = vec3(vWorld, vWorldZ);
+    for (int i = 0; i < 8; i++) {
+        if (i >= uDynNum) break;
+        vec3 ld = uDynPos[i].xyz - fragPos;
+        float att = clamp(1.0 - length(ld) / uDynPos[i].w, 0.0, 1.0);
+        dyn += uDynCol[i].rgb * (att * uDynCol[i].a);
+    }
+    oColor = vec4(min(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb + dyn, vec3(1.0)), 1.0);
     // NOTE: the index target feeds the fuzz backdrop (R_DrawFuzzColumn
     // remaps DRAWN pixels): store the lit index like the framebuffer
     // holds, not the raw texel (single-darkening would wash spectres
@@ -161,12 +178,14 @@ out vec2 vUv;
 out float vFlat;
 out float vSector;
 out float vZ;
+out vec2 vWorld;
 void main() {
     gl_Position = uViewProj * vec4(aPos, 1.0);
     vUv = aUv;
     vFlat = aFlat;
     vSector = aSector;
     vZ = aPos.z;
+    vWorld = aPos.xy;
 }
 """
 
@@ -176,6 +195,7 @@ in vec2 vUv;
 in float vFlat;
 in float vSector;
 in float vZ;
+in vec2 vWorld;
 uniform sampler2DArray uFlatArray;
 uniform sampler2D uZLight;
 uniform sampler2D uColormap;
@@ -186,6 +206,9 @@ uniform float uViewZ;
 uniform float uViewH;
 uniform int uExtraLight;
 uniform int uFullbright;
+uniform int uDynNum;
+uniform vec4 uDynPos[8];
+uniform vec4 uDynCol[8];
 out vec4 oColor;
 layout(location = 1) out float oIndex;
 void main() {
@@ -214,7 +237,16 @@ void main() {
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
     }
-    oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb, 1.0);
+    // NOTE: v2 dynlights, same contract as walls (uDynNum 0 = vanilla).
+    vec3 dyn = vec3(0.0);
+    vec3 fragPos = vec3(vWorld, vZ);
+    for (int i = 0; i < 8; i++) {
+        if (i >= uDynNum) break;
+        vec3 ld = uDynPos[i].xyz - fragPos;
+        float att = clamp(1.0 - length(ld) / uDynPos[i].w, 0.0, 1.0);
+        dyn += uDynCol[i].rgb * (att * uDynCol[i].a);
+    }
+    oColor = vec4(min(texelFetch(uPalette, ivec3(lit, 0, uPalIndex), 0).rgb + dyn, vec3(1.0)), 1.0);
     // NOTE: index target feeds the fuzz backdrop (vanilla remaps DRAWN
     // pixels through row 6): store lit like the framebuffer holds.
     oIndex = float(lit) / 255.0;

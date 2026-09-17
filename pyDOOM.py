@@ -39,11 +39,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "--viewer":
 SKILLS = ("baby", "easy", "normal", "hard", "nightmare")
 FALLBACK_WAD = "DOOM1.WAD"
 FLAGS = ("debug", "fast", "respawn", "nomonsters", "kinematic", "demos",
-         "extra_hud")
+         "extra_hud", "dynlights")
 FLAG_LABELS = {"debug": "DEBUG MODE", "fast": "FAST",
                "respawn": "RESPAWN", "nomonsters": "NO MONSTERS",
                "kinematic": "KINEMATIC", "demos": "DEMO COMPAT",
-               "extra_hud": "EXTRA HUD"}
+               "extra_hud": "EXTRA HUD", "dynlights": "DYNAMIC LIGHTS"}
 
 
 def find_wads(root: str = ROOT) -> list:
@@ -101,7 +101,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       video_api: str = "software",
                       mods_enabled: bool = True,
                       mods_on: tuple = (),
-                      mods_off: tuple = ()) -> list:
+                      mods_off: tuple = (),
+                      dynlights: bool = False) -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -124,6 +125,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--kinematic")
     if extra_hud:
         args.append("--extra-hud")
+    if dynlights:
+        args.append("--dynlights")
     if video_api in ("opengl", "openglv1", "openglv2"):
         # NOTE: software stays the default, so only a GL backend rides
         # argv (keeps argv byte-stable with no GL picked).
@@ -281,7 +284,9 @@ def main() -> int:
     wad = cfg.last_wad if cfg.last_wad in wads else wads[0]
     maps = maps_in(wad)
     skill = cfg.last_skill if cfg.last_skill in SKILLS else "normal"
-    flags = {name: (name == "demos" and cfg.demos) for name in FLAGS}
+    flags = {name: ((name == "demos" and cfg.demos)
+                     or (name == "dynlights" and cfg.dynlights))
+             for name in FLAGS}
 
     pygame.init()
     screen = pygame.display.set_mode((560, 420))
@@ -315,7 +320,7 @@ def main() -> int:
     scale_list = PickList(scale_labels, visible=3)
     scale_list.index = scale_labels.index(f"{cfg.sw_scale * 100}%") \
         if f"{cfg.sw_scale * 100}%" in scale_labels else 2
-    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=7)
+    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=8)
     mod_list = PickList([], visible=8)  # NOTE: MODS rows rebuilt per draw
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
     sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
@@ -360,6 +365,7 @@ def main() -> int:
         cfg.last_wad, cfg.last_skill = wad, SKILLS[skill_list.index]
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
+        cfg.dynlights = flags["dynlights"]
         cfg.video_api = VIDEO_APIS[video_list.index]
         if cfg.video_api != "software":
             picked_res = res_label_to_value(res_list.selected())
@@ -380,7 +386,8 @@ def main() -> int:
             flags["debug"], flags["fast"], flags["respawn"],
             flags["nomonsters"], flags["kinematic"],
             flags["extra_hud"], VIDEO_APIS[video_list.index],
-            mods_enabled, sorted(dev_on), sorted(dev_off))
+            mods_enabled, sorted(dev_on), sorted(dev_off),
+            flags["dynlights"])
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.

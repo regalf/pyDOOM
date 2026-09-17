@@ -261,6 +261,34 @@ class FrameRenderer2:
     def _pal(self, prog: int, pal_index: int) -> None:
         GL.glUniform1i(self._loc(prog, "uPalIndex"), int(pal_index))
 
+    def set_lights(self, lights) -> None:
+        """Upload up to 8 point lights for the wall/plane programs.
+
+        lights: (x, y, z, radius, r, g, b, intensity) world-unit
+        tuples. Empty leaves uDynNum 0: vanilla pixels. Called every
+        frame before render() when v2 + dynlights are live.
+        """
+        import numpy as np
+        from pydoom.glrenderer2.lights import MAX_LIGHTS
+        with self.prof.scope("lights"):
+            entries = list(lights)[:MAX_LIGHTS]
+            pos = np.zeros((MAX_LIGHTS, 4), dtype=np.float32)
+            col = np.zeros((MAX_LIGHTS, 4), dtype=np.float32)
+            for i, entry in enumerate(entries):
+                x, y, z, radius, r, g, b, inten = entry
+                pos[i] = (x, y, z, radius)
+                col[i] = (r, g, b, inten)
+            for prog in (self.wall_prog, self.wall_double_prog,
+                         self.plane_prog):
+                GL.glUseProgram(prog)
+                GL.glUniform1i(self._loc(prog, "uDynNum"),
+                               len(entries))
+                GL.glUniform4fv(self._loc(prog, "uDynPos[0]"),
+                                MAX_LIGHTS, pos)
+                GL.glUniform4fv(self._loc(prog, "uDynCol[0]"),
+                                MAX_LIGHTS, col)
+            GL.glUseProgram(0)
+
     def render(self, viewx: int, viewy: int, viewz: int,
                angle_bam: int, extra_light: int = 0,
                fullbright: bool = False, sprites=None,

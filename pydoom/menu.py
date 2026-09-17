@@ -123,6 +123,9 @@ class Settings:
     # is experimental and OFF by default (needs more development for
     # full demo parity); set `demos 1` in pydoom.cfg to enable it.
     demos: bool = False
+    # NOTE: v2 dynamic lights (muzzle flash + projectiles on walls and
+    # planes, Openglv2 only): off by default, vanilla pixels untouched.
+    dynlights: bool = False
     # NOTE: launcher prefs (pyDOOM.py writes these on Launch).
     last_wad: str = "DOOM1.WAD"
     last_skill: str = "normal"
@@ -206,6 +209,8 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.messages = bool(val)
         elif key == "demos":
             settings.demos = bool(val)
+        elif key == "dynlights":
+            settings.dynlights = bool(val)
         elif key == "fps_limit":
             settings.fps_limit = val if val in FPS_LIMITS else 60
         elif key == "vsync":
@@ -233,6 +238,7 @@ def settings_save(path: str, settings: Settings) -> None:
                     "playback/record, attract loop); experimental, "
                     "off by default, needs more development\n"
                     f"demos {int(settings.demos)}\n"
+                    f"dynlights {int(settings.dynlights)}\n"
                     f"last_wad {settings.last_wad}\n"
                     f"last_skill {settings.last_skill}\n"
                     f"last_map {settings.last_map}\n"

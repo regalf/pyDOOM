@@ -208,6 +208,20 @@ def glUniformMatrix4fv(loc: int, count: int, transpose,
     _api().glUniformMatrix4fv(loc, count, transpose, value)
 
 
+def glUniform4fv(loc: int, count: int, value) -> None:
+    """vec4 array upload (dynlight lists); last-value cached."""
+    try:
+        import numpy as _np
+        key = bytes(_np.ascontiguousarray(value, dtype=_np.float32))
+    except Exception:  # noqa: BLE001 - unhashable oddity: always issue
+        _hit()
+        _api().glUniform4fv(loc, count, value)
+        return
+    if _uniform(loc, ("4fv", key)):
+        return
+    _api().glUniform4fv(loc, count, value)
+
+
 def place_fence():
     """Fence after the frame's dynamic draws (None when unsupported).
 

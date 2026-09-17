@@ -143,8 +143,8 @@ def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
         old_double = shaders.WALL_FRAG_DOUBLE
         old_plane = shaders.PLANE_FRAG
         shaders.WALL_FRAG = old_wall.replace(
-            "oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
-            " 0).rgb, 1.0);",
+            "oColor = vec4(min(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
+            " 0).rgb + dyn, vec3(1.0)), 1.0);",
             "oColor = vec4(vec3(float(lit) / 255.0), 1.0);")
         # NOTE: single-sided mids ride WALL_FRAG_DOUBLE: patch it too
         # (re-derive from the patched WALL_FRAG so the two programs
@@ -157,8 +157,8 @@ def _gl_view(e1m1, angle, viewz, fullbright=False, extra_light=0,
             "        if (abs(den) > 1e-9)",
         )
         shaders.PLANE_FRAG = old_plane.replace(
-            "oColor = vec4(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
-            " 0).rgb, 1.0);",
+            "oColor = vec4(min(texelFetch(uPalette, ivec3(lit, 0, uPalIndex),"
+            " 0).rgb + dyn, vec3(1.0)), 1.0);",
             "oColor = vec4(vec3(float(lit) / 255.0), 1.0);")
     try:
         res = GlResources.create(e1m1["walls"], e1m1["planes"],

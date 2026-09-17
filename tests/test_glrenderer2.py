@@ -338,3 +338,62 @@ def test_debug_group_failure_is_silent():
     finally:
         gmod._real = None
         gmod.cache_reset()
+
+
+def test_lights_pack_caps_and_orders():
+    from pydoom.glrenderer2 import lights as L
+    assert L.MAX_LIGHTS == 8
+    m = L.muzzle_light(1.0, 2.0, 41.0)
+    assert m[:4] == (1.0, 2.0, 41.0, 144.0) and m[4:] == (1.0, 0.75, 0.45, 1.0)
+    assert L.missile_light(0, 0, 0, "plasma")[4:7] == (0.35, 0.6, 1.0)
+    assert L.missile_light(0, 0, 0, "bfg")[3] == 144.0
+    assert L.missile_light(0, 0, 0, "weird")[4:7] == (1.0, 0.7, 0.35)
+    entries = [m] + [L.missile_light(float(i), 0, 0) for i in range(10)]
+    packed = L.pack_lights(entries)
+    assert len(packed) == 8 and packed[0] == m  # NOTE: muzzle first
+
+
+@requires_wad
+def test_v2_dynlights_brighten_and_default_off(e1m1):
+    """One muzzle-like light brightens nearby walls; default (no
+    set_lights call) matches v1 exactly (parity tests pin that)."""
+    _open_window()
+    import pygame
+    try:
+        from pydoom.glrender.draw import FrameRenderer
+        from pydoom.glrender.upload import GlResources
+        from pydoom.glrenderer2 import lights as L
+        from pydoom.glrenderer2.renderer import FrameRenderer2
+        res = GlResources.create(e1m1["walls"], e1m1["planes"],
+                                 e1m1["wtex"], e1m1["ftex"],
+                                 e1m1["cmap"], e1m1["pal"])
+        assert res is not None
+        try:
+            start = e1m1["start"]
+            x, y = start.x << 16, start.y << 16
+            viewz = 41 << 16
+            f1 = FrameRenderer(res, 320, 200)
+            try:
+                f1.render(x, y, viewz, 0)
+                ref = f1.readback()
+            finally:
+                f1.close()
+            f2 = FrameRenderer2(res, 320, 200)
+            try:
+                f2.render(x, y, viewz, 0)
+                dark = f2.readback()
+                assert (dark == ref).all()  # NOTE: uDynNum 0 default
+                f2.set_lights([L.muzzle_light(x / 65536.0,
+                                              y / 65536.0, 41.0)])
+                f2.render(x, y, viewz, 0)
+                lit = f2.readback()
+                assert not (lit == dark).all()  # NOTE: flash lights walls
+                assert (lit.astype(int) >= dark.astype(int)).all()
+            finally:
+                f2.close()
+                res.delete()
+        except Exception:
+            res.delete()
+            raise
+    finally:
+        pygame.quit()
