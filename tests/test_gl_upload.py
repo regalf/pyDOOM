@@ -343,3 +343,17 @@ def test_reupload_fast_uses_subdata_when_sparse():
     finally:
         import pygame
         pygame.quit()
+
+
+@requires_wad
+def test_bright_lut_threshold():
+    """Step 8 brightmask: whites/hot yellows qualify, black and
+    mid-tones never do (DOOM1.WAD golden: 31 entries)."""
+    from pydoom.glrender.light import bright_lut
+    from pydoom.wad import WadFile
+    bl = bright_lut(bytes(WadFile(WAD_PATH).read_lump("PLAYPAL")))
+    assert len(bl) == 256
+    assert bl[0] == 0 and bl[4] == 255
+    assert sum(1 for b in bl if b) == 31
+    with pytest.raises(ValueError):
+        bright_lut(b"short")

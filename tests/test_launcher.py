@@ -216,6 +216,39 @@ def test_viewer_args_carry_texture_filter():
 
 def test_flip_video_extra_rows():
     from pyDOOM import flip_video_extra
-    assert flip_video_extra(0, False, False) == (True, False)
-    assert flip_video_extra(1, True, False) == (True, True)
-    assert flip_video_extra(1, True, True) == (True, False)
+    assert flip_video_extra(0, False, False, False) == (
+        True, False, False)
+    assert flip_video_extra(1, True, False, False) == (
+        True, True, False)
+    assert flip_video_extra(1, True, True, True) == (
+        True, False, True)
+
+
+def test_cfg_roundtrips_brightmaps(tmp_path):
+    from pydoom.menu import Settings, settings_load, settings_save
+    cfg = Settings()
+    assert cfg.brightmaps is False
+    cfg.brightmaps = True
+    path = str(tmp_path / "pydoom.cfg")
+    settings_save(path, cfg)
+    back = Settings()
+    settings_load(path, back)
+    assert back.brightmaps is True
+
+
+def test_viewer_args_carry_brightmaps():
+    from pyDOOM import build_viewer_args
+    assert "--brightmaps" in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal", brightmaps=True)
+    assert "--brightmaps" not in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal")
+
+
+def test_flip_video_extra_third_row():
+    from pyDOOM import flip_video_extra
+    assert flip_video_extra(2, False, False, False) == (
+        False, False, True)
+    assert flip_video_extra(2, True, True, True) == (
+        True, True, False)
+    assert flip_video_extra(0, False, False, True) == (
+        True, False, True)

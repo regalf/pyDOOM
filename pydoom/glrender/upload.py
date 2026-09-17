@@ -85,6 +85,7 @@ class GlResources:
     sprite_info: dict = field(default_factory=dict)  # sprnum -> (w,h)
     colormap_tex: int = 0
     palette_tex: int = 0
+    bright_lut_tex: int = 0  # NOTE: step 8 R8 256x1 brightmask (v2 only)
     sector_tex: int = 0  # R8 W=numsectors x1: base lightnum per sector
     # (walls/planes sample it; flicker/strobe/movers re-upload only
     # this, never the geometry VBOs, for light changes)
@@ -115,6 +116,9 @@ class GlResources:
             created.colormap_tex = cls._upload_lut(
                 colormap, 256, 32, GL.GL_R8, GL.GL_RED)
             created.palette_tex = cls._upload_palette(playpal)
+            from pydoom.glrender.light import bright_lut
+            created.bright_lut_tex = cls._upload_lut(
+                bright_lut(bytes(playpal)), 256, 1, GL.GL_R8, GL.GL_RED)
             created.upload_sector_lights(sector_lights or [0])
         except Exception:  # noqa: BLE001 - any GL failure falls back
             created.delete()
@@ -534,12 +538,15 @@ class GlResources:
         raise out of level transitions)."""
         try:
             from OpenGL import GL
-            ids = [self.wall_vbo, self.wall_ibo, self.plane_vbo]
-            GL.glDeleteBuffers(3, [i for i in ids if i])
+            ids = [i for i in
+                   [self.wall_vbo, self.wall_ibo, self.plane_vbo] if i]
+            if ids:
+                GL.glDeleteBuffers(len(ids), ids)
             tids = (list(self.wall_textures.values())
                     + list(self.sprite_textures.values())
                     + [self.flat_array, self.colormap_tex,
-                        self.palette_tex, self.sector_tex])
+                        self.palette_tex, self.sector_tex,
+                        self.bright_lut_tex])
             tids = [t for t in tids if t]
             if tids:
                 GL.glDeleteTextures(len(tids), tids)
@@ -558,6 +565,7 @@ class GlResources:
             self.flat_array = 0
             self.flat_layers = {}
             self.colormap_tex = self.palette_tex = 0
+            self.bright_lut_tex = 0
             self.sector_tex = 0
             self.sector_count = 0
             self._wall_array = None

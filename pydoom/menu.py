@@ -126,6 +126,9 @@ class Settings:
     # NOTE: v2 dynamic lights (muzzle flash + projectiles on walls and
     # planes, Openglv2 only): off by default, vanilla pixels untouched.
     dynlights: bool = False
+    # NOTE: v2 brightmaps (step 8, lamp whites/yellows skip distance
+    # dimming, Openglv2 walls/flats only): off by default.
+    brightmaps: bool = False
     # NOTE: v2 texture filtering (step 7, Openglv2 walls/flats only):
     # nearest matches v1 exactly, linear smooths.
     texture_filter: str = "nearest"
@@ -218,6 +221,8 @@ def settings_load(path: str, settings: Settings) -> None:
             settings.demos = bool(val)
         elif key == "dynlights":
             settings.dynlights = bool(val)
+        elif key == "brightmaps":
+            settings.brightmaps = bool(val)
         elif key == "fps_limit":
             settings.fps_limit = val if val in FPS_LIMITS else 60
         elif key == "vsync":
@@ -246,6 +251,7 @@ def settings_save(path: str, settings: Settings) -> None:
                     "off by default, needs more development\n"
                     f"demos {int(settings.demos)}\n"
                     f"dynlights {int(settings.dynlights)}\n"
+                    f"brightmaps {int(settings.brightmaps)}\n"
                     f"last_wad {settings.last_wad}\n"
                     f"last_skill {settings.last_skill}\n"
                     f"last_map {settings.last_map}\n"
@@ -342,6 +348,7 @@ def build_menus() -> dict:
             MenuItem("show_fps", None, "choice", "p"),
             MenuItem("dynlights", None, "choice", "g"),
             MenuItem("texture_filter", None, "choice", "t"),
+            MenuItem("brightmaps", None, "choice", "b"),
             MenuItem("apply_video", None, "action", "y"),
         ], 36, 53, "options", 0),
         "sound": MenuDef("sound", None, [
@@ -782,7 +789,7 @@ class Menu:
     _VIDEO_KEYS = ("video_api", "gl_resolution", "sw_scale",
                    "fps_limit", "vsync", "display_mode",
                    "display_index", "show_fps", "dynlights",
-                   "texture_filter")
+                   "texture_filter", "brightmaps")
 
     def _staged_video(self) -> dict:
         """Snapshot the apply-relevant video settings (esc restores)."""
@@ -807,7 +814,7 @@ class Menu:
         if action == "fps_limit":
             return tuple("UNLIMITED" if v == 0 else str(v)
                          for v in FPS_LIMITS)
-        if action in ("vsync", "show_fps", "dynlights"):
+        if action in ("vsync", "show_fps", "dynlights", "brightmaps"):
             return ("OFF", "ON")
         if action == "display_mode":
             return tuple(v.upper() for v in DISPLAY_MODES)
@@ -835,6 +842,8 @@ class Menu:
             cur = "ON" if s.show_fps else "OFF"
         elif action == "dynlights":
             cur = "ON" if s.dynlights else "OFF"
+        elif action == "brightmaps":
+            cur = "ON" if s.brightmaps else "OFF"
         elif action == "texture_filter":
             cur = s.texture_filter.upper()
         elif action == "display_mode":
@@ -867,6 +876,8 @@ class Menu:
             s.show_fps = nxt == "ON"
         elif action == "dynlights":
             s.dynlights = nxt == "ON"
+        elif action == "brightmaps":
+            s.brightmaps = nxt == "ON"
         elif action == "texture_filter":
             s.texture_filter = nxt.lower()
         elif action == "display_mode":

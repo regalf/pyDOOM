@@ -103,7 +103,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       mods_on: tuple = (),
                       mods_off: tuple = (),
                       dynlights: bool = False,
-                      texture_filter: str = "nearest") -> list:
+                      texture_filter: str = "nearest",
+                      brightmaps: bool = False) -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -128,6 +129,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--extra-hud")
     if dynlights:
         args.append("--dynlights")
+    if brightmaps:
+        args.append("--brightmaps")
     if texture_filter == "linear":
         args.append("--texture-filter=linear")
     if video_api in ("opengl", "openglv1", "openglv2"):
@@ -157,15 +160,17 @@ def video_tab_rows(video_api: str) -> tuple:
 
 
 def flip_video_extra(tag: int, dynlights: bool,
-                     linear: bool) -> tuple:
+                     linear: bool, brightmaps: bool = False) -> tuple:
     """Toggle one v2-dedicated VIDEO row (pure, unit tested).
 
-    tag 0 is DYNAMIC LIGHTS, 1 is LINEAR FILTER; returns the new
-    (dynlights, linear) pair.
+    tag 0 is DYNAMIC LIGHTS, 1 is LINEAR FILTER, 2 is BRIGHTMAPS;
+    returns the new (dynlights, linear, brightmaps) triple.
     """
     if tag == 0:
-        return (not dynlights, linear)
-    return (dynlights, not linear)
+        return (not dynlights, linear, brightmaps)
+    if tag == 1:
+        return (dynlights, not linear, brightmaps)
+    return (dynlights, linear, not brightmaps)
 
 
 def mod_tab_rows(status, mods_enabled: bool = True) -> tuple:
@@ -305,6 +310,7 @@ def main() -> int:
     # Openglv2, hence not in the generic FLAGS list).
     video_dynlights = cfg.dynlights
     video_linear = cfg.texture_filter == "linear"
+    video_brightmaps = cfg.brightmaps
 
     pygame.init()
     screen = pygame.display.set_mode((560, 420))
@@ -384,6 +390,7 @@ def main() -> int:
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
         cfg.dynlights = video_dynlights
+        cfg.brightmaps = video_brightmaps
         cfg.texture_filter = "linear" if video_linear else "nearest"
         cfg.video_api = VIDEO_APIS[video_list.index]
         if cfg.video_api != "software":
@@ -407,7 +414,8 @@ def main() -> int:
             flags["extra_hud"], VIDEO_APIS[video_list.index],
             mods_enabled, sorted(dev_on), sorted(dev_off),
             video_dynlights,
-            "linear" if video_linear else "nearest")
+            "linear" if video_linear else "nearest",
+            video_brightmaps)
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.
@@ -428,19 +436,20 @@ def main() -> int:
 
     def video_extra_rows() -> tuple:
         """v2-dedicated VIDEO rows: (label, tag) with tag 0 dynlights,
-        1 linear filter. Empty unless Openglv2 is picked (they affect
-        nothing elsewhere, like the size row)."""
+        1 linear filter, 2 brightmaps. Empty unless Openglv2 is picked
+        (they affect nothing elsewhere, like the size row)."""
         if VIDEO_APIS[video_list.index] == "openglv2":
-            return (("DYNAMIC LIGHTS", 0), ("LINEAR FILTER", 1))
+            return (("DYNAMIC LIGHTS", 0), ("LINEAR FILTER", 1),
+                    ("BRIGHTMAPS", 2))
         return ()
 
     def toggle_video_row(i: int) -> None:
-        nonlocal video_dynlights, video_linear, vfocus
+        nonlocal video_dynlights, video_linear, video_brightmaps, vfocus
         rows = video_extra_rows()
         if i >= len(rows):
             return
-        video_dynlights, video_linear = flip_video_extra(
-            rows[i][1], video_dynlights, video_linear)
+        video_dynlights, video_linear, video_brightmaps = flip_video_extra(
+            rows[i][1], video_dynlights, video_linear, video_brightmaps)
         vfocus = 2 + i
 
     def toggle_mod() -> None:

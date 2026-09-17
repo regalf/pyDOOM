@@ -288,6 +288,7 @@ def main() -> int:
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     extra_hud = False  # --extra-hud: translucent readout block
     dynlights_cli = False  # --dynlights: v2 muzzle/projectile lights
+    brightmaps_cli = False  # --brightmaps: v2 lamp exemption
     texfilter_cli = None  # --texture-filter=: v2 linear walls/flats
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
@@ -326,6 +327,8 @@ def main() -> int:
             extra_hud = True
         elif a == "--dynlights":
             dynlights_cli = True
+        elif a == "--brightmaps":
+            brightmaps_cli = True
         elif a.startswith("--texture-filter="):
             texfilter_cli = a.split("=", 1)[1].lower()
         elif a == "--kinematic":
@@ -362,6 +365,8 @@ def main() -> int:
     menu.settings_load(menu.CONFIG_PATH, msettings)
     if dynlights_cli:
         msettings.dynlights = True  # NOTE: CLI forces the cfg option on
+    if brightmaps_cli:
+        msettings.brightmaps = True  # NOTE: CLI forces the cfg option on
     if texfilter_cli in ("nearest", "linear"):
         msettings.texture_filter = texfilter_cli
     # NOTE: wanted renderer backend (CLI overrides pydoom.cfg); the
@@ -900,27 +905,29 @@ def main() -> int:
                 guns.append((tex_id, patch.width, patch.height,
                              patch.leftoffset, patch.topoffset,
                              bobx, boby))
-            if win_backend == "openglv2" and msettings.dynlights \
-                    and hasattr(gl_frame, "set_lights"):
-                # NOTE: step 6 dynlights (opt-in): muzzle flash first,
-                # then live projectiles, capped at 8 in lights.py.
+            if win_backend == "openglv2" and hasattr(gl_frame, "set_lights"):
+                # NOTE: step 6 dynlights (opt-in, empty = vanilla) and
+                # step 8 brightmaps (opt-in flag): set every frame so
+                # toggling never leaves stale uniforms behind.
                 from pydoom.glrenderer2 import lights as _dynl
                 entries = []
-                if flash_light() > 0:
+                if msettings.dynlights and flash_light() > 0:
                     entries.append(_dynl.muzzle_light(
                         player_mo.x / 65536.0, player_mo.y / 65536.0,
                         player_mo.z / 65536.0 + 41.0))
-                _styles = {MT_INDEX["ROCKET"]: "rocket",
-                           MT_INDEX["PLASMA"]: "plasma",
-                           MT_INDEX["BFG"]: "bfg"}
-                for mo in mobjs:
-                    if mo.dead or not (mo.flags & _MF_FLAGS["MF_MISSILE"]):
-                        continue
-                    entries.append(_dynl.missile_light(
-                        mo.x / 65536.0, mo.y / 65536.0,
-                        (mo.z + mo.height // 2) / 65536.0,
-                        _styles.get(mo.type, "rocket")))
+                if msettings.dynlights:
+                    _styles = {MT_INDEX["ROCKET"]: "rocket",
+                               MT_INDEX["PLASMA"]: "plasma",
+                               MT_INDEX["BFG"]: "bfg"}
+                    for mo in mobjs:
+                        if mo.dead or not (mo.flags & _MF_FLAGS["MF_MISSILE"]):
+                            continue
+                        entries.append(_dynl.missile_light(
+                            mo.x / 65536.0, mo.y / 65536.0,
+                            (mo.z + mo.height // 2) / 65536.0,
+                            _styles.get(mo.type, "rocket")))
                 gl_frame.set_lights(_dynl.pack_lights(entries))
+                gl_frame.set_brightmaps(msettings.brightmaps)
             gl_frame.render(
                 int(cam.x * 65536), int(cam.y * 65536),
                 int(cam.viewz * 65536), cam.bam,

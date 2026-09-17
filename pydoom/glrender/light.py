@@ -39,6 +39,7 @@ __all__ = [
     "SCALELIGHT_W",
     "ZLIGHT_H",
     "ZLIGHT_W",
+    "bright_lut",
     "colormap_lut",
     "palette_lut",
     "scalelight_lut",
@@ -51,6 +52,22 @@ def colormap_lut(data: bytes) -> bytes:
     if len(data) < COLORMAP_BYTES:
         raise ValueError(f"COLORMAP lump too short: {len(data)} bytes")
     return bytes(data[:COLORMAP_BYTES])
+
+
+def bright_lut(data: bytes, threshold: float = 0.80) -> bytes:
+    """256-byte brightmask (step 8, opt-in): 255 for palette entries
+    at/above Rec.709 luminance threshold on palette 0 (lamp whites
+    and hot yellows: 31 entries in DOOM1.WAD), else 0. Heuristic, not
+    vanilla data: mid-tones never qualify, so enabling it only lifts
+    light sources out of the distance dimming."""
+    if len(data) < PALETTE_BYTES:
+        raise ValueError(f"PLAYPAL lump too short: {len(data)} bytes")
+    out = bytearray()
+    for i in range(256):
+        r, g, b = data[3 * i], data[3 * i + 1], data[3 * i + 2]
+        lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+        out.append(255 if lum >= threshold else 0)
+    return bytes(out)
 
 
 def palette_lut(data: bytes, index: int = 0) -> bytes:

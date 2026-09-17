@@ -81,15 +81,18 @@ class FrameRenderer2:
         for prog, samplers in (
                 (self.wall_prog, (("uWallTex", 0), ("uScaleLight", 1),
                                   ("uColormap", 2), ("uPalette", 3),
-                                  ("uSectorLight", 6))),
+                                  ("uSectorLight", 6),
+                                  ("uBrightLut", 4))),
                 (self.wall_double_prog, (("uWallTex", 0),
                                          ("uScaleLight", 1),
                                          ("uColormap", 2),
                                          ("uPalette", 3),
-                                         ("uSectorLight", 6))),
+                                         ("uSectorLight", 6),
+                                         ("uBrightLut", 4))),
                 (self.plane_prog, (("uFlatArray", 0), ("uZLight", 1),
                                    ("uColormap", 2), ("uPalette", 3),
-                                   ("uSectorLight", 6))),
+                                   ("uSectorLight", 6),
+                                   ("uBrightLut", 4))),
                 (self.sprite_prog, (("uSpriteTex", 0),
                                     ("uColormap", 2),
                                     ("uPalette", 3))),
@@ -314,6 +317,20 @@ class FrameRenderer2:
                                 MAX_LIGHTS, col)
             GL.glUseProgram(0)
 
+    def set_brightmaps(self, on: bool) -> None:
+        """Toggle the bright-LUT exemption (step 8, opt-in).
+
+        Off (default) leaves uBrightmaps 0: vanilla rows, v1-identical
+        pixels. Called every frame before render() when v2 is live.
+        """
+        with self.prof.scope("lights"):
+            for prog in (self.wall_prog, self.wall_double_prog,
+                         self.plane_prog):
+                GL.glUseProgram(prog)
+                GL.glUniform1i(self._loc(prog, "uBrightmaps"),
+                               int(bool(on)))
+            GL.glUseProgram(0)
+
     def render(self, viewx: int, viewy: int, viewz: int,
                angle_bam: int, extra_light: int = 0,
                fullbright: bool = False, sprites=None,
@@ -373,6 +390,8 @@ class FrameRenderer2:
             GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
             GL.glActiveTexture(GL.GL_TEXTURE6)
             GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
+            GL.glActiveTexture(GL.GL_TEXTURE4)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, res.bright_lut_tex)
             GL.glBindVertexArray(self._wall_vao)
             if self._linear:
                 GL.glBindSampler(0, self._samp_linear)
@@ -429,6 +448,8 @@ class FrameRenderer2:
             GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
             GL.glActiveTexture(GL.GL_TEXTURE6)
             GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
+            GL.glActiveTexture(GL.GL_TEXTURE4)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, res.bright_lut_tex)
             GL.glBindVertexArray(self._wall_vao)
             if self._linear:
                 GL.glBindSampler(0, self._samp_linear)
@@ -457,6 +478,8 @@ class FrameRenderer2:
             GL.glBindTexture(GL.GL_TEXTURE_2D_ARRAY, res.palette_tex)
             GL.glActiveTexture(GL.GL_TEXTURE6)
             GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
+            GL.glActiveTexture(GL.GL_TEXTURE4)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, res.bright_lut_tex)
             GL.glBindVertexArray(self._plane_vao)
             if self._linear:
                 GL.glBindSampler(0, self._samp_linear)

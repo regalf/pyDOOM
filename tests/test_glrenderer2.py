@@ -444,3 +444,49 @@ def test_v2_linear_differs_but_renders(e1m1):
             raise
     finally:
         pygame.quit()
+
+
+@requires_wad
+def test_v2_brightmaps_lift_lamp_pixels(e1m1):
+    """Bright indices take the brightest ramp: with forced-dark sector
+    lights aimed at a lamp wall, the flag lifts pixels; off matches
+    v1 exactly."""
+    _open_window()
+    import pygame
+    try:
+        from pydoom.glrender.draw import FrameRenderer
+        from pydoom.glrender.upload import GlResources
+        from pydoom.glrenderer2.renderer import FrameRenderer2
+        res = GlResources.create(e1m1["walls"], e1m1["planes"],
+                                 e1m1["wtex"], e1m1["ftex"],
+                                 e1m1["cmap"], e1m1["pal"],
+                                 sector_lights=[0] * len(
+                                     e1m1["game_map"].sectors))
+        assert res is not None
+        try:
+            # NOTE: lamp wall (bright texels), seen from the south.
+            x, y = 1632 << 16, -2100 << 16
+            f1 = FrameRenderer(res, 320, 200)
+            try:
+                f1.render(x, y, 41 << 16, 0xC0000000)
+                ref = f1.readback()
+            finally:
+                f1.close()
+            f2 = FrameRenderer2(res, 320, 200)
+            try:
+                f2.set_brightmaps(False)
+                f2.render(x, y, 41 << 16, 0xC0000000)
+                dark = f2.readback()
+                assert (dark == ref).all()  # NOTE: flag off = vanilla
+                f2.set_brightmaps(True)
+                f2.render(x, y, 41 << 16, 0xC0000000)
+                lit = f2.readback()
+                d = lit.astype(int) - dark.astype(int)
+                assert int((d != 0).any(axis=2).sum()) > 0
+                assert int(d.max()) > 0  # NOTE: lamps lift, never dim
+            finally:
+                f2.close()
+        finally:
+            res.delete()
+    finally:
+        pygame.quit()

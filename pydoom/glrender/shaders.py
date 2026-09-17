@@ -98,6 +98,8 @@ uniform float uTexH;
 uniform int uDynNum;
 uniform vec4 uDynPos[8];
 uniform vec4 uDynCol[8];
+uniform int uBrightmaps;
+uniform sampler2D uBrightLut;
 out vec4 oColor;
 layout(location = 1) out float oIndex;
 void main() {
@@ -133,7 +135,16 @@ void main() {
         int row0 = clamp(int(base + 0.5) + int(vTweak + 0.5) - 1,
                          0, 15);
         int row = clamp(row0 + uExtraLight, 0, 15);
-        int cmap = int(texelFetch(uScaleLight, ivec2(li, row), 0).r
+        // NOTE: step 8 brightmaps (opt-in): lamp whites/yellows take
+        // the brightest ramp (row 15: rows index lightnum, higher =
+        // brighter) instead of the distance-dimmed row, via the
+        // 256-entry bright LUT. uBrightmaps defaults to 0: vanilla
+        // rows, v1-identical pixels.
+        int row_use = row;
+        if (uBrightmaps != 0
+                && texelFetch(uBrightLut, ivec2(idx, 0), 0).r > 0.5)
+            row_use = 15;
+        int cmap = int(texelFetch(uScaleLight, ivec2(li, row_use), 0).r
                        * 255.0 + 0.5);
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
@@ -237,6 +248,8 @@ uniform int uFullbright;
 uniform int uDynNum;
 uniform vec4 uDynPos[8];
 uniform vec4 uDynCol[8];
+uniform int uBrightmaps;
+uniform sampler2D uBrightLut;
 out vec4 oColor;
 layout(location = 1) out float oIndex;
 void main() {
@@ -260,7 +273,13 @@ void main() {
                                 ivec2(int(vSector + 0.5), 0), 0).r
                      * 255.0;
         int row = clamp(int(base + 0.5) + uExtraLight, 0, 15);
-        int cmap = int(texelFetch(uZLight, ivec2(li, row), 0).r
+        // NOTE: step 8 brightmaps, same contract as walls (row 15 =
+        // brightest ramp).
+        int row_use = row;
+        if (uBrightmaps != 0
+                && texelFetch(uBrightLut, ivec2(idx, 0), 0).r > 0.5)
+            row_use = 15;
+        int cmap = int(texelFetch(uZLight, ivec2(li, row_use), 0).r
                        * 255.0 + 0.5);
         lit = int(texelFetch(uColormap, ivec2(idx, cmap), 0).r
                   * 255.0 + 0.5);
