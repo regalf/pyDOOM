@@ -1280,3 +1280,20 @@ def test_crosshair_hidden_outside_level():
     mgr.emit("gamestate", old="menu", new="level")
     mgr.emit("post_overlay", fb=level_fb)
     assert level_fb.sum() > 0
+
+
+def test_default_mods_dir_frozen_hits_internal(monkeypatch, tmp_path):
+    import sys
+    from pydoom import ext
+    bundle = tmp_path / "bundle"
+    internal = bundle / "_internal"
+    (internal / "mods").mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
+    monkeypatch.setattr(sys, "executable", str(bundle / "pyDOOM"),
+                        raising=False)
+    # NOTE: onedir datas land in _internal (like DOOM1.WAD): bundled
+    # mods resolve there, not beside the exe.
+    assert ext.default_mods_dir() == str(internal / "mods")
+    (internal / "mods").rmdir()
+    assert ext.default_mods_dir() == str(bundle / "mods")

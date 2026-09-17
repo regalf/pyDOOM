@@ -81,8 +81,9 @@ MOD = Hi()
 ## Lifecycle
 
 1. Viewer builds `ModManager`, discovers `mods/` (see
-   `ext.default_mods_dir()` — next to the exe when frozen, so mods
-   added after a PyInstaller build just work).
+   `ext.default_mods_dir()` — repo `mods/` from source, `_internal/mods`
+   inside a PyInstaller bundle like the bundled DOOM1.WAD, so mods
+   added after a build just work).
 2. `refresh()` resolves in topological order: wrong `api_version`,
    missing/off dependency (`NEEDS <dep>`) and backend mismatch
    (`NEEDS opengl`) refuse loudly with a reason shown in the menu.

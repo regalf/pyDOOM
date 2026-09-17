@@ -26,9 +26,10 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('DOOM1.WAD', '.'), ('VERSION', '.'),
-           # NOTE: bundled mods ship beside the exe (ext.default_mods_dir
-           # resolves there when frozen); user mods added later land in
-           # the same folder, no rebuild needed.
+           # NOTE: bundled mods ship under _internal/mods (PyInstaller
+           # onedir collects datas there, like DOOM1.WAD above;
+           # ext.default_mods_dir resolves there when frozen); user
+           # mods added later land in the same folder, no rebuild.
            ('mods', 'mods')],
     hiddenimports=(['tools.doom_view']
                    + collect_submodules('OpenGL')

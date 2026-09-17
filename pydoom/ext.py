@@ -30,11 +30,16 @@ def current():
 def default_mods_dir() -> str:
     """Where third-party mods live.
 
-    Frozen (PyInstaller onedir): next to the exe, so mods dropped in
-    after the build just work, no rebuild. Source tree: repo mods/.
+    Frozen (PyInstaller onedir collects datas under _internal, same as
+    DOOM1.WAD): the bundled mods live in _internal/mods, and user mods
+    dropped there load with no rebuild. Source tree: repo mods/.
     Mods are runtime-loaded source (.toml + .py), never frozen in.
     """
     if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass is not None and os.path.isdir(
+                os.path.join(meipass, "mods")):
+            return os.path.join(meipass, "mods")
         return os.path.join(os.path.dirname(sys.executable), "mods")
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(here, "..", "mods")
