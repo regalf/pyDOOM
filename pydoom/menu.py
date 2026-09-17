@@ -126,6 +126,9 @@ class Settings:
     # NOTE: v2 dynamic lights (muzzle flash + projectiles on walls and
     # planes, Openglv2 only): off by default, vanilla pixels untouched.
     dynlights: bool = False
+    # NOTE: v2 texture filtering (step 7, Openglv2 walls/flats only):
+    # nearest matches v1 exactly, linear smooths.
+    texture_filter: str = "nearest"
     # NOTE: launcher prefs (pyDOOM.py writes these on Launch).
     last_wad: str = "DOOM1.WAD"
     last_skill: str = "normal"
@@ -187,6 +190,10 @@ def settings_load(path: str, settings: Settings) -> None:
             if raw in DISPLAY_MODES:
                 settings.display_mode = raw
             continue
+        if key == "texture_filter":
+            if raw in ("nearest", "linear"):
+                settings.texture_filter = raw
+            continue
         if key == "mod_on":
             settings.mods_on.add(raw[:64])
             settings.mods_off.discard(raw[:64])
@@ -247,6 +254,7 @@ def settings_save(path: str, settings: Settings) -> None:
                     f"fps_limit {settings.fps_limit}\n"
                     f"vsync {int(settings.vsync)}\n"
                     f"display_mode {settings.display_mode}\n"
+                    f"texture_filter {settings.texture_filter}\n"
                     f"display_index {settings.display_index}\n"
                     f"sw_scale {settings.sw_scale}\n"
                     f"show_fps {int(settings.show_fps)}\n"

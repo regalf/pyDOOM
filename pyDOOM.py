@@ -39,11 +39,12 @@ if len(sys.argv) > 1 and sys.argv[1] == "--viewer":
 SKILLS = ("baby", "easy", "normal", "hard", "nightmare")
 FALLBACK_WAD = "DOOM1.WAD"
 FLAGS = ("debug", "fast", "respawn", "nomonsters", "kinematic", "demos",
-         "extra_hud", "dynlights")
+         "extra_hud", "dynlights", "linear_filter")
 FLAG_LABELS = {"debug": "DEBUG MODE", "fast": "FAST",
                "respawn": "RESPAWN", "nomonsters": "NO MONSTERS",
                "kinematic": "KINEMATIC", "demos": "DEMO COMPAT",
-               "extra_hud": "EXTRA HUD", "dynlights": "DYNAMIC LIGHTS"}
+               "extra_hud": "EXTRA HUD", "dynlights": "DYNAMIC LIGHTS",
+               "linear_filter": "LINEAR FILTER"}
 
 
 def find_wads(root: str = ROOT) -> list:
@@ -102,7 +103,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       mods_enabled: bool = True,
                       mods_on: tuple = (),
                       mods_off: tuple = (),
-                      dynlights: bool = False) -> list:
+                      dynlights: bool = False,
+                      texture_filter: str = "nearest") -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -127,6 +129,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--extra-hud")
     if dynlights:
         args.append("--dynlights")
+    if texture_filter == "linear":
+        args.append("--texture-filter=linear")
     if video_api in ("opengl", "openglv1", "openglv2"):
         # NOTE: software stays the default, so only a GL backend rides
         # argv (keeps argv byte-stable with no GL picked).
@@ -285,7 +289,9 @@ def main() -> int:
     maps = maps_in(wad)
     skill = cfg.last_skill if cfg.last_skill in SKILLS else "normal"
     flags = {name: ((name == "demos" and cfg.demos)
-                     or (name == "dynlights" and cfg.dynlights))
+                     or (name == "dynlights" and cfg.dynlights)
+                     or (name == "linear_filter"
+                         and cfg.texture_filter == "linear"))
              for name in FLAGS}
 
     pygame.init()
@@ -320,7 +326,7 @@ def main() -> int:
     scale_list = PickList(scale_labels, visible=3)
     scale_list.index = scale_labels.index(f"{cfg.sw_scale * 100}%") \
         if f"{cfg.sw_scale * 100}%" in scale_labels else 2
-    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=8)
+    flag_list = PickList([FLAG_LABELS[n] for n in FLAGS], visible=9)
     mod_list = PickList([], visible=8)  # NOTE: MODS rows rebuilt per draw
     focus = 0  # NOTE: which list owns up/down on the PLAY tab
     sfocus = 0  # NOTE: 0 skill, 1 flags on the SETTINGS tab
@@ -366,6 +372,8 @@ def main() -> int:
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
         cfg.dynlights = flags["dynlights"]
+        cfg.texture_filter = ("linear" if flags["linear_filter"]
+                              else "nearest")
         cfg.video_api = VIDEO_APIS[video_list.index]
         if cfg.video_api != "software":
             picked_res = res_label_to_value(res_list.selected())
@@ -387,7 +395,8 @@ def main() -> int:
             flags["nomonsters"], flags["kinematic"],
             flags["extra_hud"], VIDEO_APIS[video_list.index],
             mods_enabled, sorted(dev_on), sorted(dev_off),
-            flags["dynlights"])
+            flags["dynlights"],
+            "linear" if flags["linear_filter"] else "nearest")
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.

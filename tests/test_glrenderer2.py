@@ -397,3 +397,50 @@ def test_v2_dynlights_brighten_and_default_off(e1m1):
             raise
     finally:
         pygame.quit()
+
+
+def test_facade_sampler_cached_per_unit(fake):
+    gl.glBindSampler(0, 9)
+    gl.glBindSampler(0, 9)  # NOTE: same unit/sampler: skipped
+    gl.glBindSampler(1, 9)  # NOTE: other unit: rebinds
+    gl.glBindSampler(0, 0)  # NOTE: unbind back to texture params
+    got = [a for c, a in fake.calls if c == "glBindSampler"]
+    assert got == [(0, 9), (1, 9), (0, 0)]
+
+
+@requires_wad
+def test_v2_linear_differs_but_renders(e1m1):
+    """Linear walls/flats smooth texels: different pixels than NEAREST,
+    same scene, no crash (sprites/sky stay NEAREST at v0)."""
+    _open_window()
+    import pygame
+    try:
+        from pydoom.glrender.upload import GlResources
+        from pydoom.glrenderer2.renderer import FrameRenderer2
+        res = GlResources.create(e1m1["walls"], e1m1["planes"],
+                                 e1m1["wtex"], e1m1["ftex"],
+                                 e1m1["cmap"], e1m1["pal"])
+        assert res is not None
+        try:
+            start = e1m1["start"]
+            x, y = start.x << 16, start.y << 16
+            viewz = 41 << 16
+            f_near = FrameRenderer2(res, 320, 200)
+            try:
+                f_near.render(x, y, viewz, 0)
+                rgb_near = f_near.readback()
+            finally:
+                f_near.close()
+            f_lin = FrameRenderer2(res, 320, 200, linear=True)
+            try:
+                f_lin.render(x, y, viewz, 0)
+                rgb_lin = f_lin.readback()
+            finally:
+                f_lin.close()
+                res.delete()
+            assert not (rgb_lin == rgb_near).all()
+        except Exception:
+            res.delete()
+            raise
+    finally:
+        pygame.quit()

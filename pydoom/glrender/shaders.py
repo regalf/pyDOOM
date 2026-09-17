@@ -31,6 +31,7 @@ __all__ = [
     "OVERLAY_FRAG",
     "OVERLAY_VERT",
     "PLANE_FRAG",
+    "PLANE_FRAG_LIN",
     "PLANE_VERT",
     "PSPRITE_FRAG",
     "PSPRITE_VERT",
@@ -42,6 +43,8 @@ __all__ = [
     "TEXT_VERT",
     "WALL_FRAG",
     "WALL_FRAG_DOUBLE",
+    "WALL_FRAG_LIN",
+    "WALL_DOUBLE_LIN",
     "WALL_VERT",
     "compile_program",
 ]
@@ -167,6 +170,31 @@ WALL_FRAG_DOUBLE = WALL_FRAG.replace(
 )
 assert WALL_FRAG_DOUBLE != WALL_FRAG  # NOTE: guard text moved on
 
+# NOTE: step 7 linear-filter variants (v2 opt-in): texelFetch ignores
+# sampler state, so smoothing needs normalized texture() sampling
+# (REPEAT wrap on the v2 sampler tiles long walls/flats exactly like
+# the mod() folds above). Derived, never hand-forked: the asserts
+# below fail loudly if the base sources drift.
+WALL_FRAG_LIN = WALL_FRAG.replace(
+    "    vec2 rg = texelFetch(uWallTex,\n"
+    "                         ivec2(int(mod(vUv.x, uWrap)),\n"
+    "                               int(mod(vUv.y, uTexH))), 0).rg;",
+    "    vec2 rg = texture(uWallTex, vec2((vUv.x + 0.5) / uWrap,\n"
+    "                                     (vUv.y + 0.5) / uTexH)).rg;",
+)
+assert WALL_FRAG_LIN != WALL_FRAG  # NOTE: base sample text moved on
+WALL_DOUBLE_LIN = WALL_FRAG_LIN.replace(
+    "        int li = 47;\n"
+    "        if (den < 0.0)",
+    "        int li = 47;\n"
+    "        // NOTE: single-sided backs mirror the front lighting: a\n"
+    "        // mirrored camera would see the front with both dots\n"
+    "        // flipped, i.e. the same ratio, so the guard takes the\n"
+    "        // absolute value (silhouettes keep the brightest entry).\n"
+    "        if (abs(den) > 1e-9)",
+)
+assert WALL_DOUBLE_LIN != WALL_FRAG_LIN  # NOTE: guard text moved on
+
 PLANE_VERT = """\
 #version 330 core
 layout(location = 0) in vec3 aPos;
@@ -252,6 +280,18 @@ void main() {
     oIndex = float(lit) / 255.0;
 }
 """
+
+
+PLANE_FRAG_LIN = PLANE_FRAG.replace(
+    "    vec4 t = texelFetch(uFlatArray,\n"
+    "                        ivec3(int(mod(vUv.x, 64.0)),\n"
+    "                              int(mod(vUv.y, 64.0)),\n"
+    "                              int(vFlat + 0.5)), 0);",
+    "    vec4 t = texture(uFlatArray, vec3((vUv.x + 0.5) / 64.0,\n"
+    "                                      (vUv.y + 0.5) / 64.0,\n"
+    "                                      float(int(vFlat + 0.5))));",
+)
+assert PLANE_FRAG_LIN != PLANE_FRAG  # NOTE: base sample text moved on
 
 
 SPRITE_VERT = """\

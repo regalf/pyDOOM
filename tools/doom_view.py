@@ -288,6 +288,7 @@ def main() -> int:
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
     extra_hud = False  # --extra-hud: translucent readout block
     dynlights_cli = False  # --dynlights: v2 muzzle/projectile lights
+    texfilter_cli = None  # --texture-filter=: v2 linear walls/flats
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
     rec_demo_path = None  # --record-demo=FILE: vanilla-format .lmp
@@ -325,6 +326,8 @@ def main() -> int:
             extra_hud = True
         elif a == "--dynlights":
             dynlights_cli = True
+        elif a.startswith("--texture-filter="):
+            texfilter_cli = a.split("=", 1)[1].lower()
         elif a == "--kinematic":
             kinematic = True  # NOTE: legacy camera mover for A/B compare
         elif a.startswith("--skill="):
@@ -359,6 +362,8 @@ def main() -> int:
     menu.settings_load(menu.CONFIG_PATH, msettings)
     if dynlights_cli:
         msettings.dynlights = True  # NOTE: CLI forces the cfg option on
+    if texfilter_cli in ("nearest", "linear"):
+        msettings.texture_filter = texfilter_cli
     # NOTE: wanted renderer backend (CLI overrides pydoom.cfg); the
     # effective one lands after the window dance (try_init below).
     # Legacy --video-api=opengl means v1 (pre-v2 scripts keep working).
@@ -523,9 +528,12 @@ def main() -> int:
                 # CLI override and a GL fallback cannot disagree.
                 if win_backend == "openglv2":
                     # NOTE: same pixels through the caching facade +
-                    # profiler (v1 stays frozen).
+                    # profiler (v1 stays frozen); linear filtering is
+                    # a v2-only construction flag (default NEAREST).
                     from pydoom.glrenderer2 import renderer as gldraw2
-                    gl_frame = gldraw2.FrameRenderer2(gl_res, WIN_W, WIN_H)
+                    gl_frame = gldraw2.FrameRenderer2(
+                        gl_res, WIN_W, WIN_H,
+                        linear=(msettings.texture_filter == "linear"))
                 else:
                     gl_frame = gldraw.FrameRenderer(gl_res, WIN_W, WIN_H)
             gl_geo = SimpleNamespace(

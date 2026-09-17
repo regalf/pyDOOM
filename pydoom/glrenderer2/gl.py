@@ -51,6 +51,7 @@ _vao = 0
 _caps: dict = {}  # cap -> bool
 _depth_mask = True
 _blend = None  # (src, dst) or None when blending disabled
+_samplers: dict = {}  # unit -> sampler object (0 = none bound)
 _uniforms: dict = {}  # (program, loc) -> last values
 _stats = {"calls": 0, "skipped": 0}
 
@@ -70,6 +71,7 @@ def cache_reset() -> None:
     _caps.clear()
     _depth_mask = True
     _blend = None
+    _samplers.clear()
     _uniforms.clear()
 
 
@@ -164,6 +166,18 @@ def glBlendFunc(src: int, dst: int) -> None:
     _blend = key
     _hit()
     _api().glBlendFunc(src, dst)
+
+
+def glBindSampler(unit: int, sampler: int) -> None:
+    """Sampler object per texture unit (v2 linear filtering); 0
+    unbinds back to the texture's own params."""
+    unit, sampler = int(unit), int(sampler)
+    if _samplers.get(unit, 0) == sampler:
+        _skip()
+        return
+    _samplers[unit] = sampler
+    _hit()
+    _api().glBindSampler(unit, sampler)
 
 
 def _uniform(loc: int, values: tuple) -> bool:

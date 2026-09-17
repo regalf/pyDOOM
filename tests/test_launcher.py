@@ -186,3 +186,29 @@ def test_viewer_args_carry_dynlights():
         "DOOM1.WAD", "E1M1", "normal", dynlights=True)
     assert "--dynlights" not in build_viewer_args(
         "DOOM1.WAD", "E1M1", "normal")
+
+
+def test_cfg_roundtrips_texture_filter(tmp_path):
+    from pydoom.menu import Settings, settings_load, settings_save
+    cfg = Settings()
+    assert cfg.texture_filter == "nearest"
+    cfg.texture_filter = "linear"
+    path = str(tmp_path / "pydoom.cfg")
+    settings_save(path, cfg)
+    back = Settings()
+    settings_load(path, back)
+    assert back.texture_filter == "linear"
+    with open(path, "w") as f:
+        f.write("texture_filter crayon\n")
+    back = Settings()
+    settings_load(path, back)  # NOTE: garbage keeps the default
+    assert back.texture_filter == "nearest"
+
+
+def test_viewer_args_carry_texture_filter():
+    from pyDOOM import build_viewer_args
+    assert "--texture-filter=linear" in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal", texture_filter="linear")
+    assert not [a for a in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal")
+        if a.startswith("--texture-filter")]

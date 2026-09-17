@@ -37,19 +37,29 @@ class FrameRenderer2:
     map). render() draws walls then planes; readback() returns
     top-down RGB for the software-framebuffer comparison."""
 
-    def __init__(self, res, w: int, h: int) -> None:
+    def __init__(self, res, w: int, h: int, linear: bool = False) -> None:
         GL.cache_reset()  # NOTE: fresh ids below; never alias v1's
         self._res = res
         self._w, self._h = w, h
         self._uni: dict = {}
         self.prof = Profiler(enter=GL.push_group, exit=GL.pop_group)
         self._fence = None  # NOTE: previous frame's dynamic-draw fence
+        # NOTE: step 7 linear filtering (opt-in): normalized-sampling
+        # variants + a LINEAR/REPEAT sampler on unit 0 (walls, masked,
+        # single-sided, flats). NEAREST default: v1-identical pixels.
+        self._linear = bool(linear)
+        wall_frag = (shaders.WALL_FRAG_LIN if self._linear
+                     else shaders.WALL_FRAG)
+        wall_double_frag = (shaders.WALL_DOUBLE_LIN if self._linear
+                            else shaders.WALL_FRAG_DOUBLE)
+        plane_frag = (shaders.PLANE_FRAG_LIN if self._linear
+                      else shaders.PLANE_FRAG)
         self.wall_prog = shaders.compile_program(shaders.WALL_VERT,
-                                                 shaders.WALL_FRAG)
+                                                 wall_frag)
         self.wall_double_prog = shaders.compile_program(
-            shaders.WALL_VERT, shaders.WALL_FRAG_DOUBLE)
+            shaders.WALL_VERT, wall_double_frag)
         self.plane_prog = shaders.compile_program(shaders.PLANE_VERT,
-                                                  shaders.PLANE_FRAG)
+                                                  plane_frag)
         self.sprite_prog = shaders.compile_program(
             shaders.SPRITE_VERT, shaders.SPRITE_FRAG)
         self.fuzz_prog = shaders.compile_program(
@@ -156,6 +166,21 @@ class FrameRenderer2:
         self._auto_vbo = self._new_dynamic(4096 * 5)
         self._auto_vao = self._make_vao(
             self._auto_vbo, 5, [(0, 2, 0), (1, 3, 2)], 0)
+        # NOTE: step 7 linear sampler (unit 0: wall textures + flat
+        # array; texelFetch paths ignore samplers, so sprites/sky stay
+        # NEAREST regardless).
+        self._samp_linear = 0
+        if self._linear:
+            samp = int(GL.glGenSamplers(1))
+            GL.glSamplerParameteri(samp, GL.GL_TEXTURE_MIN_FILTER,
+                                   GL.GL_LINEAR)
+            GL.glSamplerParameteri(samp, GL.GL_TEXTURE_MAG_FILTER,
+                                   GL.GL_LINEAR)
+            GL.glSamplerParameteri(samp, GL.GL_TEXTURE_WRAP_S,
+                                   GL.GL_REPEAT)
+            GL.glSamplerParameteri(samp, GL.GL_TEXTURE_WRAP_T,
+                                   GL.GL_REPEAT)
+            self._samp_linear = samp
         GL.glDisable(GL.GL_DITHER)  # NOTE: LSB-exact readback parity
         GL.glEnable(GL.GL_DEPTH_TEST)
         GL.glDepthFunc(GL.GL_LESS)
@@ -349,6 +374,8 @@ class FrameRenderer2:
             GL.glActiveTexture(GL.GL_TEXTURE6)
             GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
             GL.glBindVertexArray(self._wall_vao)
+            if self._linear:
+                GL.glBindSampler(0, self._samp_linear)
             # NOTE: wall quads wind CCW seen from their front side
             # ((v1,bottom) (v2,bottom) (v2,top) with front RIGHT of
             # v1->v2), so backface culling drops exactly what the BSP
@@ -403,6 +430,8 @@ class FrameRenderer2:
             GL.glActiveTexture(GL.GL_TEXTURE6)
             GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
             GL.glBindVertexArray(self._wall_vao)
+            if self._linear:
+                GL.glBindSampler(0, self._samp_linear)
             _run(self.wall_double_prog, res.single_batches)
         with self.prof.scope("planes"):
             GL.glUseProgram(self.plane_prog)
@@ -429,6 +458,8 @@ class FrameRenderer2:
             GL.glActiveTexture(GL.GL_TEXTURE6)
             GL.glBindTexture(GL.GL_TEXTURE_2D, res.sector_tex)
             GL.glBindVertexArray(self._plane_vao)
+            if self._linear:
+                GL.glBindSampler(0, self._samp_linear)
             if res.plane_count:
                 GL.glDrawArrays(GL.GL_TRIANGLES, 0, res.plane_count)
         if sprites:
@@ -886,6 +917,10 @@ class FrameRenderer2:
             GL.glDeleteTextures(1, [self._fuzzlut])
             GL.glDeleteTextures(3, [self._fb_color, self._fb_index,
                                     self._spare_index])
+            if self._samp_linear:
+                GL.glBindSampler(0, 0)
+                GL.glDeleteSamplers(1, [self._samp_linear])
+                self._samp_linear = 0
             GL.glDeleteRenderbuffers(1, [self._fb_depth])
             GL.glDeleteFramebuffers(1, [self._fbo])
         except Exception:  # noqa: BLE001, S110 - teardown never raises
