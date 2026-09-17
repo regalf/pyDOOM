@@ -13,6 +13,7 @@ DOOM-master/
 DOOM_ENGINE_ANALYSIS.md
 video.md
 extensions-roadmap.md
+hw-roadmap.md
 *.png
 !docs/*.png
 !mods/**/*.png
