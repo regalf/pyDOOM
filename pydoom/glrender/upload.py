@@ -362,17 +362,29 @@ class GlResources:
     def reupload_walls_fast(self, quads, touched: list) -> None:
         """Fast GEO refresh: patch cached VBO rows for touched quads
         (spans moved, tier set identical: quad order/count stable, so
-        the IBO and batches stay valid), then orphan + refill the VBO
-        in place. Raises on GL error."""
+        the IBO and batches stay valid), then upload. Sparse touches
+        go out as glBufferSubData runs (same buffer id, VAO stays
+        valid); a patch covering half the VBO or more takes the full
+        orphan + refill instead. Raises on GL error."""
         from OpenGL import GL
         assert self._wall_array is not None
         for q in touched:
             self._wall_array[q * 4:q * 4 + 4] = self._wall_rows(
                 quads[q])
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.wall_vbo)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._wall_array.nbytes,
-                        self._wall_array, GL.GL_STATIC_DRAW)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+        try:
+            mode, runs = self._patch_runs(len(quads), touched)
+            if mode == "runs":
+                for start, count in runs:
+                    GL.glBufferSubData(
+                        GL.GL_ARRAY_BUFFER, start * 4 * 9 * 4,
+                        self._wall_array[start * 4:(start + count) * 4])
+                return
+            GL.glBufferData(GL.GL_ARRAY_BUFFER,
+                            self._wall_array.nbytes,
+                            self._wall_array, GL.GL_STATIC_DRAW)
+        finally:
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
 
     def reupload_planes(self, plane_geo, flat_layers: dict) -> None:
         """GEO refresh: orphan + refill the plane VBO in place (same
@@ -390,15 +402,42 @@ class GlResources:
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
         self.plane_count = n
 
+    @staticmethod
+    def _patch_runs(total: int, touched: list) -> tuple:
+        """('full',) or ('runs', [(start, count)]) for a row patch.
+
+        Touched unit indices (quad ids, plane vertex rows) merge into
+        contiguous runs; a patch covering half the buffer or more
+        takes the full orphan + refill instead (one big transfer beats
+        scattered SubData). Empty touch: no runs.
+        """
+        rows = sorted(set(touched))
+        if not rows:
+            return ("runs", [])
+        if len(rows) * 2 >= total:
+            return ("full", [])
+        runs = []
+        start = prev = rows[0]
+        for row in rows[1:]:
+            if row <= prev + 1:
+                prev = max(prev, row)
+                continue
+            runs.append((start, prev - start + 1))
+            start = prev = row
+        runs.append((start, prev - start + 1))
+        return ("runs", runs)
+
     def reupload_planes_fast(self, tris, flat_layers: dict,
                              touched: list) -> bool:
         """Fast GEO refresh: patch cached VBO rows for touched tris,
-        then orphan + refill in place. Returns False when a tri flips
-        sky-cut membership (row mapping shifts: caller must take the
-        slow full path instead). Raises on GL error."""
+        then upload (sub-ranges like walls; full orphan + refill past
+        half). Returns False when a tri flips sky-cut membership (row
+        mapping shifts: caller must take the slow full path instead).
+        Raises on GL error."""
         from OpenGL import GL
         assert self._plane_array is not None
         assert self._plane_rowpos is not None
+        verts = []
         for t in touched:
             layer = flat_layers.get(int(tris[t].flat), -1)
             row = self._plane_rowpos[t]
@@ -407,10 +446,22 @@ class GlResources:
             if row is not None:
                 self._plane_array[row:row + 3] = self._plane_rows(
                     tris[t], layer)
+                verts.extend((row, row + 1, row + 2))
         GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self.plane_vbo)
-        GL.glBufferData(GL.GL_ARRAY_BUFFER, self._plane_array.nbytes,
-                        self._plane_array, GL.GL_STATIC_DRAW)
-        GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+        try:
+            mode, runs = self._patch_runs(len(self._plane_array),
+                                          verts)
+            if mode == "runs":
+                for start, count in runs:
+                    GL.glBufferSubData(
+                        GL.GL_ARRAY_BUFFER, start * 7 * 4,
+                        self._plane_array[start:start + count])
+                return True
+            GL.glBufferData(GL.GL_ARRAY_BUFFER,
+                            self._plane_array.nbytes,
+                            self._plane_array, GL.GL_STATIC_DRAW)
+        finally:
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
         return True
 
     @classmethod

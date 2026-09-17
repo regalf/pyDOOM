@@ -260,3 +260,86 @@ def test_create_uploads_byte_exact():
     finally:
         import pygame
         pygame.quit()
+
+
+def test_patch_runs_coalesces_and_caps():
+    from pydoom.glrender.upload import GlResources
+    assert GlResources._patch_runs(100, []) == ("runs", [])
+    assert GlResources._patch_runs(100, [5]) == ("runs", [(5, 1)])
+    assert GlResources._patch_runs(100, [5, 6, 7, 20]) == (
+        "runs", [(5, 3), (20, 1)])
+    assert GlResources._patch_runs(100, [7, 5, 6, 6]) == (
+        "runs", [(5, 3)])  # NOTE: unsorted + dupes merge
+    assert GlResources._patch_runs(100, list(range(50))) == (
+        "full", [])  # NOTE: half the buffer or more: full refill
+    assert GlResources._patch_runs(100, list(range(49))) == (
+        "runs", [(0, 49)])
+
+
+@requires_wad
+def test_reupload_fast_uses_subdata_when_sparse():
+    """Real context: 3 touched quads upload 3x144B via SubData (not a
+    full VBO refill), and the VBO bytes match the CPU cache."""
+    if _gl_context() is None:
+        return
+    import numpy as np
+    from OpenGL import GL
+    try:
+        _texman, walls, planes, wtex, ftex, cmap, pal, game_map = (
+            load_e1m1_sets())
+        from pydoom.glrender.dynamic import sector_light_bases
+        from pydoom.glrender.upload import GlResources
+        res = GlResources.create(walls, planes, wtex, ftex, cmap, pal,
+                                 sector_lights=sector_light_bases(
+                                     game_map))
+        assert res is not None
+        try:
+            sub, full = [], []
+            real_sub = GL.glBufferSubData
+            real_data = GL.glBufferData
+
+            def spy_sub(target, offset, data):
+                sub.append((target, offset,
+                            np.asarray(data).nbytes))
+                return real_sub(target, offset, data)
+
+            def spy_data(target, *args):
+                full.append(target)
+                return real_data(target, *args)
+
+            import OpenGL.GL as _glmod
+            old_sub, old_data = (_glmod.glBufferSubData,
+                                 _glmod.glBufferData)
+            _glmod.glBufferSubData = spy_sub
+            _glmod.glBufferData = spy_data
+            try:
+                res.reupload_walls_fast(walls.quads, [0, 1, 2])
+            finally:
+                _glmod.glBufferSubData = old_sub
+                _glmod.glBufferData = old_data
+            assert full == []  # NOTE: no full refill on sparse touch
+            assert sub == [(GL.GL_ARRAY_BUFFER, 0, 3 * 4 * 9 * 4)]
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, res.wall_vbo)
+            # NOTE: return-form readback (the output-array form aborts
+            # under PyOpenGL_accelerate here).
+            back = GL.glGetBufferSubData(GL.GL_ARRAY_BUFFER, 0,
+                                         res._wall_array.nbytes)
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+            assert bytes(back) == res._wall_array.tobytes()
+            # NOTE: planes fast path patches tri rows the same way.
+            ok_tris = [t for t, row in enumerate(res._plane_rowpos)
+                       if row is not None][:2]
+            assert ok_tris
+            assert res.reupload_planes_fast(planes.tris,
+                                            res.flat_layers,
+                                            ok_tris) is True
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, res.plane_vbo)
+            pback = GL.glGetBufferSubData(GL.GL_ARRAY_BUFFER, 0,
+                                          res._plane_array.nbytes)
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+            assert bytes(pback) == res._plane_array.tobytes()
+        finally:
+            res.delete()
+    finally:
+        import pygame
+        pygame.quit()
