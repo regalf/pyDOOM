@@ -79,6 +79,8 @@ def test_drop_existing_name_never_overwrites(tmp_path):
 def test_video_tab_rows_conditional():
     from pyDOOM import video_tab_rows
     assert video_tab_rows("opengl") == ("api", "resolution")
+    assert video_tab_rows("openglv1") == ("api", "resolution")
+    assert video_tab_rows("openglv2") == ("api", "resolution")
     assert video_tab_rows("software") == ("api", "scale")
     assert video_tab_rows("bogus") == ("api", "scale")
 

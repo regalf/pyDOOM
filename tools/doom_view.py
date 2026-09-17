@@ -282,6 +282,7 @@ def main() -> int:
     global WIN_W, WIN_H
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     frames_opt = None
+    profile_opt = None  # --profile=N: print the v2 profiler table, quit
     skill = "normal"
     fast = False
     debug = False  # dev keys (N/F/X/PgUp/...) stay behind this flag
@@ -302,6 +303,8 @@ def main() -> int:
     for a in sys.argv[1:]:
         if a.startswith("--frames="):
             frames_opt = int(a.split("=", 1)[1])
+        elif a.startswith("--profile="):
+            profile_opt = int(a.split("=", 1)[1])
         elif a.startswith("--record="):
             rec_path = a.split("=", 1)[1]
         elif a.startswith("--play="):
@@ -353,7 +356,10 @@ def main() -> int:
     menu.settings_load(menu.CONFIG_PATH, msettings)
     # NOTE: wanted renderer backend (CLI overrides pydoom.cfg); the
     # effective one lands after the window dance (try_init below).
+    # Legacy --video-api=opengl means v1 (pre-v2 scripts keep working).
     want_api = video_cli if video_cli is not None else msettings.video_api
+    if want_api == "opengl":
+        want_api = "openglv1"
     if want_api not in menu.VIDEO_APIS:
         print(f"video: unknown api {want_api!r}, using software")
         want_api = "software"
@@ -507,7 +513,16 @@ def main() -> int:
             gl_feed = glsprites.SpriteFeed(sprites=init_sprite_defs(
                 wad, texman.firstsprite, texman.lastsprite))
             if gl_res is not None:
-                gl_frame = gldraw.FrameRenderer(gl_res, WIN_W, WIN_H)
+                # NOTE: Openglv2 (glrenderer2) when effectively live;
+                # win_backend (not the wanted setting) drives this so a
+                # CLI override and a GL fallback cannot disagree.
+                if win_backend == "openglv2":
+                    # NOTE: same pixels through the caching facade +
+                    # profiler (v1 stays frozen).
+                    from pydoom.glrenderer2 import renderer as gldraw2
+                    gl_frame = gldraw2.FrameRenderer2(gl_res, WIN_W, WIN_H)
+                else:
+                    gl_frame = gldraw.FrameRenderer(gl_res, WIN_W, WIN_H)
             gl_geo = SimpleNamespace(
                 walls=walls, planes=planes,
                 seg_quadpos=glpre.seg_quad_positions(walls),
@@ -531,8 +546,8 @@ def main() -> int:
 
     def video_summary() -> str:
         """HUD line for the current video state (all-caps: STCFN-safe)."""
-        if msettings.video_api == "opengl":
-            head = f"OPENGL {WIN_W}X{WIN_H}"
+        if msettings.video_api != "software":
+            head = f"{msettings.video_api.upper()} {WIN_W}X{WIN_H}"
         else:
             head = f"SOFTWARE {msettings.sw_scale * 100}%"
         return (f"{head} {msettings.display_mode.upper()}"
@@ -554,7 +569,7 @@ def main() -> int:
         nonlocal screen, gl_live, gl_info, amap, message, message_tics
         nonlocal win_backend
         from pydoom.glrender import state as _glstate
-        want_gl = msettings.video_api == "opengl"
+        want_gl = msettings.video_api != "software"
         drop_gl_resources()
         w, h, flags, disp = video_geom(msettings, want_gl)
         vsync = int(bool(msettings.vsync))
@@ -596,7 +611,7 @@ def main() -> int:
         if want_gl and new_gl_info is not None:
             gl_live = True
             gl_info = new_gl_info
-            win_backend = "opengl"
+            win_backend = msettings.video_api
             refresh_gl_resources(game_map)
         else:
             gl_live = False
@@ -1322,7 +1337,7 @@ def main() -> int:
     # for software, display mode for both).
     from pydoom.glrender import state as glstate
     WIN_W, WIN_H, _win_flags, _win_disp = video_geom(
-        msettings, want_api == "opengl")
+        msettings, want_api != "software")
     screen, gl_info, video_api, video_why = glstate.try_init(
         WIN_W, WIN_H, want_api, frames_opt, timedemo,
         flags=_win_flags, vsync=int(bool(msettings.vsync)),
@@ -1331,10 +1346,11 @@ def main() -> int:
     print(f"video: {video_api} {WIN_W}x{WIN_H} ({video_why})"
           f" fps={msettings.fps_limit or 'unlimited'}"
           f" vsync={int(bool(msettings.vsync))}")
-    gl_live = video_api == "opengl" and gl_info is not None
+    gl_live = video_api in ("openglv1", "openglv2") \
+        and gl_info is not None
     # NOTE: which window type backs `screen` (software 2D blits onto a
     # GL window present black, so the loop self-heals that mismatch).
-    win_backend = "opengl" if gl_live else "software"
+    win_backend = video_api if gl_live else "software"
     # NOTE: ext backend gate lives here: mods requiring opengl/software
     # resolve now (and again on every live backend switch below).
     modmgr.set_backend(win_backend)
@@ -2596,7 +2612,7 @@ def main() -> int:
             # (black forever): if the GL renderer is structurally gone
             # (not a one-frame present failure), downgrade the window
             # once instead of presenting black.
-            if gl_frame is None and win_backend == "opengl" \
+            if gl_frame is None and win_backend != "software" \
                     and not win_heal_failed:
                 try:
                     from pydoom.glrender import state as _heal_state
@@ -2652,6 +2668,17 @@ def main() -> int:
         frames += 1
         if frames_opt is not None and frames >= frames_opt:
             print(f"smoke: {frames} frames, {fps_ema:.0f}fps ema")
+            running = False
+        if profile_opt is not None and frames >= profile_opt:
+            # NOTE: v2 profiler report (Openglv2 only; other backends
+            # have no profiler yet).
+            prof = getattr(gl_frame, "prof", None)
+            if prof is not None:
+                print(prof.report())
+                from pydoom.glrenderer2 import gl as _profgl
+                print(f"profile: GL calls={_profgl.stats()}")
+            else:
+                print("profile: no profiler on this backend")
             running = False
 
     if recording:

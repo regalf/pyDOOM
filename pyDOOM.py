@@ -124,10 +124,10 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--kinematic")
     if extra_hud:
         args.append("--extra-hud")
-    if video_api == "opengl":
-        # NOTE: milestone H: software stays the default, so only the
-        # non-default backend rides argv (keeps old argv byte-stable).
-        args.append("--video-api=opengl")
+    if video_api in ("opengl", "openglv1", "openglv2"):
+        # NOTE: software stays the default, so only a GL backend rides
+        # argv (keeps argv byte-stable with no GL picked).
+        args.append(f"--video-api={video_api}")
     if not mods_enabled:
         args.append("--no-mods")
     else:
@@ -145,7 +145,7 @@ def video_tab_rows(video_api: str) -> tuple:
     resolution vs software window scale), so each backend only offers
     settings that apply to it.
     """
-    if video_api == "opengl":
+    if video_api in ("opengl", "openglv1", "openglv2"):
         return ("api", "resolution")
     return ("api", "scale")
 
@@ -301,7 +301,7 @@ def main() -> int:
         map_list.index = maps.index(cfg.last_map)
     skill_list = PickList([s.upper() for s in SKILLS], visible=5)
     skill_list.index = SKILLS.index(skill)
-    video_list = PickList([v.upper() for v in VIDEO_APIS], visible=2)
+    video_list = PickList([v.upper() for v in VIDEO_APIS], visible=3)
     # NOTE: render backend lives on the VIDEO tab now (was SETTINGS);
     # resolution/scale rows show conditionally per backend below.
     video_list.index = VIDEO_APIS.index(cfg.video_api) \
@@ -361,7 +361,7 @@ def main() -> int:
         cfg.last_map = start_map
         cfg.demos = flags["demos"]
         cfg.video_api = VIDEO_APIS[video_list.index]
-        if cfg.video_api == "opengl":
+        if cfg.video_api != "software":
             picked_res = res_label_to_value(res_list.selected())
             if picked_res is not None:
                 cfg.gl_resolution = picked_res
@@ -478,8 +478,8 @@ def main() -> int:
             screen.blit(small.render("RENDER API", True, (90, 90, 90)),
                         (24, 78))
             video_list.draw(screen, font, 24, 96, 200, vfocus == 0)
-            if api == "opengl":
-                label, size_list = "RESOLUTION (OPENGL)", res_list
+            if api != "software":
+                label, size_list = f"RESOLUTION ({api.upper()})", res_list
             else:
                 label, size_list = "WINDOW SCALE (SOFTWARE)", scale_list
             screen.blit(small.render(label, True, (90, 90, 90)),
@@ -572,7 +572,7 @@ def main() -> int:
                     # NOTE: VIDEO tab (backend + conditional size row).
                     api = VIDEO_APIS[video_list.index]
                     vis = [video_list] + (
-                        [res_list] if api == "opengl" else [scale_list])
+                        [res_list] if api != "software" else [scale_list])
                     if vfocus >= len(vis):
                         vfocus = 0
                     if ev.key == pygame.K_UP:
@@ -615,7 +615,7 @@ def main() -> int:
                     if video_list.click(ev.pos):
                         vfocus = 0
                     elif (res_list if VIDEO_APIS[video_list.index]
-                            == "opengl" else scale_list).click(ev.pos):
+                            != "software" else scale_list).click(ev.pos):
                         vfocus = 1
                 else:
                     # NOTE: MODS tab clicks (master row + mod rows).

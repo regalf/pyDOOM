@@ -15,7 +15,17 @@ from __future__ import annotations
 import os
 
 SOFTWARE = "software"
-OPENGL = "opengl"
+OPENGL = "opengl"  # NOTE: legacy alias, means openglv1 everywhere below
+OPENGLV1 = "openglv1"
+OPENGLV2 = "openglv2"
+GL_APIS = (OPENGLV1, OPENGLV2)
+
+
+def normalize_api(want: str) -> str:
+    """Legacy 'opengl' means v1 (old cfgs, old argv keep working)."""
+    if want == OPENGL:
+        return OPENGLV1
+    return want
 
 
 def resolve_api(want: str, sdl_video: str | None = None,
@@ -24,11 +34,14 @@ def resolve_api(want: str, sdl_video: str | None = None,
                 have_gl: bool = False) -> tuple:
     """Pick the effective backend (pure: no pygame/GL imports).
 
-    Returns (effective, reason). Anything but "opengl" requested means
-    software; opengl falls back to software on headless/dummy video,
-    smoke runs (--frames), timedemo (no draw) or a missing PyOpenGL.
+    Returns (effective, reason). Anything but openglv1/openglv2
+    requested means software; GL falls back to software on
+    headless/dummy video, smoke runs (--frames), timedemo (no draw)
+    or a missing PyOpenGL. The requested GL flavor survives (v1/v2
+    pick different FrameRenderers downstream).
     """
-    if want != OPENGL:
+    want = normalize_api(want)
+    if want not in GL_APIS:
         return SOFTWARE, f"requested {want!r}"
     if (sdl_video or os.environ.get("SDL_VIDEODRIVER", "")) == "dummy":
         return SOFTWARE, "dummy SDL video (headless CI)"
@@ -38,7 +51,7 @@ def resolve_api(want: str, sdl_video: str | None = None,
         return SOFTWARE, "timedemo (no draw)"
     if not have_gl:
         return SOFTWARE, "PyOpenGL missing"
-    return OPENGL, "opengl requested and available"
+    return want, f"{want} requested and available"
 
 
 def _have_gl() -> bool:
@@ -121,7 +134,8 @@ def try_init(width: int, height: int, want: str,
     """
     import pygame
     sw_flags = flags & ~(pygame.OPENGL | pygame.DOUBLEBUF)
-    if want != OPENGL:
+    want = normalize_api(want)
+    if want not in GL_APIS:
         # NOTE: short-circuit before the _have_gl() probe: asking for
         # software must never import GL bindings (keeps headless runs
         # and the sim reference import-clean).
@@ -146,11 +160,11 @@ def try_init(width: int, height: int, want: str,
                                      display, vsync)
     except Exception as exc:  # noqa: BLE001 - any window failure falls back
         screen = pygame.display.set_mode((width, height))
-        return screen, None, SOFTWARE, f"opengl window failed ({exc})"
+        return screen, None, SOFTWARE, f"{want} window failed ({exc})"
     # NOTE: the pygame window owns the context; PyOpenGL just talks to
     # it, so a GL_VERSION answer proves the path is live.
     ver = _gl_version()
     if ver is None:
         screen = pygame.display.set_mode((width, height))
         return screen, None, SOFTWARE, "gl context not answering"
-    return screen, ver, OPENGL, f"{reason} (GL {ver})"
+    return screen, ver, want, f"{reason} (GL {ver})"

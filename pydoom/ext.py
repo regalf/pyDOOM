@@ -199,6 +199,15 @@ def owner_priority_key(priority: int) -> int:
     return -int(priority)
 
 
+def _backend_ok(want: str, have: str) -> bool:
+    """Backend requirement match: plain "opengl" accepts either GL
+    renderer (back-compat with pre-v2 manifests); anything else must
+    match exactly."""
+    if want == have:
+        return True
+    return want == "opengl" and have in ("openglv1", "openglv2")
+
+
 def row_label(mid: str, ver: str, state: str, reason: str) -> str:
     """One mod row, byte-identical in the launcher MODS tab and the
     in-game Extension menu: 'id ver ON/OFF (reason)'."""
@@ -252,7 +261,7 @@ class ModManager:
 
     def set_backend(self, name: str) -> None:
         """Live backend switch (viewer video/fallback path): re-resolves."""
-        if name not in ("opengl", "software"):
+        if name not in ("opengl", "software", "openglv1", "openglv2"):
             raise ValueError(f"unknown backend: {name}")
         if name == self.backend:
             return
@@ -330,8 +339,10 @@ class ModManager:
                 continue
             # NOTE: backend "any" means not yet known (viewer sets it at
             # boot): never refuse on backend grounds until it is real.
+            # "opengl" wants any GL renderer (v1/v2); versioned wants
+            # match exactly (a v2-only mod refuses on v1).
             if want != "any" and self.backend != "any" \
-                    and want != self.backend:
+                    and not _backend_ok(want, self.backend):
                 self._set_state(rec, "refused", f"NEEDS {want}")
                 continue
             if not rec.user_on:

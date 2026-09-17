@@ -256,7 +256,8 @@ def test_window_matrix_never_raises():
                         # NOTE: dummy honors plain sizes; fullscreen
                         # drivers may substitute (dummy gives 1024x768).
                         assert scr.get_size() == (320, 200)
-                    for want in ("software", "opengl"):
+                    for want in ("software", "opengl", "openglv1",
+                                   "openglv2"):
                         out = glstate.try_init(
                             320, 200, want, None, False,
                             flags=flags, vsync=vsync, display=disp)

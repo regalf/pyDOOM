@@ -12,7 +12,13 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pydoom.glrender.state import OPENGL, SOFTWARE, resolve_api
+from pydoom.glrender.state import (
+    OPENGL,
+    OPENGLV1,
+    OPENGLV2,
+    SOFTWARE,
+    resolve_api,
+)
 
 WAD_PATH = os.path.join(os.path.dirname(__file__), "..", "DOOM1.WAD")
 
@@ -58,7 +64,11 @@ def test_opengl_falls_back_on_timedemo():
 def test_opengl_passes_when_available():
     eff, _ = resolve_api("opengl", sdl_video="x11",
                          have_gl=True)
-    assert eff == OPENGL
+    assert eff == OPENGLV1  # NOTE: legacy name means v1
+    eff, _ = resolve_api("openglv2", sdl_video="x11",
+                         have_gl=True)
+    assert eff == OPENGLV2
+    assert OPENGL != OPENGLV1  # NOTE: alias constant kept for compat
 
 
 def test_video_api_config_round_trip(tmp_path):
@@ -69,7 +79,7 @@ def test_video_api_config_round_trip(tmp_path):
     settings_save(path, s)
     back = Settings()
     settings_load(path, back)
-    assert back.video_api == "opengl"
+    assert back.video_api == "openglv1"  # NOTE: legacy alias upgrades
 
 
 def test_video_api_rejects_garbage(tmp_path):
@@ -82,10 +92,12 @@ def test_video_api_rejects_garbage(tmp_path):
     assert back.video_api == "software"
 
 
-def test_viewer_args_carry_opengl_only():
+def test_viewer_args_carry_gl_only():
     from pyDOOM import build_viewer_args
-    assert "--video-api=opengl" in build_viewer_args(
-        "DOOM1.WAD", "E1M1", "normal", video_api="opengl")
+    assert "--video-api=openglv1" in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal", video_api="openglv1")
+    assert "--video-api=openglv2" in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal", video_api="openglv2")
     default = build_viewer_args("DOOM1.WAD", "E1M1", "normal")
     assert not any(a.startswith("--video-api") for a in default)
 

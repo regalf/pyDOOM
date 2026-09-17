@@ -30,7 +30,7 @@ SFX_MAX, MUS_MAX, SENS_MAX = 15, 15, 8
 # NOTE: renderer backend (milestone H): software is the reference raster,
 # opengl is the native-res GL port (auto-falls back to software when the
 # GL context cannot come up: missing PyOpenGL, dummy video, headless).
-VIDEO_APIS = ("software", "opengl")
+VIDEO_APIS = ("software", "openglv1", "openglv2")
 
 # NOTE: graphics settings (Options -> Video, live-applied, cfg-persisted).
 # GL renders natively at the window size (16:10 steps like 320x200);
@@ -169,7 +169,10 @@ def settings_load(path: str, settings: Settings) -> None:
             setattr(settings, key, raw[:32])
             continue
         if key == "video_api":
-            # NOTE: string-validated like the launcher prefs above.
+            # NOTE: string-validated like the launcher prefs above;
+            # legacy "opengl" means v1 (pre-v2 cfgs keep working).
+            if raw == "opengl":
+                raw = "openglv1"
             if raw in VIDEO_APIS:
                 settings.video_api = raw
             continue
