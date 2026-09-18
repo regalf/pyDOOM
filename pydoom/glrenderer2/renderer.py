@@ -37,7 +37,8 @@ class FrameRenderer2:
     map). render() draws walls then planes; readback() returns
     top-down RGB for the software-framebuffer comparison."""
 
-    def __init__(self, res, w: int, h: int, linear: bool = False) -> None:
+    def __init__(self, res, w: int, h: int, linear: bool = False,
+                 bloom: bool = False) -> None:
         GL.cache_reset()  # NOTE: fresh ids below; never alias v1's
         self._res = res
         self._w, self._h = w, h
@@ -74,6 +75,10 @@ class FrameRenderer2:
                                                  shaders.TEXT_FRAG)
         self.auto_prog = shaders.compile_program(shaders.AUTO_VERT,
                                                  shaders.AUTO_FRAG)
+        self.bloom_extract_prog = shaders.compile_program(
+            shaders.OVERLAY_VERT, shaders.BLOOM_EXTRACT_FRAG)
+        self.bloom_combine_prog = shaders.compile_program(
+            shaders.OVERLAY_VERT, shaders.BLOOM_COMBINE_FRAG)
         self._scalelight = res._upload_lut(scalelight_lut(), 48, 16,
                                            GL.GL_R8, GL.GL_RED)
         self._zlight = res._upload_lut(zlight_lut(), 128, 16,
@@ -109,7 +114,9 @@ class FrameRenderer2:
                 (self.overlay_prog, (("uOverlay", 0),
                                      ("uPalette", 3))),
                 (self.text_prog, (("uTextTex", 0),)),
-                (self.auto_prog, ())):
+                (self.auto_prog, ()),
+                (self.bloom_extract_prog, (("uSrc", 0),)),
+                (self.bloom_combine_prog, (("uBloom", 0),))):
             GL.glUseProgram(prog)
             for name, unit in samplers:
                 GL.glUniform1i(self._loc(prog, name), unit)
@@ -160,6 +167,36 @@ class FrameRenderer2:
         self._overlay_tex = self._new_tex2d(SCREENWIDTH, SCREENHEIGHT,
                                             GL.GL_R8, GL.GL_RED, None)
         self._overlay_vao = int(GL.glGenVertexArrays(1))
+        # NOTE: step 9 bloom-lite targets (half-res RGB8 + FBO, always
+        # allocated: trivial next to the world targets; the world FBO
+        # color goes LINEAR only with bloom on, so the extract fetch
+        # smooths the downsample while readback/blit stay exact).
+        self._bloom = bool(bloom)
+        self._bw, self._bh = max(1, w // 2), max(1, h // 2)
+        self._bloom_tex = self._new_tex2d(self._bw, self._bh,
+                                          GL.GL_RGB8, GL.GL_RGB, None)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self._bloom_tex)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER,
+                           GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER,
+                           GL.GL_LINEAR)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+        self._bloom_fbo = int(GL.glGenFramebuffers(1))
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._bloom_fbo)
+        GL.glFramebufferTexture2D(GL.GL_FRAMEBUFFER,
+                                  GL.GL_COLOR_ATTACHMENT0,
+                                  GL.GL_TEXTURE_2D, self._bloom_tex, 0)
+        if GL.glCheckFramebufferStatus(GL.GL_FRAMEBUFFER) != \
+                GL.GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError("bloom FBO incomplete")
+        GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
+        if self._bloom:
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._fb_color)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D,
+                               GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
         # NOTE: text/automap quads share one dynamic VBO layout
         # ([ndc2, uv-or-color]); text uses its VAO, automap its own.
         self._text_vbo = self._new_dynamic(4 * 4)
@@ -490,6 +527,8 @@ class FrameRenderer2:
         if psprites:
             for args in psprites:
                 self.draw_psprite(*args, pal_index)
+        if self._bloom:
+            self._draw_bloom()
         GL.glBindVertexArray(0)
         GL.glUseProgram(0)
         # NOTE: fence the frame's dynamic draws for next frame's wait
@@ -635,6 +674,46 @@ class FrameRenderer2:
         GL.glCopyTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
                                self._w, self._h)
         GL.glReadBuffer(GL.GL_COLOR_ATTACHMENT0)
+
+    def _draw_bloom(self) -> None:
+        """Extract threshold at half res, blur 9-tap, add back over
+        the world (ONE,ONE). Overlay/text draw later on the window,
+        so HUD never blooms. Index target untouched (draw buffer is
+        narrowed for the combine, then restored)."""
+        with self.prof.scope("bloom"):
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._bloom_fbo)
+            GL.glViewport(0, 0, self._bw, self._bh)
+            GL.glUseProgram(self.bloom_extract_prog)
+            GL.glUniform1f(self._loc(self.bloom_extract_prog,
+                                     "uThreshold"), 0.65)
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._fb_color)
+            GL.glBindVertexArray(self._overlay_vao)
+            GL.glDisable(GL.GL_DEPTH_TEST)
+            GL.glDepthMask(GL.GL_FALSE)
+            GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+            GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, self._fbo)
+            GL.glViewport(0, 0, self._w, self._h)
+            GL.glDrawBuffer(GL.GL_COLOR_ATTACHMENT0)
+            GL.glUseProgram(self.bloom_combine_prog)
+            GL.glUniform2f(self._loc(self.bloom_combine_prog, "uTexel"),
+                           1.0 / self._bw, 1.0 / self._bh)
+            GL.glUniform1f(self._loc(self.bloom_combine_prog,
+                                     "uStrength"), 0.5)
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, self._bloom_tex)
+            GL.glEnable(GL.GL_BLEND)
+            GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE)
+            GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
+            GL.glDisable(GL.GL_BLEND)
+            GL.glDrawBuffers(2, [GL.GL_COLOR_ATTACHMENT0,
+                                 GL.GL_COLOR_ATTACHMENT1])
+            GL.glDepthMask(GL.GL_TRUE)
+            GL.glEnable(GL.GL_DEPTH_TEST)
+            GL.glBindVertexArray(0)
+            err = GL.glGetError()
+            if err != GL.GL_NO_ERROR:
+                raise RuntimeError(f"GL error {err:#x} in _draw_bloom")
 
     def draw_fuzz(self, lump: int, start: int, count: int, vp,
                   pal_index: int = 0, copy: bool = True) -> None:
@@ -917,6 +996,8 @@ class FrameRenderer2:
             GL.glDeleteProgram(self.overlay_prog)
             GL.glDeleteProgram(self.text_prog)
             GL.glDeleteProgram(self.auto_prog)
+            GL.glDeleteProgram(self.bloom_extract_prog)
+            GL.glDeleteProgram(self.bloom_combine_prog)
             GL.glDeleteVertexArrays(4, [self._wall_vao,
                                         self._plane_vao,
                                         self._sprite_vao,
@@ -940,6 +1021,8 @@ class FrameRenderer2:
             GL.glDeleteTextures(1, [self._fuzzlut])
             GL.glDeleteTextures(3, [self._fb_color, self._fb_index,
                                     self._spare_index])
+            GL.glDeleteTextures(1, [self._bloom_tex])
+            GL.glDeleteFramebuffers(1, [self._bloom_fbo])
             if self._samp_linear:
                 GL.glBindSampler(0, 0)
                 GL.glDeleteSamplers(1, [self._samp_linear])

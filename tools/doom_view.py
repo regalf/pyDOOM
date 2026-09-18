@@ -289,6 +289,7 @@ def main() -> int:
     extra_hud = False  # --extra-hud: translucent readout block
     dynlights_cli = False  # --dynlights: v2 muzzle/projectile lights
     brightmaps_cli = False  # --brightmaps: v2 lamp exemption
+    bloom_cli = False  # --bloom: v2 threshold blur over the world
     texfilter_cli = None  # --texture-filter=: v2 linear walls/flats
     rec_path = None  # --record=FILE: log per-frame inputs (fixed dt)
     play_path = None  # --play=FILE: replay them (regression demos)
@@ -329,6 +330,8 @@ def main() -> int:
             dynlights_cli = True
         elif a == "--brightmaps":
             brightmaps_cli = True
+        elif a == "--bloom":
+            bloom_cli = True
         elif a.startswith("--texture-filter="):
             texfilter_cli = a.split("=", 1)[1].lower()
         elif a == "--kinematic":
@@ -367,6 +370,8 @@ def main() -> int:
         msettings.dynlights = True  # NOTE: CLI forces the cfg option on
     if brightmaps_cli:
         msettings.brightmaps = True  # NOTE: CLI forces the cfg option on
+    if bloom_cli:
+        msettings.bloom = True  # NOTE: CLI forces the cfg option on
     if texfilter_cli in ("nearest", "linear"):
         msettings.texture_filter = texfilter_cli
     # NOTE: wanted renderer backend (CLI overrides pydoom.cfg); the
@@ -538,7 +543,8 @@ def main() -> int:
                     from pydoom.glrenderer2 import renderer as gldraw2
                     gl_frame = gldraw2.FrameRenderer2(
                         gl_res, WIN_W, WIN_H,
-                        linear=(msettings.texture_filter == "linear"))
+                        linear=(msettings.texture_filter == "linear"),
+                        bloom=msettings.bloom)
                 else:
                     gl_frame = gldraw.FrameRenderer(gl_res, WIN_W, WIN_H)
             gl_geo = SimpleNamespace(

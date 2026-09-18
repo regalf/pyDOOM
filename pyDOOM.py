@@ -104,7 +104,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
                       mods_off: tuple = (),
                       dynlights: bool = False,
                       texture_filter: str = "nearest",
-                      brightmaps: bool = False) -> list:
+                      brightmaps: bool = False,
+                      bloom: bool = False) -> list:
     """Viewer argv for a launcher selection (unit tested, no GUI)."""
     if getattr(sys, "frozen", False):
         args = [sys.executable, "--viewer", map_name,
@@ -131,6 +132,8 @@ def build_viewer_args(wad: str, map_name: str, skill: str,
         args.append("--dynlights")
     if brightmaps:
         args.append("--brightmaps")
+    if bloom:
+        args.append("--bloom")
     if texture_filter == "linear":
         args.append("--texture-filter=linear")
     if video_api in ("opengl", "openglv1", "openglv2"):
@@ -160,17 +163,21 @@ def video_tab_rows(video_api: str) -> tuple:
 
 
 def flip_video_extra(tag: int, dynlights: bool,
-                     linear: bool, brightmaps: bool = False) -> tuple:
+                     linear: bool, brightmaps: bool = False,
+                     bloom: bool = False) -> tuple:
     """Toggle one v2-dedicated VIDEO row (pure, unit tested).
 
-    tag 0 is DYNAMIC LIGHTS, 1 is LINEAR FILTER, 2 is BRIGHTMAPS;
-    returns the new (dynlights, linear, brightmaps) triple.
+    tag 0 is DYNAMIC LIGHTS, 1 is LINEAR FILTER, 2 is BRIGHTMAPS,
+    3 is BLOOM; returns the new (dynlights, linear, brightmaps,
+    bloom) tuple.
     """
     if tag == 0:
-        return (not dynlights, linear, brightmaps)
+        return (not dynlights, linear, brightmaps, bloom)
     if tag == 1:
-        return (dynlights, not linear, brightmaps)
-    return (dynlights, linear, not brightmaps)
+        return (dynlights, not linear, brightmaps, bloom)
+    if tag == 2:
+        return (dynlights, linear, not brightmaps, bloom)
+    return (dynlights, linear, brightmaps, not bloom)
 
 
 def mod_tab_rows(status, mods_enabled: bool = True) -> tuple:
@@ -311,6 +318,7 @@ def main() -> int:
     video_dynlights = cfg.dynlights
     video_linear = cfg.texture_filter == "linear"
     video_brightmaps = cfg.brightmaps
+    video_bloom = cfg.bloom
 
     pygame.init()
     screen = pygame.display.set_mode((560, 420))
@@ -391,6 +399,7 @@ def main() -> int:
         cfg.demos = flags["demos"]
         cfg.dynlights = video_dynlights
         cfg.brightmaps = video_brightmaps
+        cfg.bloom = video_bloom
         cfg.texture_filter = "linear" if video_linear else "nearest"
         cfg.video_api = VIDEO_APIS[video_list.index]
         if cfg.video_api != "software":
@@ -415,7 +424,7 @@ def main() -> int:
             mods_enabled, sorted(dev_on), sorted(dev_off),
             video_dynlights,
             "linear" if video_linear else "nearest",
-            video_brightmaps)
+            video_brightmaps, video_bloom)
         print("pyDOOM:", " ".join(args[1:]))
         # NOTE: detached child (new session, own stdio): closing the
         # terminal or Ctrl+C here never reaches the game afterwards.
@@ -436,20 +445,23 @@ def main() -> int:
 
     def video_extra_rows() -> tuple:
         """v2-dedicated VIDEO rows: (label, tag) with tag 0 dynlights,
-        1 linear filter, 2 brightmaps. Empty unless Openglv2 is picked
-        (they affect nothing elsewhere, like the size row)."""
+        1 linear filter, 2 brightmaps, 3 bloom. Empty unless Openglv2
+        is picked (they affect nothing elsewhere, like the size row)."""
         if VIDEO_APIS[video_list.index] == "openglv2":
             return (("DYNAMIC LIGHTS", 0), ("LINEAR FILTER", 1),
-                    ("BRIGHTMAPS", 2))
+                    ("BRIGHTMAPS", 2), ("BLOOM", 3))
         return ()
 
     def toggle_video_row(i: int) -> None:
-        nonlocal video_dynlights, video_linear, video_brightmaps, vfocus
+        nonlocal video_dynlights, video_linear, video_brightmaps
+        nonlocal video_bloom, vfocus
         rows = video_extra_rows()
         if i >= len(rows):
             return
-        video_dynlights, video_linear, video_brightmaps = flip_video_extra(
-            rows[i][1], video_dynlights, video_linear, video_brightmaps)
+        (video_dynlights, video_linear, video_brightmaps,
+         video_bloom) = flip_video_extra(
+             rows[i][1], video_dynlights, video_linear,
+             video_brightmaps, video_bloom)
         vfocus = 2 + i
 
     def toggle_mod() -> None:
@@ -544,7 +556,8 @@ def main() -> int:
                 # hidden elsewhere like the size row).
                 for slot, (label, tag) in enumerate(video_extra_rows()):
                     ry = 186 + slot * 24
-                    on = (video_dynlights if tag == 0 else video_linear)
+                    on = ({0: video_dynlights, 1: video_linear,
+                           2: video_brightmaps, 3: video_bloom}[tag])
                     picked = vfocus == 2 + slot
                     color = ((255, 220, 120) if picked
                              else (160, 160, 160))

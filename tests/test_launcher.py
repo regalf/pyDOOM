@@ -216,12 +216,12 @@ def test_viewer_args_carry_texture_filter():
 
 def test_flip_video_extra_rows():
     from pyDOOM import flip_video_extra
-    assert flip_video_extra(0, False, False, False) == (
-        True, False, False)
-    assert flip_video_extra(1, True, False, False) == (
-        True, True, False)
-    assert flip_video_extra(1, True, True, True) == (
-        True, False, True)
+    assert flip_video_extra(0, False, False, False, False) == (
+        True, False, False, False)
+    assert flip_video_extra(1, True, False, False, False) == (
+        True, True, False, False)
+    assert flip_video_extra(1, True, True, True, False) == (
+        True, False, True, False)
 
 
 def test_cfg_roundtrips_brightmaps(tmp_path):
@@ -244,11 +244,39 @@ def test_viewer_args_carry_brightmaps():
         "DOOM1.WAD", "E1M1", "normal")
 
 
+def test_viewer_args_carry_bloom():
+    from pyDOOM import build_viewer_args
+    assert "--bloom" in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal", bloom=True)
+    assert "--bloom" not in build_viewer_args(
+        "DOOM1.WAD", "E1M1", "normal")
+
+
 def test_flip_video_extra_third_row():
     from pyDOOM import flip_video_extra
-    assert flip_video_extra(2, False, False, False) == (
-        False, False, True)
-    assert flip_video_extra(2, True, True, True) == (
-        True, True, False)
-    assert flip_video_extra(0, False, False, True) == (
-        True, False, True)
+    assert flip_video_extra(2, False, False, False, False) == (
+        False, False, True, False)
+    assert flip_video_extra(2, True, True, True, False) == (
+        True, True, False, False)
+    assert flip_video_extra(0, False, False, True, False) == (
+        True, False, True, False)
+
+
+def test_flip_video_extra_fourth_row():
+    from pyDOOM import flip_video_extra
+    assert flip_video_extra(3, False, False, False, False) == (
+        False, False, False, True)
+    assert flip_video_extra(3, True, True, True, True) == (
+        True, True, True, False)
+
+
+def test_cfg_roundtrips_bloom(tmp_path):
+    from pydoom.menu import Settings, settings_load, settings_save
+    cfg = Settings()
+    assert cfg.bloom is False
+    cfg.bloom = True
+    path = str(tmp_path / "pydoom.cfg")
+    settings_save(path, cfg)
+    back = Settings()
+    settings_load(path, back)
+    assert back.bloom is True

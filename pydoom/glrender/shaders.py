@@ -27,6 +27,8 @@ from __future__ import annotations
 __all__ = [
     "AUTO_FRAG",
     "AUTO_VERT",
+    "BLOOM_COMBINE_FRAG",
+    "BLOOM_EXTRACT_FRAG",
     "FUZZ_FRAG",
     "OVERLAY_FRAG",
     "OVERLAY_VERT",
@@ -519,6 +521,45 @@ out vec2 vUv;
 void main() {
     gl_Position = vec4(aNDC, 0.0, 1.0);
     vUv = aUv;
+}
+"""
+
+
+BLOOM_EXTRACT_FRAG = """\
+#version 330 core
+// NOTE: step 9 bloom-lite (v2 opt-in): threshold the world color
+// into a half-res target (the rasterizer downsamples; the source
+// FBO color texture is LINEAR in v2 so the fetch smooths).
+in vec2 vUv;
+uniform sampler2D uSrc;
+uniform float uThreshold;
+out vec4 oColor;
+void main() {
+    vec3 c = texture(uSrc, vUv).rgb;
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    float keep = smoothstep(uThreshold - 0.1, uThreshold + 0.1, lum);
+    oColor = vec4(c * keep, 1.0);
+}
+"""
+
+
+BLOOM_COMBINE_FRAG = """\
+#version 330 core
+// NOTE: 9-tap box blur of the extract target, added back over the
+// world with ONE,ONE blending (no HDR pipeline at v1: RGB8 clamps
+// like software).
+in vec2 vUv;
+uniform sampler2D uBloom;
+uniform vec2 uTexel;
+uniform float uStrength;
+out vec4 oColor;
+void main() {
+    vec3 acc = vec3(0.0);
+    for (int j = -1; j <= 1; j++)
+        for (int i = -1; i <= 1; i++)
+            acc += texture(uBloom,
+                           vUv + vec2(i, j) * uTexel).rgb;
+    oColor = vec4(acc / 9.0 * uStrength, 1.0);
 }
 """
 

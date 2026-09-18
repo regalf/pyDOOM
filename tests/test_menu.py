@@ -299,14 +299,22 @@ def test_video_choice_rows_cycle_and_stage():
     assert m.settings.brightmaps is True
     m.choice_adjust("brightmaps", -1)
     assert m.settings.brightmaps is False
+    assert m.settings.bloom is False
+    m.choice_adjust("bloom", 1)
+    assert m.settings.bloom is True
+    m.choice_adjust("bloom", -1)
+    assert m.settings.bloom is False
     m._video_snapshot = m._staged_video()  # NOTE: entering the menu
     assert m._video_snapshot["dynlights"] is False
     assert m._video_snapshot["texture_filter"] == "nearest"
     assert m._video_snapshot["brightmaps"] is False
+    assert m._video_snapshot["bloom"] is False
     m.choice_adjust("dynlights", 1)
     m.choice_adjust("texture_filter", 1)
     m.choice_adjust("brightmaps", 1)
+    m.choice_adjust("bloom", 1)
     m._restore_video()  # NOTE: leaving without APPLY drops the change
     assert m.settings.dynlights is False
     assert m.settings.texture_filter == "nearest"
     assert m.settings.brightmaps is False
+    assert m.settings.bloom is False

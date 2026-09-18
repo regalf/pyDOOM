@@ -172,14 +172,14 @@ def test_all_choice_rows_stage():
                   m.settings.vsync, m.settings.display_mode,
                   m.settings.display_index, m.settings.show_fps,
                   m.settings.dynlights, m.settings.texture_filter,
-                  m.settings.brightmaps)
+                  m.settings.brightmaps, m.settings.bloom)
         assert m.key("right") == [], item.action
         after = (m.settings.video_api, m.settings.gl_resolution,
                  m.settings.sw_scale, m.settings.fps_limit,
                  m.settings.vsync, m.settings.display_mode,
                  m.settings.display_index, m.settings.show_fps,
                  m.settings.dynlights, m.settings.texture_filter,
-                 m.settings.brightmaps)
+                 m.settings.brightmaps, m.settings.bloom)
         if len(opts) > 1:
             assert before != after, item.action
         else:  # NOTE: single-screen headless: SCREEN wraps to itself
@@ -193,6 +193,7 @@ def test_all_choice_rows_stage():
     assert isinstance(s.dynlights, bool)
     assert s.texture_filter in ("nearest", "linear")
     assert isinstance(s.brightmaps, bool)
+    assert isinstance(s.bloom, bool)
 
 
 def test_screen_row_options_match_desktops():

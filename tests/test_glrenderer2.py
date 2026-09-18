@@ -490,3 +490,44 @@ def test_v2_brightmaps_lift_lamp_pixels(e1m1):
             res.delete()
     finally:
         pygame.quit()
+
+
+@requires_wad
+def test_v2_bloom_lifts_bright_pixels(e1m1):
+    """Fullbright view: bloom adds blurred brights back over the
+    world; off matches the default frame exactly."""
+    _open_window()
+    import pygame
+    try:
+        from pydoom.glrender.upload import GlResources
+        from pydoom.glrenderer2.renderer import FrameRenderer2
+        res = GlResources.create(e1m1["walls"], e1m1["planes"],
+                                 e1m1["wtex"], e1m1["ftex"],
+                                 e1m1["cmap"], e1m1["pal"])
+        assert res is not None
+        try:
+            start = e1m1["start"]
+            x, y = start.x << 16, start.y << 16
+            viewz = 41 << 16
+            f2 = FrameRenderer2(res, 320, 200, bloom=True)
+            try:
+                f2.render(x, y, viewz, 0, fullbright=True)
+                lit = f2.readback()
+                assert "bloom" in f2.prof.total
+            finally:
+                f2.close()
+            f1 = FrameRenderer2(res, 320, 200)
+            try:
+                f1.render(x, y, viewz, 0, fullbright=True)
+                plain = f1.readback()
+            finally:
+                f1.close()
+                res.delete()
+            d = lit.astype(int) - plain.astype(int)
+            assert int((d != 0).any(axis=2).sum()) > 0
+            assert int(d.min()) >= 0  # NOTE: additive only, never dims
+        except Exception:
+            res.delete()
+            raise
+    finally:
+        pygame.quit()
